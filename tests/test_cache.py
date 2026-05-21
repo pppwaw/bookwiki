@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+import pytest
+
+from bookwiki.agents.chapter_agent import ChapterAgent
+from bookwiki.scheduler.cache import run_with_cache, task_key
+
+
+def test_task_key_is_stable_and_input_sensitive() -> None:
+    first = task_key(ChapterAgent, {"chapter": "ch01"}, model="stub")
+    second = task_key(ChapterAgent, {"chapter": "ch01"}, model="stub")
+    changed = task_key(ChapterAgent, {"chapter": "ch02"}, model="stub")
+
+    assert first == second
+    assert first != changed
+
+
+@pytest.mark.asyncio
+async def test_run_with_cache_marks_second_call_as_hit(tmp_path) -> None:
+    cache_dir = tmp_path / ".cache"
+    first = await run_with_cache(
+        ChapterAgent,
+        {"chapter_id": "ch01", "title": "Foundations", "source_md": "hello"},
+        model="stub",
+        cache_dir=cache_dir,
+    )
+    second = await run_with_cache(
+        ChapterAgent,
+        {"chapter_id": "ch01", "title": "Foundations", "source_md": "hello"},
+        model="stub",
+        cache_dir=cache_dir,
+    )
+
+    assert first.result.chapter_id == "ch01"
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert second.result.model_dump() == first.result.model_dump()

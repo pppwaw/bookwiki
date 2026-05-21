@@ -50,6 +50,7 @@ coverage.xml
 *.lcov
 .hypothesis/
 .pytest_cache/
+.pytest-tmp/
 cover/
 
 # Translations
@@ -96,6 +97,7 @@ ipython_config.py
 # Pipfile.lock
 
 # UV
+.uv-cache/
 #   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
@@ -207,6 +209,13 @@ tempCodeRunnerFile.py
 
 # Ruff stuff:
 .ruff_cache/
+
+# BookWiki generated outputs
+books/
+work/
+site-template/node_modules/
+site-template/.next/
+/Prob_GZIC.pdf
 
 # PyPI configuration file
 .pypirc

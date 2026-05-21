@@ -1,5 +1,37 @@
 [project]
 name = "book-wiki"
 version = "0.1.0"
-requires-python = ">=3.14"
-dependencies = []
+description = "BookWiki generator: source material to vault, SQLite index, and learning site."
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.8",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+runtime = [
+  "langgraph>=0.2",
+  "litellm>=1.50",
+  "instructor>=1.6",
+  "diskcache>=5.6",
+  "tiktoken>=0.8",
+]
+mineru = [
+  "mineru[pipeline,core]",
+]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.7",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
