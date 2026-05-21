@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -12,6 +13,9 @@ from bookwiki.convert.common import SOURCE_REF_RE, clean_markdown, source_id_fro
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_SECONDS = 20.0
+DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+COMPLETED_TASK_STATUSES = {"completed", "success", "succeeded", "done"}
+FAILED_TASK_STATUSES = {"failed", "error", "cancelled", "canceled"}
 
 
 class MineruConversionError(RuntimeError):
@@ -43,11 +47,15 @@ def convert_pdf_to_md(
     source_id: str | None = None,
     api_base_url: str | None = None,
     timeout_seconds: float | None = None,
+    poll_interval_seconds: float | None = None,
 ) -> str:
     pdf_path = Path(path)
     resolved_source_id = source_id_from_stem(source_id or pdf_path.stem)
     timeout = timeout_seconds or float(
         os.getenv("MINERU_API_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+    )
+    poll_interval = poll_interval_seconds or float(
+        os.getenv("MINERU_API_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS)
     )
     api_url = (api_base_url or os.getenv("MINERU_API_URL") or DEFAULT_API_BASE_URL).rstrip("/")
 
@@ -58,9 +66,9 @@ def convert_pdf_to_md(
         raise MineruConversionError(msg)
 
     try:
-        raw_md = _parse_with_api(pdf_path, api_url, timeout)
+        raw_md = _parse_with_api(pdf_path, api_url, timeout, poll_interval)
     except Exception as exc:
-        msg = f"MinerU API is required for PDF conversion, but /file_parse failed: {exc}"
+        msg = f"MinerU API is required for PDF conversion, but async task parsing failed: {exc}"
         raise MineruConversionError(msg) from exc
     return normalize_mineru_markdown(raw_md, source_id=resolved_source_id)
 
@@ -86,25 +94,72 @@ def _health_check(api_base_url: str, timeout_seconds: float) -> bool:
         return False
 
 
-def _parse_with_api(path: Path, api_base_url: str, timeout_seconds: float) -> str:
+def _parse_with_api(
+    path: Path, api_base_url: str, timeout_seconds: float, poll_interval_seconds: float
+) -> str:
+    submitted = _submit_task(path, api_base_url, timeout_seconds)
+    task_id = _task_id_from_response(submitted)
+    result = _wait_for_task_result(api_base_url, task_id, timeout_seconds, poll_interval_seconds)
+    return _extract_markdown_from_api_response(result, path.stem)
+
+
+def _submit_task(path: Path, api_base_url: str, timeout_seconds: float) -> dict[str, Any]:
     body, content_type = _multipart_body(
         fields={
             "return_md": "true",
-            "response_format_zip": "false",
             "return_original_file": "false",
         },
         files={"files": path},
     )
     request = urllib.request.Request(
-        f"{api_base_url}/file_parse",
+        f"{api_base_url}/tasks",
         data=body,
         headers={"Content-Type": content_type, "Accept": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         payload = response.read()
-    data = json.loads(payload.decode("utf-8", errors="replace"))
-    return _extract_markdown_from_api_response(data, path.stem)
+    return json.loads(payload.decode("utf-8", errors="replace"))
+
+
+def _task_id_from_response(data: dict[str, Any]) -> str:
+    task_id = data.get("task_id") or data.get("id")
+    if not isinstance(task_id, str) or not task_id:
+        msg = "MinerU async task response did not include task_id"
+        raise MineruConversionError(msg)
+    return task_id
+
+
+def _wait_for_task_result(
+    api_base_url: str,
+    task_id: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_status: str | None = None
+    while time.monotonic() < deadline:
+        status_data = _get_json(f"{api_base_url}/tasks/{task_id}", timeout_seconds)
+        status = str(status_data.get("status", "")).lower()
+        last_status = status or last_status
+        if status in COMPLETED_TASK_STATUSES:
+            return _get_json(f"{api_base_url}/tasks/{task_id}/result", timeout_seconds)
+        if status in FAILED_TASK_STATUSES:
+            msg = f"MinerU async task {task_id} failed: {status_data.get('error') or status}"
+            raise MineruConversionError(msg)
+        time.sleep(max(poll_interval_seconds, 0.01))
+
+    msg = f"MinerU async task {task_id} timed out after {timeout_seconds:g}s"
+    if last_status:
+        msg += f" (last status: {last_status})"
+    raise MineruConversionError(msg)
+
+
+def _get_json(url: str, timeout_seconds: float) -> dict[str, Any]:
+    request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        payload = response.read()
+    return json.loads(payload.decode("utf-8", errors="replace"))
 
 
 def _multipart_body(*, fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, str]:

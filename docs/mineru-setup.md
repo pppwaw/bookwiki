@@ -44,6 +44,7 @@ MinerU API `3.1.3`.
 ```bash
 MINERU_API_URL=http://127.0.0.1:8000
 MINERU_API_TIMEOUT_SECONDS=20
+MINERU_API_POLL_INTERVAL_SECONDS=2
 ```
 
 ## Conversion Behavior
@@ -51,8 +52,11 @@ MINERU_API_TIMEOUT_SECONDS=20
 `bookwiki.convert.mineru_client.convert_pdf_to_md` uses this order:
 
 1. `GET /health` on `MINERU_API_URL`.
-2. `POST /file_parse` with `return_md=true` and `response_format_zip=false`.
-3. If the health check or parse request fails, raise `MineruConversionError` and stop the run.
+2. `POST /tasks` with `return_md=true`.
+3. Poll `GET /tasks/{task_id}` until the task reaches a completed or failed status.
+4. Fetch `GET /tasks/{task_id}/result` and read returned Markdown.
+5. If the health check, task submission, polling, or result fetch fails, raise
+   `MineruConversionError` and stop the run.
 
 There is intentionally no `vlm-http-client`, `pipeline`, or metadata fallback for PDF input.
 Offline tests should use TXT/PPTX fixtures unless they explicitly start `mineru-api`.

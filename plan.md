@@ -119,7 +119,8 @@ flowchart LR
   - 同机或邻机起 `mineru-api --host 0.0.0.0 --port 8000 --enable-vlm-preload true`
   - 文档 `docs/mineru-setup.md` 写部署步骤、依赖版本、健康检查 URL
 - [x] **`bookwiki/convert/mineru_client.py`**:
-  - 只调用 `mineru-api`:`GET /health` 探活 + `POST /file_parse`
+  - 只调用 `mineru-api`:`GET /health` 探活 + `POST /tasks` 异步提交
+  - 轮询 `GET /tasks/{task_id}` 并读取 `GET /tasks/{task_id}/result`
   - 超时/异常 → 报错退出,不降级到 `vlm-http-client` / `pipeline`
   - 输出规范化为带 `<!-- source_ref: textbook-pXX -->` 注释的 Markdown
 - [x] **`bookwiki/convert/pptx_to_md.py`**:`python-pptx` 抽文本 + 标题,每 slide 一段,写 `source_ref: lectureN-slideMM`

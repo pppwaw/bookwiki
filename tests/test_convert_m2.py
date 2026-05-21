@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import threading
 import zipfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,62 @@ from bookwiki.convert.pptx_to_md import convert_pptx_to_md
 from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.pipeline.nodes import convert_node
 from bookwiki.scheduler.config import default_config
+
+
+class _AsyncMineruHandler(BaseHTTPRequestHandler):
+    request_paths: list[str] = []
+    status_polls = 0
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_GET(self) -> None:
+        self.__class__.request_paths.append(self.path)
+        if self.path == "/health":
+            self._write_json({"status": "healthy"})
+            return
+        if self.path == "/tasks/task-1":
+            self.__class__.status_polls += 1
+            status = "completed" if self.__class__.status_polls >= 2 else "processing"
+            self._write_json({"task_id": "task-1", "status": status})
+            return
+        if self.path == "/tasks/task-1/result":
+            self._write_json({"results": {"tiny": {"md_content": "Async markdown text"}}})
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:
+        self.__class__.request_paths.append(self.path)
+        length = int(self.headers.get("content-length", "0"))
+        if length:
+            self.rfile.read(length)
+        if self.path == "/tasks":
+            self._write_json({"task_id": "task-1", "status": "pending"})
+            return
+        self.send_error(404)
+
+    def _write_json(self, payload: dict[str, object]) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def async_mineru_api() -> str:
+    _AsyncMineruHandler.request_paths = []
+    _AsyncMineruHandler.status_polls = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _AsyncMineruHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def _write_minimal_pptx(path: Path) -> None:
@@ -59,6 +118,27 @@ def test_convert_pdf_to_md_requires_mineru_api(tmp_path: Path) -> None:
             api_base_url="http://127.0.0.1:1",
             timeout_seconds=0.01,
         )
+
+
+def test_convert_pdf_to_md_uses_async_mineru_tasks(
+    tmp_path: Path, async_mineru_api: str
+) -> None:
+    pdf = tmp_path / "tiny.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    md = convert_pdf_to_md(
+        pdf,
+        source_id="tiny",
+        api_base_url=async_mineru_api,
+        timeout_seconds=5,
+        poll_interval_seconds=0.01,
+    )
+
+    assert "Async markdown text" in md
+    assert "<!-- source_ref: tiny-p001 -->" in md
+    assert "/tasks" in _AsyncMineruHandler.request_paths
+    assert "/tasks/task-1/result" in _AsyncMineruHandler.request_paths
+    assert "/file_parse" not in _AsyncMineruHandler.request_paths
 
 
 def test_convert_text_to_md_wraps_one_file_source_ref(tmp_path: Path) -> None:
