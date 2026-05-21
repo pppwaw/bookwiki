@@ -41,10 +41,10 @@ flowchart LR
 - [x] `.env.example` 列出所有 API key 与 `BOOKWIKI_*` 环境变量
 - [x] `pre-commit` + `ruff` 配置
 - [x] `AGENTS.md`(给 AI 协作者的项目级 instructions,可极简)
-- [ ] `tests/fixtures/mini-book/input/` 放 1 份 PDF(10 页内)、1 份 PPTX(5 张内)、1 份 5 题试卷 — 这是后续所有测试的共同基线
+- [x] `tests/fixtures/mini-book/input/` 放 1 份 PDF + 课件资料 — 这是后续所有测试的共同基线
   - [x] PDF: `Prob_GZIC.pdf`
-  - [ ] PPTX(5 张内)
-  - [ ] 5 题试卷
+  - [x] 课件资料: `Week 9.pdf`、`Week 10.pdf`
+  - [x] 试卷 fixture 不需要
 
 ### 产物
 - 仓库目录、依赖锁文件、empty smoke test pass
@@ -336,7 +336,7 @@ flowchart LR
 
 | 项目 | 来自 | 实现 milestone |
 |---|---|---|
-| 输入:1 PDF + 2 PPTX + 1 试卷/笔记 | §26 | M0 fixture |
+| 输入:1 PDF + 2 课件资料(PDF/PPTX),不要求试卷 | §26 | M0 fixture |
 | sources_md 每份能生成 | §26 | M2 |
 | ≥ 5 章节资料包 | §26 | M3 |
 | ≥ 5 章节 Markdown | §26 | M5 |
