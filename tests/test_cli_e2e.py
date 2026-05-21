@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_PDF = ROOT / "tests" / "fixtures" / "mini-book" / "input" / "Prob_GZIC.pdf"
 
 
 def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
@@ -24,11 +25,10 @@ def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]
 
 
 def test_init_book_and_run_stub_pipeline_to_sqlite(tmp_path) -> None:
-    source_pdf = ROOT / "Prob_GZIC.pdf"
-    assert source_pdf.exists()
+    assert FIXTURE_PDF.exists()
     book_dir = tmp_path / "books" / "mini"
 
-    run_script("scripts/init_book.py", str(book_dir), "--source", str(source_pdf))
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(FIXTURE_PDF))
     run_script("scripts/run.py", str(book_dir))
 
     db_path = book_dir / "site" / ".bookwiki" / "bookwiki.sqlite"
@@ -52,10 +52,9 @@ def test_init_book_and_run_stub_pipeline_to_sqlite(tmp_path) -> None:
 
 
 def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
-    source_pdf = ROOT / "Prob_GZIC.pdf"
     book_dir = tmp_path / "books" / "mini"
 
-    run_script("scripts/init_book.py", str(book_dir), "--source", str(source_pdf))
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(FIXTURE_PDF))
     run_script("scripts/run.py", str(book_dir))
     resumed = run_script("scripts/run.py", str(book_dir), "--resume")
 
@@ -64,10 +63,9 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
 
 
 def test_dry_run_prints_mermaid_and_estimate(tmp_path) -> None:
-    source_pdf = ROOT / "Prob_GZIC.pdf"
     book_dir = tmp_path / "books" / "mini"
 
-    run_script("scripts/init_book.py", str(book_dir), "--source", str(source_pdf))
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(FIXTURE_PDF))
     result = run_script("scripts/run.py", str(book_dir), "--dry-run")
 
     assert "graph TD" in result.stdout
