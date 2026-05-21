@@ -1,1 +1,1 @@
-"""Source conversion stubs for M1."""
+"""Source conversion helpers for PDF, PPTX, and plain text inputs."""

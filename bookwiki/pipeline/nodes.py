@@ -19,6 +19,10 @@ from bookwiki.agents import (
     StructureAgent,
     SummaryAgent,
 )
+from bookwiki.convert.common import source_id_from_stem
+from bookwiki.convert.mineru_client import convert_pdf_to_md
+from bookwiki.convert.pptx_to_md import convert_pptx_to_md
+from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas.report import CheckReport, Issue
@@ -61,18 +65,18 @@ def convert_node(state: State, cfg: BookConfig) -> State:
     out_dir = ensure_dir(cfg.work_dir / "sources_md")
     outputs: list[str] = []
     for path in input_files:
-        source_id = path.stem
+        source_id = source_id_from_stem(path.stem)
         out_path = out_dir / f"{source_id}.md"
-        if path.suffix.lower() in {".txt", ".md"}:
-            body = path.read_text(encoding="utf-8", errors="ignore")
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
+            body = convert_pdf_to_md(path, source_id=source_id)
+        elif suffix == ".pptx":
+            body = convert_pptx_to_md(path, source_id=source_id)
+        elif suffix in {".txt", ".md"}:
+            body = convert_text_to_md(path, source_id=source_id)
         else:
-            body = (
-                f"# {source_id}\n\n"
-                f"Converted stub for `{path.name}`.\n\n"
-                f"<!-- source_ref: {source_id}-p001 -->\n\n"
-                f"The original file is {path.stat().st_size} bytes. M1 records metadata only; "
-                "M2 will replace this with real extraction."
-            )
+            msg = f"unsupported source file type: {path.name}"
+            raise ValueError(msg)
         write_text(out_path, body)
         outputs.append(_rel(out_path, cfg.book_dir))
 

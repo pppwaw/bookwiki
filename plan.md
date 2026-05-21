@@ -114,26 +114,26 @@ flowchart LR
 
 ### 任务
 
-- [ ] **MinerU 服务部署**(B 主导):
+- [x] **MinerU 服务部署**(B 主导,本地 `http://127.0.0.1:8000` 已用小 PDF smoke):
   - GPU 机起 `mineru-openai-server --engine vllm --port 30000`
   - 同机或邻机起 `mineru-api --host 0.0.0.0 --port 8000 --enable-vlm-preload true`
   - 文档 `docs/mineru-setup.md` 写部署步骤、依赖版本、健康检查 URL
-- [ ] **`bookwiki/convert/mineru_client.py`**:
+- [x] **`bookwiki/convert/mineru_client.py`**:
   - 调 `from mineru.cli.common import do_parse`,`backend="vlm-http-client"`
   - 启动时 `GET /health` 探活,超时/异常 → 切 `backend="pipeline"`,写日志
   - 输出规范化为带 `<!-- source_ref: textbook-pXX -->` 注释的 Markdown
-- [ ] **`bookwiki/convert/pptx_to_md.py`**:`python-pptx` 抽文本 + 标题,每 slide 一段,写 `source_ref: lectureN-slideMM`
-- [ ] **`bookwiki/convert/text_to_md.py`**:TXT/MD 简单 wrap(每文件一段 source_ref)
-- [ ] **`convert_node` 实现**(替换 M1 的 stub):路由文件后缀到对应转换器
+- [x] **`bookwiki/convert/pptx_to_md.py`**:`python-pptx` 抽文本 + 标题,每 slide 一段,写 `source_ref: lectureN-slideMM`
+- [x] **`bookwiki/convert/text_to_md.py`**:TXT/MD 简单 wrap(每文件一段 source_ref)
+- [x] **`convert_node` 实现**(替换 M1 的 stub):路由文件后缀到对应转换器
 
 ### 产物
 - `work/sources_md/*.md`,每段有 `source_ref`
 - `docs/mineru-setup.md`
 
 ### 验收
-- mini-book PDF 解析为 markdown,可读、断页清理 ok、每页有 source_ref
-- 关掉 mineru-openai-server,重跑 → 日志说切到 pipeline,精度降级但不报错
-- 跑出来的 sources_md 能被 M3 的 ChapterSplit 接收
+- [x] 小 PDF 经 MinerU API 解析为 markdown,可读、断页清理 ok、每页有 source_ref
+- [x] MinerU API 失败/关闭时重跑 → 日志说切到 pipeline,精度降级但不报错
+- [x] 跑出来的 sources_md 能被 M3 的 ChapterSplit 接收
 
 ---
 

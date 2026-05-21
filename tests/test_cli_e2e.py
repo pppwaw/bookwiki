@@ -14,6 +14,7 @@ FIXTURE_PDF = ROOT / "tests" / "fixtures" / "mini-book" / "input" / "Prob_GZIC.p
 def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
+    env.setdefault("MINERU_API_DISABLED", "1")
     return subprocess.run(
         [sys.executable, *args],
         cwd=cwd,
