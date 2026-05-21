@@ -75,3 +75,48 @@ def test_dry_run_prints_mermaid_and_estimate(tmp_path) -> None:
     assert "graph TD" in result.stdout
     assert "Estimated tokens" in result.stdout
     assert not (book_dir / "site" / ".bookwiki" / "bookwiki.sqlite").exists()
+
+
+def test_structure_then_split_allows_manual_approved_structure_edit(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    intro = tmp_path / "intro.txt"
+    advanced = tmp_path / "advanced.txt"
+    intro.write_text("State space search and goals.", encoding="utf-8")
+    advanced.write_text("Heuristic search and A star.", encoding="utf-8")
+
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(intro))
+    input_dir = book_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / advanced.name).write_text(advanced.read_text(encoding="utf-8"), encoding="utf-8")
+
+    run_script("scripts/convert.py", str(book_dir))
+    run_script("scripts/structure.py", str(book_dir))
+
+    checkpoint = json.loads(
+        (book_dir / "work" / ".cache" / "checkpoint.json").read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "paused"
+    assert checkpoint["next_node"] == "split"
+
+    approved = book_dir / "work" / "structure" / "approved-structure.md"
+    approved.write_text(
+        "# Mini\n\n"
+        "## ch01 Intro Search\n\n"
+        "- goal: Intro.\n"
+        "- scope: intro.\n"
+        "- sources:\n"
+        "  - intro-text\n\n"
+        "## ch02 Heuristic Search\n\n"
+        "- goal: Heuristics.\n"
+        "- scope: advanced.\n"
+        "- sources:\n"
+        "  - advanced-text\n",
+        encoding="utf-8",
+    )
+
+    run_script("scripts/split.py", str(book_dir))
+
+    ch01 = book_dir / "work" / "chapter_sources" / "ch01" / "source.md"
+    ch02 = book_dir / "work" / "chapter_sources" / "ch02" / "source.md"
+    assert "State space search" in ch01.read_text(encoding="utf-8")
+    assert "A star" in ch02.read_text(encoding="utf-8")

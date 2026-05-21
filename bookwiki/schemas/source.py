@@ -18,6 +18,9 @@ class StructureResult(VersionedModel):
 
 class ChapterSplitResult(VersionedModel):
     chapters: dict[str, str] = Field(default_factory=dict)
+    chapter_titles: dict[str, str] = Field(default_factory=dict)
+    alignment: list[dict[str, object]] = Field(default_factory=list)
+    coverage: dict[str, float | int] = Field(default_factory=dict)
     report_md: str
 
 

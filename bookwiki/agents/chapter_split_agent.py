@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from bookwiki.schemas.source import ChapterSplitResult
+from bookwiki.split.chapter_splitter import split_sources_by_structure
 
 
 class ChapterSplitAgent:
@@ -11,14 +12,13 @@ class ChapterSplitAgent:
     model_key: ClassVar[str] = "split"
 
     async def run(self, inp: dict[str, Any], *, model: str) -> ChapterSplitResult:
-        source_md = str(inp.get("source_md", ""))
-        midpoint = max(1, len(source_md) // 2)
-        report = (
-            "# Chapter Split Report\n\n"
-            "- ch01: stub first segment\n"
-            "- ch02: stub second segment\n"
+        result = split_sources_by_structure(
+            list(inp.get("source_paths", [])), str(inp.get("approved_structure", ""))
         )
         return ChapterSplitResult(
-            chapters={"ch01": source_md[:midpoint], "ch02": source_md[midpoint:] or source_md},
-            report_md=report,
+            chapters=result.chapters,
+            chapter_titles=result.chapter_titles,
+            alignment=result.alignment,
+            coverage=result.coverage,
+            report_md=result.report_md,
         )

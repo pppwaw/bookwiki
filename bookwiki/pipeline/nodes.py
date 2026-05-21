@@ -26,7 +26,9 @@ from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas.report import CheckReport, Issue
+from bookwiki.split.chapter_splitter import parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
+from bookwiki.utils.hashing import sha256_text
 
 State = dict[str, Any]
 
@@ -44,8 +46,10 @@ def _read_all_markdown(paths: list[Path]) -> str:
 
 
 def _chapter_titles(approved_md: str) -> list[tuple[str, str]]:
-    found = re.findall(r"^##\s+(ch\d+)\s+(.+)$", approved_md, flags=re.MULTILINE)
-    return found or [("ch01", "Foundations"), ("ch02", "Practice")]
+    return [
+        (chapter.chapter_id, chapter.title)
+        for chapter in parse_approved_structure(approved_md)
+    ]
 
 
 def _cache_dir(cfg: BookConfig) -> Path:
@@ -88,9 +92,10 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
     results: list[CacheResult] = []
     summaries = []
     for path in source_paths:
+        text = path.read_text(encoding="utf-8", errors="ignore")
         result = await run_with_cache(
             SourceSummaryAgent,
-            path,
+            {"path": str(path), "sha256": sha256_text(text)},
             model=cfg.model_for("source_summary"),
             cache_dir=_cache_dir(cfg),
         )
@@ -99,7 +104,7 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
 
     structure = await run_with_cache(
         StructureAgent,
-        summaries,
+        {"summaries": summaries, "strategy": "pedagogical"},
         model=cfg.model_for("structure"),
         cache_dir=_cache_dir(cfg),
     )
@@ -114,7 +119,9 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
         write_text(approved_path, structure.result.proposed_structure_md)
     write_text(
         out_dir / "structure-review.md",
-        "# Structure Review\n\nM1 stub auto-created approved-structure.md for end-to-end runs.\n",
+        "# Structure Review\n\n"
+        "Review `proposed-structure.md`, edit `approved-structure.md`, then run split.\n\n"
+        f"Source summaries: {len(summaries)}\n",
     )
 
     return {
@@ -130,25 +137,39 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     )
     approved_md = approved_path.read_text(encoding="utf-8")
     source_paths = [cfg.book_dir / rel for rel in state.get("sources_md", [])]
-    source_md = _read_all_markdown(source_paths)
     split = await run_with_cache(
         ChapterSplitAgent,
-        {"source_md": source_md, "approved_structure": approved_md},
+        {
+            "source_paths": [str(path) for path in source_paths],
+            "source_hashes": [
+                sha256_text(path.read_text(encoding="utf-8", errors="ignore"))
+                for path in source_paths
+            ],
+            "approved_structure": approved_md,
+        },
         model=cfg.model_for("split"),
         cache_dir=_cache_dir(cfg),
     )
 
     out_dir = ensure_dir(cfg.work_dir / "chapter_sources")
     chapter_sources: dict[str, str] = {}
-    titles = dict(_chapter_titles(approved_md))
+    titles = split.result.chapter_titles or dict(_chapter_titles(approved_md))
     for ch_id, md in split.result.chapters.items():
         title = titles.get(ch_id, ch_id)
         chapter_dir = ensure_dir(out_dir / ch_id)
         path = write_text(
             chapter_dir / "source.md",
-            f"# {ch_id} {title}\n\n{md.strip()}\n\n<!-- source_ref: Prob_GZIC-p001 -->\n",
+            md if md.startswith("#") else f"# {ch_id} {title}\n\n{md.strip()}\n",
         )
         chapter_sources[ch_id] = _rel(path, cfg.book_dir)
+    alignment_path = write_json(
+        out_dir / "_alignment.json",
+        {
+            "alignment": split.result.alignment,
+            "coverage": split.result.coverage,
+            "chapter_titles": titles,
+        },
+    )
     report_path = write_text(
         cfg.work_dir / "logs" / "chapter-split-report.md", split.result.report_md
     )
@@ -156,6 +177,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     return {
         "chapter_sources": chapter_sources,
         "chapter_titles": titles,
+        "chapter_alignment": _rel(alignment_path, cfg.book_dir),
         "chapter_split_report": _rel(report_path, cfg.book_dir),
         "cache_hit": split.cache_hit,
     }

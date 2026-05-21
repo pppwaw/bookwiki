@@ -146,18 +146,18 @@ flowchart LR
 
 ### 任务
 
-- [ ] **`bookwiki/agents/source_summary_agent.py`**:每份 sources_md → 摘要 JSON(`models.sourceSummary`,默认 `deepseek-v4-flash`)
-- [ ] **`bookwiki/agents/structure_agent.py`**:
+- [x] **`bookwiki/agents/source_summary_agent.py`**:每份 sources_md → 摘要 JSON(`models.sourceSummary`,默认 `deepseek-v4-flash`)
+- [x] **`bookwiki/agents/structure_agent.py`**:
   - 输入:所有 source summaries
   - 输出:`proposed-structure.md`(Markdown 大纲,格式见 §7.1)
-  - prompt 支持 `pedagogical` / `source` 两种策略
-- [ ] **`bookwiki/split/chapter_splitter.py`**:
+  - rule-only 策略参数支持 `pedagogical` / `source` 两种策略
+- [x] **`bookwiki/split/chapter_splitter.py`**:
   - 解析 `approved-structure.md`(Markdown parser,提取章节 id/标题/范围/source_refs 列表)
   - 把 sources_md 的片段按主题归到章节,产 `_alignment.json` 含 confidence
   - 写 `work/logs/chapter-split-report.md`(来源 × 章节矩阵 + 未归属清单)
-- [ ] **`bookwiki/agents/chapter_split_agent.py`**:对低置信度片段调 LLM 做归属仲裁(可选,先 rule-only)
-- [ ] **`structure_node` / `split_node` 实现**:替换 M1 stub
-- [ ] interrupt 测试:`structure.py` 跑完确实停在 split 前,人编辑后 `split.py` 续跑成功
+- [x] **`bookwiki/agents/chapter_split_agent.py`**:对低置信度片段调 LLM 做归属仲裁(可选,先 rule-only)
+- [x] **`structure_node` / `split_node` 实现**:替换 M1 stub
+- [x] interrupt 测试:`structure.py` 跑完确实停在 split 前,人编辑后 `split.py` 续跑成功
 
 ### 产物
 - `work/structure/proposed-structure.md`
@@ -166,9 +166,9 @@ flowchart LR
 - `work/logs/chapter-split-report.md`
 
 ### 验收
-- mini-book 跑出至少 2 章合理切分
-- 修改 approved-structure.md 后 `split.py` 重跑得到不同 chapter_sources
-- 至少 80% 的片段有 source_ref 归属,未归属的进附录桶
+- [x] mini-book 跑出至少 2 章合理切分
+- [x] 修改 approved-structure.md 后 `split.py` 重跑得到不同 chapter_sources
+- [x] 至少 80% 的片段有 source_ref 归属,未归属的进附录桶
 
 ---
 
