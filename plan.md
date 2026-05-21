@@ -456,12 +456,36 @@ flowchart TD
 `structure.strategy` 决定 StructureAgent 怎么排骨架:`pedagogical`(默认,按"怎样学最顺"重排)或 `source`(忠实照搬 `primary`
 教材目录)。无论哪种,都要过同一道 checkpoint。
 
-`useOutlineContext` 决定 ChapterAgent 是否把已批准结构作为上下文:
+大纲文件用 Markdown 作为人工复核的权威格式,便于直接编辑和 code review。最小格式:
+
+```markdown
+# 人工智能导论
+
+## ch01 人工智能绪论
+
+- 目标:说明智能体、环境、任务环境等基础概念。
+- 范围:教材 p1-p18,lecture01 slide 1-12。
+- 来源:
+  - textbook-p1..textbook-p18
+  - lecture01-slide01..lecture01-slide12
+
+## ch02 搜索问题
+
+- 目标:建立状态空间、搜索树、代价和目标测试。
+- 范围:教材 p19-p45,lecture02。
+- 来源:
+  - textbook-p19..textbook-p45
+  - lecture02-slide01..lecture02-slide20
+```
+
+`chapter_id` 来自二级标题开头的 `chxx`;标题、目标、范围和来源由人工在 `approved-structure.md` 中确认。`ChapterSplit` 解析这个 Markdown 大纲,再把 source Markdown 片段归属到章节。
+
+`useOutlineContext` 决定 ChapterAgent 是否把已批准 Markdown 大纲作为上下文:
 
 | 取值    | 含义                                 | 收益            | 代价                |
 |-------|------------------------------------|---------------|-------------------|
-| true  | Chapter 依赖已批准结构                    | 跨章术语统一、概念命名一致 | 章节生成前有一个短 barrier |
-| false | Chapter 不依赖结构上下文,结构仅用于 index 与交叉链接 | 最大并行度         | 跨章一致性弱一些          |
+| true  | Chapter 依赖已批准 Markdown 大纲           | 跨章术语统一、概念命名一致 | 章节生成前有一个短 barrier |
+| false | Chapter 不依赖大纲上下文,大纲仅用于 index 与交叉链接 | 最大并行度         | 跨章一致性弱一些          |
 
 默认 `true`。
 
@@ -469,12 +493,12 @@ flowchart TD
 
 | 步骤   | 输入                              | 输出                     | 负责模块     |
 |------|---------------------------------|------------------------|----------|
-| 资料转换 | PDF、PPT、试卷                      | `sources_md/*.md`      | 资料转换     |
+| 资料转换 | PDF(MinerU)、PPT、试卷              | `sources_md/*.md`      | 资料转换     |
 | 资料摘要 | source Markdown                 | source summary         | Agent 生成 |
-| 大纲重组 | source summaries                | `proposed-structure.json` | StructureAgent |
-| 人工复核 | proposed structure + 片段映射草案    | `approved-structure.json` | 人工 checkpoint |
-| 章节切分 | source Markdown + approved structure | `chapter_sources/chxx` | 章节切分     |
-| 章节生成 | chapter source(+ approved structure) | chapter result         | Agent 生成 |
+| 大纲重组 | source summaries                | `proposed-structure.md` | StructureAgent |
+| 人工复核 | 建议 Markdown 大纲 + 片段映射草案    | `approved-structure.md` | 人工 checkpoint |
+| 章节切分 | source Markdown + 已批准 Markdown 大纲 | `chapter_sources/chxx` | 章节切分     |
+| 章节生成 | chapter source(+ 已批准 Markdown 大纲) | chapter result         | Agent 生成 |
 | 总结生成 | chapter result                  | summary result         | Agent 生成 |
 | 题目生成 | chapter source + chapter result | quiz result            | Agent 生成 |
 | 卡片生成 | chapter source + chapter result | cards result           | Agent 生成 |
@@ -494,9 +518,9 @@ flowchart TD
 
 这样做的直接好处是,同一套代码既能逐段跑、也能一键跑完,不必二选一:
 
-- 阶段产物全部落盘:`sources_md/`、`structure/approved-structure.json`、`chapter_sources/`、`agent_results/`、`vault/`、`bookwiki.sqlite`。
-- 每个阶段是独立 CLI 命令,可以单独运行、单独看输出(见 §17)。
-- `build` 把这些命令串起来,配合任务缓存(§10.4),中途停了 `--resume` 接着跑。
+- 阶段产物全部落盘:`sources_md/`、`structure/approved-structure.md`、`chapter_sources/`、`agent_results/`、`vault/`、`bookwiki.sqlite`。
+- 每个阶段是独立 Python 运行入口,可以单独运行、单独看输出(见 §17)。
+- `scripts/build.py` 把这些阶段串起来,配合任务缓存(§10.4),中途停了 `--resume` 接着跑。
 - 这也是 5 人并行开发的前提:每人拿固定的中间文件,单独测自己那一段。
 
 **复核闸门只设在"便宜到改、贵到晚发现"的阶段,不是每个阶段都卡。** 经验上人工只值得卡前三道:
@@ -514,7 +538,7 @@ flowchart TD
 反而交给自动检查器(§13)兜底,而不是人。
 
 实现上:`build` 默认一键贯通,但 `structure.review: required` 时必须在 `structure` 后暂停;通过 `--pause-after` 可在其他指定阶段后暂停,
-等人工确认 `structure/approved-structure.json`、`chapter-split-report.md` 等中间产物后再继续(见 §17)。团队约定第一次跑某本书时先手动走
+等人工确认 `structure/approved-structure.md`、`chapter-split-report.md` 等中间产物后再继续(见 §17)。团队约定第一次跑某本书时先手动走
 `convert`、`structure`、`split` 三步,确认无误后再 `generate` 往后一键。
 
 ```mermaid
@@ -657,9 +681,9 @@ class Agent(Protocol):
 | Agent              | 任务     | 输入                          | 输出                 |
 |--------------------|--------|-----------------------------|--------------------|
 | SourceSummaryAgent | 生成资料摘要 | source Markdown             | 摘要 JSON            |
-| StructureAgent     | AI 重组全书大纲 | source summaries            | proposed structure JSON |
-| ChapterSplitAgent  | 按锁定大纲归属片段 | source Markdown、approved structure | chapter map        |
-| ChapterAgent       | 生成章节正文 | chapter source(+ approved structure) | chapter JSON       |
+| StructureAgent     | AI 重组全书大纲 | source summaries            | `proposed-structure.md` |
+| ChapterSplitAgent  | 按锁定大纲归属片段 | source Markdown、`approved-structure.md` | chapter map        |
+| ChapterAgent       | 生成章节正文 | chapter source(+ `approved-structure.md`) | chapter JSON       |
 | SummaryAgent       | 生成本章总结 | chapter source、chapter JSON | summary JSON       |
 | QuizAgent          | 生成题目   | chapter source、chapter JSON | quiz JSON          |
 | CardAgent          | 生成卡片   | chapter source、chapter JSON | cards JSON         |
@@ -816,7 +840,7 @@ async def run(dag: Dag, cfg: GenConfig):
 }
 ```
 
-`bookwiki generate --dry-run` 只打印 DAG 与预估成本/token,不真正调用 LLM,可在演示前估算"这本书大概几块钱、几分钟"。
+`python scripts/generate.py books/ai-intro --dry-run` 只打印 DAG 与预估成本/token,不真正调用 LLM,可在演示前估算"这本书大概几块钱、几分钟"。
 
 ---
 
@@ -1030,7 +1054,7 @@ flowchart TD
 
 ## 16. 网站设计
 
-网站使用 Next.js。
+网站使用 Next.js + Fumadocs。Fumadocs 负责文档站布局、MDX/Markdown 渲染、导航、TOC 和基础文档体验;BookWiki 自己负责 Quiz/Cards、SQLite、RAG API、source_ref 展示和生成管线适配。
 
 | 页面       | 路由                      | 数据来源              |
 |----------|-------------------------|-------------------|
@@ -1042,8 +1066,7 @@ flowchart TD
 | Cards 区域 | 章节页内                    | SQLite card_items |
 | 问答 API   | `/api/chat`             | SQLite 和 LLM      |
 
-组件:`MarkdownPage`、`WikiLink`(`[[概念]]` 转站内链接)、`QuizBlock`、`CardBlock`、`SourceRef`、`SearchBox`、`ChatBox`、
-`ChapterNav`。
+组件:`WikiLink`(`[[概念]]` 转站内链接)、`QuizBlock`、`CardBlock`、`SourceRef`、`SearchBox`、`ChatBox`。文档布局、侧边栏、目录和正文渲染优先使用 Fumadocs 提供的能力。
 
 API key 安全:
 
@@ -1054,53 +1077,69 @@ BOOKWIKI_SQLITE_PATH=.bookwiki/bookwiki.sqlite
 
 前端不能使用 `NEXT_PUBLIC_OPENAI_API_KEY`,所有模型调用必须发生在服务端 API。
 
+### 16.1 网站框架决策
+
+正式网站层固定为 Next.js + Fumadocs,这是唯一网站方案。Fumadocs 提供文档站布局、导航、TOC、MDX/Markdown 渲染和基础搜索体验;BookWiki 在其上补齐学习站点特有能力。
+
+需要自定义实现的部分:
+
+- `[[概念]]` 双链解析与站内跳转。
+- `source_ref` 展示、跳转和来源面板。
+- Quiz / Cards 交互组件。
+- SQLite FTS5 搜索结果读取。
+- `/api/chat` RAG 问答接口。
+- vault / SQLite 到 Fumadocs 内容源的适配。
+
+这个选择的好处是:网站仍在 Next.js/React 体系内,服务端 API 和交互组件都好接;同时避免从零自研文档站基础设施。
+
 ---
 
-## 17. 命令设计
+## 17. Python 运行入口
 
-### 17.1 分阶段命令
+### 17.1 分阶段脚本
 
-每个阶段是一个独立子命令,产物落盘,可单独运行、单独检查输出:
+不做安装型命令行工具。每个阶段提供一个可直接运行的 Python 脚本,产物落盘,可单独运行、单独检查输出:
 
 ```bash
-bookwiki init ai-intro "人工智能导论"
-bookwiki convert        books/ai-intro     # input/        -> work/sources_md/
-bookwiki structure      books/ai-intro     # sources_md/   -> work/structure/proposed-structure.json
-bookwiki approve-structure books/ai-intro  # 人工复核/修改/锁定 -> work/structure/approved-structure.json
-bookwiki split-chapters books/ai-intro     # sources_md/ + approved structure -> work/chapter_sources/
-bookwiki generate       books/ai-intro     # chapter_sources/ -> work/agent_results/ + vault/
-bookwiki check          books/ai-intro     # vault/        -> work/logs/check-report.*
-bookwiki index          books/ai-intro     # vault/        -> site/.bookwiki/bookwiki.sqlite
-bookwiki site           books/ai-intro     # 启动 Next.js
+python scripts/init_book.py ai-intro "人工智能导论"
+python scripts/convert.py        books/ai-intro     # input/        -> work/sources_md/
+python scripts/structure.py      books/ai-intro     # sources_md/   -> work/structure/proposed-structure.md
+python scripts/approve_structure.py books/ai-intro  # 人工复核/修改/锁定 -> work/structure/approved-structure.md
+python scripts/split_chapters.py books/ai-intro     # sources_md/ + approved-structure.md -> work/chapter_sources/
+python scripts/generate.py       books/ai-intro     # chapter_sources/ -> work/agent_results/ + vault/
+python scripts/check.py          books/ai-intro     # vault/        -> work/logs/check-report.*
+python scripts/repair.py         books/ai-intro     # check-report  -> 定向修复受影响单元
+python scripts/index.py          books/ai-intro     # vault/        -> site/.bookwiki/bookwiki.sqlite
+python scripts/site.py           books/ai-intro     # 启动 Next.js + Fumadocs
 ```
 
 因为阶段之间只靠磁盘文件通信(§7.3),所以可以在任意阶段停下来人工复核中间产物,确认无误再跑下一段。
 
-### 17.2 一键命令与人工闸门
+### 17.2 一键脚本与人工闸门
 
-总命令按顺序运行 convert → structure → split-chapters → generate → check → index:
+总脚本按顺序运行 convert → structure → split-chapters → generate → check/repair → index:
 
 ```bash
-bookwiki build books/ai-intro
+python scripts/build.py books/ai-intro
 ```
 
 `build` 默认一键贯通,但 `structure.review: required` 时会在 AI 重组大纲后强制暂停,等待人工复核并锁定。若还要在其他便宜且关键的阶段后停下人工复核,用 `--pause-after`:
 
 ```bash
 # 第一次跑某本书:先到 structure 为止,人工复核 AI 重组大纲
-bookwiki build books/ai-intro --pause-after convert,structure
+python scripts/build.py books/ai-intro --pause-after convert,structure
 
-# 人工修改并锁定 approved-structure.json 后,继续切分并可在 split 后再检查片段归属
-bookwiki build books/ai-intro --resume --pause-after split
+# 人工修改并锁定 approved-structure.md 后,继续切分并可在 split 后再检查片段归属
+python scripts/build.py books/ai-intro --resume --pause-after split
 
-# 确认无误后,从 generate 往后一键跑完(命中缓存,convert/split 不重算)
-bookwiki build books/ai-intro --resume
+# 确认无误后,从 generate 往后一键跑完(命中缓存,convert/structure/split 不重算)
+python scripts/build.py books/ai-intro --resume
 ```
 
 推荐工作流:**第一次跑先卡 `convert`、`structure`、`split` 三道闸门**。其中 `structure` 是硬闸门:AI 先把最开始的大纲重组成人更适合学习的章节骨架,人复核、修改并锁定后,才允许进入章节切分和后续生成。后续迭代直接 `build --resume`
 。generate 这一段不设人工闸门,由检查器自动复核(§7.3、§13)。
 
-### 17.3 命令开关
+### 17.3 运行开关
 
 | 开关                | 作用                        |
 |-------------------|---------------------------|
@@ -1113,15 +1152,142 @@ bookwiki build books/ai-intro --resume
 
 ---
 
-## 18. 代码结构
+## 18. 运行流程
+
+下面是从空书籍目录跑到可访问网站的标准流程。
+
+### 18.1 初始化与输入
+
+```bash
+python scripts/init_book.py ai-intro "人工智能导论"
+```
+
+把 PDF、PPTX、试卷和笔记放入:
+
+```text
+books/ai-intro/input/
+```
+
+然后编辑 `books/ai-intro/book.config.json`,确认书名、资料角色、结构策略、模型、预算和功能开关。
+
+### 18.2 资料转换
+
+```bash
+python scripts/convert.py books/ai-intro
+```
+
+检查 `work/sources_md/`:确认 Markdown 可读、页码/幻灯片边界合理、每段关键内容都有 `source_ref`。
+
+### 18.3 结构生成与锁定
+
+```bash
+python scripts/structure.py books/ai-intro
+```
+
+人工检查 `work/structure/proposed-structure.md` 和 `work/structure/structure-review.md`,必要时修改章节标题、顺序和范围。确认后锁定结构:
+
+```bash
+python scripts/approve_structure.py books/ai-intro
+```
+
+锁定后产物是 `work/structure/approved-structure.md`。后续章节切分和内容生成只认这个文件。
+
+### 18.4 章节切分
+
+```bash
+python scripts/split_chapters.py books/ai-intro
+```
+
+检查 `work/chapter_sources/` 和 `work/logs/chapter-split-report.md`:确认每章资料包完整,未归属片段和低置信度片段需要人工处理。
+
+### 18.5 生成前预演
+
+```bash
+python scripts/generate.py books/ai-intro --dry-run
+```
+
+确认任务 DAG、预计 token、预计成本和关键路径。预演不调用 LLM。
+
+### 18.6 内容生成与续跑
+
+```bash
+python scripts/generate.py books/ai-intro
+```
+
+如果中途失败或手动中断,直接续跑:
+
+```bash
+python scripts/generate.py books/ai-intro --resume
+```
+
+调度器根据任务缓存跳过已完成且输入未变化的任务。
+
+### 18.7 检查与定向修复
+
+```bash
+python scripts/check.py books/ai-intro
+```
+
+查看 `work/logs/check-report.md` 和 `work/logs/check-report.json`。可自动修复的问题进入定向修复:
+
+```bash
+python scripts/repair.py books/ai-intro
+python scripts/check.py books/ai-intro
+```
+
+若仍有 `NEEDS_HUMAN`,人工修改对应章节或 agent 结果后再运行检查。
+
+### 18.8 索引与网站
+
+```bash
+python scripts/index.py books/ai-intro
+python scripts/site.py books/ai-intro
+```
+
+`index` 从最终 vault 构建 `site/.bookwiki/bookwiki.sqlite`;`site` 启动网站。网站读取 Markdown 渲染正文,读取 SQLite 提供搜索、Quiz、Cards 和 RAG 问答。
+
+### 18.9 一键构建
+
+确认流程稳定后,可以使用一键脚本:
+
+```bash
+python scripts/build.py books/ai-intro
+```
+
+首次构建建议保留人工闸门:
+
+```bash
+python scripts/build.py books/ai-intro --pause-after convert,structure,split
+```
+
+之后迭代使用:
+
+```bash
+python scripts/build.py books/ai-intro --resume
+```
+
+---
+
+## 19. 代码结构
 
 ```text
 bookwiki/
-  bookwiki/
-    cli.py
+  scripts/
+    init_book.py
+    convert.py
+    structure.py
+    approve_structure.py
+    split_chapters.py
+    generate.py
+    check.py
+    repair.py
+    index.py
+    site.py
+    build.py
 
+  bookwiki/
     convert/
-      pdf_to_md.py
+      mineru_pdf.py              # 调用 MinerU 并规范化 PDF 解析结果
       pptx_to_md.py
       text_to_md.py
 
@@ -1173,57 +1339,80 @@ bookwiki/
     utils/
       files.py  yaml.py  logging.py  hashing.py
 
-  site-template/
+  site-template/                 # Next.js + Fumadocs
     app/
       page.tsx
       wiki/[...slug]/page.tsx
       search/page.tsx
       api/chat/route.ts
     components/
-      MarkdownPage.tsx  QuizBlock.tsx  CardBlock.tsx
+      QuizBlock.tsx  CardBlock.tsx  SourceRef.tsx
       ChatBox.tsx  SearchBox.tsx
     lib/
       sqlite.ts  markdown.ts  rag.ts  llm.ts
 ```
 
+`SKILL.md` 必须包含 YAML frontmatter:
+
+```yaml
+---
+name: bookwiki
+description: Use when working on the BookWiki project: running the Python scripts, converting sources with MinerU, approving Markdown outlines, generating vault content, checking/repairing output, indexing SQLite, or maintaining the Next.js + Fumadocs site.
+---
+```
+
+`SKILL.md` 只保留高频入口:
+
+- 何时使用这个 skill。
+- 标准运行顺序:`convert → structure → approve → split → generate → check/repair → index → site`。
+- 常用脚本命令,例如 `python scripts/build.py books/<id> --resume`。
+- 失败时先看哪些文件:`work/logs/run-manifest.json`、`check-report.json`、`chapter-split-report.md`。
+- 需要详细信息时再读取 `references/runbook.md` 或 `references/contracts.md`。
+
+`references/runbook.md` 放完整运行流程、续跑策略、人工闸门和常见故障处理。`references/contracts.md` 放关键产物契约,包括 `source_ref`、`approved-structure.md`、`agent_results/*.json`、`check-report.json`、`bookwiki.sqlite`。这些引用文件按需加载,避免每次触发 skill 都塞入整份设计稿。
+
+验收标准:让一个没有读过完整 plan 的 AI agent 只加载 `bookwiki` skill 后,能正确说明并执行一次从已有 `books/<id>` 到网站启动的流程,并能根据 `check-report.json` 判断该运行 `repair`、人工修改还是重新生成。
+
 ---
 
-## 19. 五人分工
+## 21. 五人分工
 
 团队共 5 人,其中 1 人负责主线和整体集成。
 
-### 19.1 成员 A:主负责人 + 调度
+### 21.1 成员 A:主负责人 + 调度
 
 | 工作      | 说明                                   |
 |---------|--------------------------------------|
 | 项目结构    | 设计 `books`、`work`、`vault`、`site`     |
-| 主命令     | 实现 `bookwiki build` 及各子命令            |
+| 运行脚本    | 实现 `scripts/build.py` 及各阶段脚本          |
 | **调度器** | 任务 DAG、worker 池、缓存、重试、限速、预算、manifest |
 | 整合器     | 把结构化结果写入 Markdown,来源白名单与校验           |
+| AI Skills | 编写 `skills/bookwiki/SKILL.md` 与引用资料       |
 | 集成调试    | 串起其他成员模块                             |
 
 交付物:
 
 ```text
-bookwiki/cli.py
+scripts/
 bookwiki/scheduler/
 bookwiki/integrator/
 bookwiki/agents/base.py
 bookwiki/schemas/
+skills/bookwiki/
 ```
 
 验收标准:能跑完整主线;整合器能生成含 summary/quiz/cards 的章节;调度可按配置控制并发与预算;支持 `--resume` 断点续跑;失败时能从
 run-manifest 定位阶段;生成的 vault 能被 indexer 读取。
 
-### 19.2 成员 B:资料转换
+### 21.2 成员 B:资料转换
 
-负责把 PDF、PPT 和文本转成 source Markdown:PDF/PPTX 转 Markdown、写入 `source_ref`、基础清洗(合并断行、去页眉页脚)、输出到
+负责把 PDF、PPT 和文本转成 source Markdown:PDF 解析调用 MinerU,PPTX/文本由本项目转换模块处理;统一写入 `source_ref`、基础清洗(合并断行、去页眉页脚)、输出到
 `work/sources_md`。
 
-交付物:`bookwiki/convert/pdf_to_md.py`、`pptx_to_md.py`、`work/sources_md/*.md`。
-验收:普通文字版 PDF 与 PPTX 能转 Markdown;每页/每张幻灯片有 `source_ref`;输出能被 StructureAgent 摘要和章节切分模块读取。
+交付物:`bookwiki/convert/mineru_pdf.py`、`pptx_to_md.py`、`work/sources_md/*.md`。
+验收:PDF 能通过 MinerU 解析并规范化为 source Markdown;PPTX 能转 Markdown;每页/每张幻灯片有 `source_ref`;输出能被 StructureAgent 摘要和章节切分模块读取。
 
-### 19.3 成员 C:章节切分 + 内容 Agent
+### 21.3 成员 C:章节切分 + 内容 Agent
 
 负责 StructureAgent、ChapterSplitAgent、ChapterAgent、ConceptExtract/Reconcile、ConceptAgent,以及主要内容 prompt 与输出
 schema。
@@ -1231,16 +1420,16 @@ schema。
 交付物:`bookwiki/split/`、`agents/chapter_agent.py`、`agents/concept_*.py`、`agents/prompts/`。
 验收:能切章节生成 `chapter_sources/chxx`;章节正文有结构有来源;概念能去重归并、一个概念一页;JSON 能通过 schema 检查。
 
-### 19.4 成员 D:Quiz / Cards / 检查与修复
+### 21.4 成员 D:Quiz / Cards / 检查与修复
 
 负责 QuizAgent、CardAgent、quiz/card schema、Checker、ReviewAgent。**检查器必须为每条 issue 输出 `owner_task_id`**,这是定向修复的前提。
 
 交付物:`agents/quiz_agent.py`、`card_agent.py`、`checkers/`、`schemas/quiz.py`、`schemas/card.py`。
 验收:Quiz/Cards 能被整合器写成代码块;检查器能发现缺字段、断链、缺来源并标注 owner;ReviewAgent 的单元级修复结果可写回。
 
-### 19.5 成员 E:网站 + SQLite
+### 21.5 成员 E:网站 + SQLite
 
-负责 SQLite builder、RAG chunker、Next.js 页面、Quiz/Card 组件、FTS5 搜索、问答 API、环境变量。
+负责 SQLite builder、RAG chunker、Next.js + Fumadocs 页面、Quiz/Card 组件、FTS5 搜索、问答 API、环境变量。
 
 交付物:`bookwiki/indexer/`、`site-template/`、`site/.bookwiki/bookwiki.sqlite`。
 验收:vault 能构建数据库(支持 `content_hash` 增量);网站能读取 vault 与 SQLite;搜索/Quiz/Cards/问答可用且问答显示来源;前端代码不含
@@ -1248,7 +1437,7 @@ API key。
 
 ---
 
-## 20. 成员接口
+## 22. 成员接口
 
 为让 5 人并行开发,需尽早固定下面这些契约。
 
@@ -1260,7 +1449,7 @@ API key。
 | A  | E  | `vault/`                                          |
 | E  | A  | `bookwiki.sqlite` 和网站模板                           |
 | D  | 全组 | schema 和检查规则                                      |
-| A  | 全组 | **`Task` / `Agent` 接口、主命令、目录结构**                  |
+| A  | 全组 | **`Task` / `Agent` 接口、运行脚本、目录结构**                  |
 
 最关键、需要最早冻结的接口:
 
@@ -1282,37 +1471,37 @@ bookwiki.agents.base.Agent     # agent 统一接口
 
 ---
 
-## 21. MVP 范围(分批落地)
+## 23. 完整交付范围
 
-完整调度器超出 MVP 需要。建议分两批,保证 MVP 始终可演示。
+本项目按完整版本交付,不做分期裁剪。开发过程可以按阶段集成,但最终验收必须覆盖下面所有能力。
 
-| 功能                                    | 是否包含                 |
-|---------------------------------------|----------------------|
-| PDF / PPTX 转 Markdown                 | 包含                   |
-| AI 重组大纲 + 人工复核锁定                    | 包含                   |
-| 按锁定大纲切 source Markdown                  | 包含                   |
-| 章节正文 / summary / quiz / cards / 概念页生成 | 包含                   |
-| Obsidian 双链                           | 包含                   |
-| 检查器                                   | 包含                   |
-| SQLite FTS5 搜索 + RAG 问答               | 包含                   |
-| Next.js 网站                            | 包含                   |
-| **调度:DAG + worker 池**                 | **MVP 包含**           |
-| **调度:任务级重试**                          | **MVP 包含**           |
-| **调度:任务缓存 / 断点续跑**                    | **MVP 包含**           |
-| 调度:速率 / 成本预算                          | Phase 2              |
-| 调度:定向修复路由                             | Phase 2              |
-| 概念归并 ConceptReconcile                 | Phase 2(MVP 可先用规则去重) |
-| 调度:run-manifest / dry-run             | Phase 2              |
-| 按 agent 选模型                           | Phase 2              |
-| OCR / 向量检索                            | 暂不包含                 |
-| 用户登录 / 学习进度 / 错题本 / 多书平台              | 不包含                  |
+| 功能                                    | 是否包含 |
+|---------------------------------------|------|
+| MinerU PDF 解析 + PPTX 转 Markdown      | 包含   |
+| AI 重组大纲 + 人工复核锁定                    | 包含   |
+| 按锁定大纲切 source Markdown                  | 包含   |
+| 章节正文 / summary / quiz / cards / 概念页生成 | 包含   |
+| Obsidian 双链                           | 包含   |
+| 检查器                                   | 包含   |
+| SQLite FTS5 搜索 + RAG 问答               | 包含   |
+| Next.js + Fumadocs 网站                 | 包含   |
+| 调度:DAG + worker 池                     | 包含   |
+| 调度:任务级重试                              | 包含   |
+| 调度:任务缓存 / 断点续跑                        | 包含   |
+| 调度:速率 / 成本预算                          | 包含   |
+| 调度:定向修复路由                             | 包含   |
+| 概念归并 ConceptReconcile                 | 包含   |
+| 调度:run-manifest / dry-run             | 包含   |
+| 按 agent 选模型                           | 包含   |
+| AI Skills 调用手册                         | 包含   |
+| OCR / 向量检索                            | 后续增强 |
+| 用户登录 / 学习进度 / 错题本 / 多书平台              | 不做   |
 
-**MVP 的调度三件套(DAG + worker 池、任务级重试、任务缓存)直接决定"能不能顺利把一本书跑完",收益最高、实现量可控,优先做。**
-Phase 2 的几项是降本提质,缺了也能演示。
+完整交付的关键路径是:资料转换、结构锁定、章节切分、DAG 调度、内容生成、检查修复、索引构建、网站问答和 AI Skills 调用手册必须端到端贯通。速率预算、运行清单、dry-run、定向修复和按 agent 选模型都属于验收范围,不能作为可选项处理。
 
 ---
 
-## 22. 开发顺序
+## 24. 开发顺序
 
 ### 阶段一:网站和样例 vault(成员 E + A)
 
@@ -1326,7 +1515,7 @@ Phase 2 的几项是降本提质,缺了也能演示。
 
 ### 阶段三:章节切分 + agent 生成 + 调度骨架(成员 C + A)
 
-产出 `work/structure/proposed-structure.json`、`work/structure/approved-structure.json`、`work/chapter_sources/ch01/`、`agent_results/ch01.*.json`、`vault/chapters/ch01-xxx.md`。
+产出 `work/structure/proposed-structure.md`、`work/structure/approved-structure.md`、`work/chapter_sources/ch01/`、`agent_results/ch01.*.json`、`vault/chapters/ch01-xxx.md`。
 目标:StructureAgent 能先根据全部资料摘要重组大纲,人工复核并锁定后再切章节;ChapterAgent 返回正文、整合器写入 vault;**A 同步搭起 DAG + worker 池骨架,先支持任务缓存与重试**。
 
 ### 阶段四:Quiz / Cards / 检查 / 概念归并(成员 D + C)
@@ -1334,19 +1523,19 @@ Phase 2 的几项是降本提质,缺了也能演示。
 产出 `agent_results/ch01.quiz.json`、`ch01.cards.json`、`concepts.reconciled.json`、`logs/check-report.json`。
 目标:Quiz/Cards 写入章节、检查器报告问题并标 `owner_task_id`、概念去重归并、定向修复能写回。
 
-### 阶段五:整本书 + 网站展示 + Phase 2 调度(成员 A + E)
+### 阶段五:整本书 + 网站展示 + 调度完善(成员 A + E)
 
-产出完整 vault、`bookwiki.sqlite`、可运行 Next.js 网站。
-目标:从输入到网站贯通;搜索/问答可用且显示来源;**补齐速率/预算、run-manifest、按 agent 选模型等 Phase 2 调度能力**。
+产出完整 vault、`bookwiki.sqlite`、可运行 Next.js + Fumadocs 网站。
+目标:从输入到网站贯通;搜索/问答可用且显示来源;**补齐速率/预算、run-manifest、dry-run、定向修复和按 agent 选模型等完整调度能力**。
 
 ---
 
-## 23. 演示方案
+## 25. 演示方案
 
 ```text
 展示 input 中的教材和课件
-运行 convert 命令,展示 source Markdown
-运行 structure 命令,展示 AI 重组的 proposed-structure
+运行 convert 脚本,展示 source Markdown
+运行 structure 脚本,展示 AI 重组的 proposed-structure
 人工复核并锁定 approved-structure
 运行 split-chapters,展示按锁定大纲归属后的 chapter_sources
 运行 generate --dry-run,展示任务 DAG 与预估成本
@@ -1354,7 +1543,7 @@ Phase 2 的几项是降本提质,缺了也能演示。
 中途 Ctrl-C,再 generate --resume,演示断点续跑
 展示生成的 Obsidian vault,在 Obsidian 中打开章节与概念双链
 运行 check,展示 check-report(含 owner_task_id)与定向修复
-运行 index,启动 Next.js 网站
+运行 index,启动 Next.js + Fumadocs 网站
 浏览章节页 → 完成 Quiz → 查看 Cards → 搜索一个概念
 向本章内容提问,展示回答来源
 ```
@@ -1363,7 +1552,7 @@ Phase 2 的几项是降本提质,缺了也能演示。
 
 ---
 
-## 24. 验收标准
+## 26. 验收标准
 
 | 项目              | 标准                                  |
 |-----------------|-------------------------------------|
@@ -1385,9 +1574,9 @@ Phase 2 的几项是降本提质,缺了也能演示。
 
 ---
 
-## 25. 最终项目描述
+## 27. 最终项目描述
 
-BookWiki 是一个面向单本教材的 AI 学习网站生成系统。系统先把 PDF、PPT、试卷和笔记转换为带来源标记的 Markdown,再由
+BookWiki 是一个面向单本教材的 AI 学习网站生成系统。系统先用 MinerU 解析 PDF,并把 PPT、试卷和笔记转换为带来源标记的 Markdown,再由
 StructureAgent 综合所有资料摘要重组最开始的大纲,经人工复核、修改并锁定后,才按锁定大纲把资料切成 chapter source。
 一个调度器把后续所有 agent 工作组织成任务 DAG,用全局 worker 池执行,支持断点续跑、按任务重试、速率与成本控制。多个内容
 agent 据此生成章节正文、summary、quiz、cards 和概念页,且只返回结构化内容,由整合器写入 Obsidian 风格的
