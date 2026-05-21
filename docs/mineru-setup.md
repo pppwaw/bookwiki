@@ -1,7 +1,7 @@
 # MinerU Setup
 
-BookWiki M2 uses a local MinerU API first, then falls back to local MinerU pipeline parsing when
-the API is unavailable or a request times out.
+BookWiki M2 requires a local MinerU API for PDF parsing. If the API is unavailable,
+PDF conversion fails fast instead of falling back to another backend.
 
 ## Services
 
@@ -43,14 +43,7 @@ MinerU API `3.1.3`.
 
 ```bash
 MINERU_API_URL=http://127.0.0.1:8000
-MINERU_VLM_URL=http://127.0.0.1:30000
 MINERU_API_TIMEOUT_SECONDS=20
-```
-
-For deterministic offline tests or CPU-only fallback runs:
-
-```bash
-MINERU_API_DISABLED=1
 ```
 
 ## Conversion Behavior
@@ -59,12 +52,10 @@ MINERU_API_DISABLED=1
 
 1. `GET /health` on `MINERU_API_URL`.
 2. `POST /file_parse` with `return_md=true` and `response_format_zip=false`.
-3. If API parsing fails but the service is healthy, try MinerU `do_parse` with
-   `backend="vlm-http-client"`.
-4. If the API is down or VLM client parsing fails, use MinerU `do_parse` with
-   `backend="pipeline"`.
-5. If MinerU is not installed in the current Python environment, emit metadata Markdown instead
-   of failing the whole pipeline.
+3. If the health check or parse request fails, raise `MineruConversionError` and stop the run.
+
+There is intentionally no `vlm-http-client`, `pipeline`, or metadata fallback for PDF input.
+Offline tests should use TXT/PPTX fixtures unless they explicitly start `mineru-api`.
 
 All PDF Markdown is normalized to include page source refs like:
 

@@ -119,8 +119,8 @@ flowchart LR
   - 同机或邻机起 `mineru-api --host 0.0.0.0 --port 8000 --enable-vlm-preload true`
   - 文档 `docs/mineru-setup.md` 写部署步骤、依赖版本、健康检查 URL
 - [x] **`bookwiki/convert/mineru_client.py`**:
-  - 调 `from mineru.cli.common import do_parse`,`backend="vlm-http-client"`
-  - 启动时 `GET /health` 探活,超时/异常 → 切 `backend="pipeline"`,写日志
+  - 只调用 `mineru-api`:`GET /health` 探活 + `POST /file_parse`
+  - 超时/异常 → 报错退出,不降级到 `vlm-http-client` / `pipeline`
   - 输出规范化为带 `<!-- source_ref: textbook-pXX -->` 注释的 Markdown
 - [x] **`bookwiki/convert/pptx_to_md.py`**:`python-pptx` 抽文本 + 标题,每 slide 一段,写 `source_ref: lectureN-slideMM`
 - [x] **`bookwiki/convert/text_to_md.py`**:TXT/MD 简单 wrap(每文件一段 source_ref)
@@ -132,7 +132,7 @@ flowchart LR
 
 ### 验收
 - [x] 小 PDF 经 MinerU API 解析为 markdown,可读、断页清理 ok、每页有 source_ref
-- [x] MinerU API 失败/关闭时重跑 → 日志说切到 pipeline,精度降级但不报错
+- [x] MinerU API 失败/关闭时重跑 → 报错退出,不做降级
 - [x] 跑出来的 sources_md 能被 M3 的 ChapterSplit 接收
 
 ---
@@ -323,7 +323,7 @@ flowchart LR
 
 | 风险 | 概率 | 缓解 |
 |---|---|---|
-| MinerU 部署门槛高,B 卡很久 | 高 | M1 完成后即可让 B 开始;不行就退到 `backend="pipeline"` CPU 模式,精度 85+ 可接受 |
+| MinerU 部署门槛高,B 卡很久 | 高 | M2 后按最新约束要求 `mineru-api` 为硬依赖;服务不可用时 fail fast,不静默降级 |
 | LangGraph + Send + interrupt 行为有坑 | 中 | M1 先跑完 stub 验证 interrupt + resume_or_start;不行退到 `langgraph<0.x` 已验证版本 |
 | cite tool validator 让 LLM 频繁重试拖慢 | 中 | M4 验收时观察 instructor 重试次数;超 30% 则换"prompt 强约束 + 整合器兜底校验"路径 |
 | gemma-4 / kimi-k2.6 在 litellm 里 provider 字符串变化 | 低 | `scheduler/llm.py` 封装一层,变了改一处 |

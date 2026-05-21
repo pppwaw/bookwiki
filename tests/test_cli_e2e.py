@@ -8,13 +8,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE_PDF = ROOT / "tests" / "fixtures" / "mini-book" / "input" / "Prob_GZIC.pdf"
 
 
 def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
-    env.setdefault("MINERU_API_DISABLED", "1")
     return subprocess.run(
         [sys.executable, *args],
         cwd=cwd,
@@ -26,10 +24,11 @@ def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]
 
 
 def test_init_book_and_run_stub_pipeline_to_sqlite(tmp_path) -> None:
-    assert FIXTURE_PDF.exists()
     book_dir = tmp_path / "books" / "mini"
+    source = tmp_path / "notes.txt"
+    source.write_text("BookWiki offline CLI smoke source.", encoding="utf-8")
 
-    run_script("scripts/init_book.py", str(book_dir), "--source", str(FIXTURE_PDF))
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
     run_script("scripts/run.py", str(book_dir))
 
     db_path = book_dir / "site" / ".bookwiki" / "bookwiki.sqlite"
@@ -54,8 +53,10 @@ def test_init_book_and_run_stub_pipeline_to_sqlite(tmp_path) -> None:
 
 def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
+    source = tmp_path / "notes.txt"
+    source.write_text("BookWiki resume smoke source.", encoding="utf-8")
 
-    run_script("scripts/init_book.py", str(book_dir), "--source", str(FIXTURE_PDF))
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
     run_script("scripts/run.py", str(book_dir))
     resumed = run_script("scripts/run.py", str(book_dir), "--resume")
 
@@ -65,8 +66,10 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
 
 def test_dry_run_prints_mermaid_and_estimate(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
+    source = tmp_path / "notes.txt"
+    source.write_text("BookWiki dry run smoke source.", encoding="utf-8")
 
-    run_script("scripts/init_book.py", str(book_dir), "--source", str(FIXTURE_PDF))
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
     result = run_script("scripts/run.py", str(book_dir), "--dry-run")
 
     assert "graph TD" in result.stdout
