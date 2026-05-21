@@ -215,7 +215,6 @@ books/
 work/
 site-template/node_modules/
 site-template/.next/
-/Prob_GZIC.pdf
 
 # PyPI configuration file
 .pypirc
