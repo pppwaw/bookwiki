@@ -36,12 +36,15 @@ flowchart LR
 
 ### 任务
 
-- [ ] `pyproject.toml`:固定 Python ≥ 3.12,依赖:`langgraph`、`litellm`、`instructor`、`pydantic`、`diskcache`、`tiktoken`、`pyyaml`、`mineru[pipeline,core]`、`pytest`、`pytest-asyncio`、`ruff`
-- [ ] 目录骨架按 §19,空文件占位 + `__init__.py`
-- [ ] `.env.example` 列出所有 API key 与 `BOOKWIKI_*` 环境变量
-- [ ] `pre-commit` + `ruff` 配置
-- [ ] `CLAUDE.md`(给 AI 协作者的项目级 instructions,可极简)
+- [x] `pyproject.toml`:固定 Python ≥ 3.12,依赖:`langgraph`、`litellm`、`instructor`、`pydantic`、`diskcache`、`tiktoken`、`pyyaml`、`mineru[pipeline,core]`、`pytest`、`pytest-asyncio`、`ruff`
+- [x] 目录骨架按 §19,空文件占位 + `__init__.py`
+- [x] `.env.example` 列出所有 API key 与 `BOOKWIKI_*` 环境变量
+- [x] `pre-commit` + `ruff` 配置
+- [x] `AGENTS.md`(给 AI 协作者的项目级 instructions,可极简)
 - [ ] `tests/fixtures/mini-book/input/` 放 1 份 PDF(10 页内)、1 份 PPTX(5 张内)、1 份 5 题试卷 — 这是后续所有测试的共同基线
+  - [x] PDF: `Prob_GZIC.pdf`
+  - [ ] PPTX(5 张内)
+  - [ ] 5 题试卷
 
 ### 产物
 - 仓库目录、依赖锁文件、empty smoke test pass
@@ -61,31 +64,34 @@ flowchart LR
 ### 任务
 
 - [ ] **`bookwiki/scheduler/graph.py`**:
-  - LangGraph `StateGraph` 完整 10 个 node(§10.2)
-  - `interrupt_before=["split"]` 静态生效
-  - `build_graph(cfg, stop_after=None, pause_after=[], dry_run=False)`,内部把 `stop_after` 转 `interrupt_after`
-  - `resume_or_start(graph, book_id)` 辅助函数(§17.6)
-- [ ] **`bookwiki/scheduler/llm.py`**:
+  - [ ] LangGraph `StateGraph` 完整 10 个 node(§10.2)
+  - [ ] `interrupt_before=["split"]` 静态生效
+  - [x] `build_graph(cfg, stop_after=None, pause_after=[], dry_run=False)`,内部把 `stop_after` 转 `interrupt_after`
+  - [x] `resume_or_start(graph, book_id)` 辅助函数(§17.6)
+- [x] **`bookwiki/scheduler/llm.py`**:
   - `litellm.Router` 配齐 §10.4 的 4 个 model_name,key 从 env 读
   - `instructor.from_litellm(router.acompletion)` 客户端
-- [ ] **`bookwiki/scheduler/cache.py`**:
+- [x] **`bookwiki/scheduler/cache.py`**:
   - `task_key(agent_cls, *inputs, model)` 算 input_hash(§10.6)
   - `run_with_cache(agent_cls, *inputs, model)` 协程
-- [ ] **`bookwiki/scheduler/budget_guard.py`**:`raise BudgetExceeded` 当 `router.usage_logs` 超 `budget.maxCostUsd`
-- [ ] **`bookwiki/scheduler/dry_run.py`**:`ESTIMATE` 常量表 + `estimate(agent_cls, *inputs)`(§10.8)
-- [ ] **`bookwiki/agents/base.py`**:`Agent[I, O]` Protocol(§9.1)
-- [ ] **`bookwiki/schemas/*.py`**:全部 Pydantic 模型 + `SCHEMA_VERSION` 常量,见 §9.2
+- [x] **`bookwiki/scheduler/budget_guard.py`**:`raise BudgetExceeded` 当 `router.usage_logs` 超 `budget.maxCostUsd`
+- [x] **`bookwiki/scheduler/dry_run.py`**:`ESTIMATE` 常量表 + `estimate(agent_cls, *inputs)`(§10.8)
+- [x] **`bookwiki/agents/base.py`**:`Agent[I, O]` Protocol(§9.1)
+- [x] **`bookwiki/schemas/*.py`**:全部 Pydantic 模型 + `SCHEMA_VERSION` 常量,见 §9.2
   - `ChapterResult / SummaryResult / QuizResult / CardResult`
   - `ConceptCandidate / ConceptReconciledItem / ConceptResult`
   - `CheckReport / Issue`(必须含 `owner_task_id`)
   - `Citation`(`ref_id`, `quote`,带 validator)
-- [ ] **所有 agent 用 stub 实现**:返回硬编码的合法 Pydantic 对象(不调 LLM)。让端到端跑得动
-- [ ] **10 个 LangGraph node 函数 stub**:读上游产物路径,写本阶段产物到 work/,return state delta
-- [ ] **`scripts/run.py`**:CLI 参数解析 + `build_graph` + `resume_or_start`,接 §17.4 全部开关
-- [ ] **`scripts/{convert,structure,split,generate,check,repair,index}.py`**:每个 4 行(§17.1)
-- [ ] **`scripts/init_book.py`**:创建 `books/<id>/` 目录树
-- [ ] **`scripts/site.py`**:`subprocess.run(["pnpm", "dev"], cwd=site_dir)` 即可
+- [x] **所有 agent 用 stub 实现**:返回硬编码的合法 Pydantic 对象(不调 LLM)。让端到端跑得动
+- [x] **10 个 LangGraph node 函数 stub**:读上游产物路径,写本阶段产物到 work/,return state delta
+- [x] **`scripts/run.py`**:CLI 参数解析 + `build_graph` + `resume_or_start`,接 §17.4 全部开关
+- [x] **`scripts/{convert,structure,split,generate,check,repair,index}.py`**:每个 4 行(§17.1)
+- [x] **`scripts/init_book.py`**:创建 `books/<id>/` 目录树
+- [x] **`scripts/site.py`**:`subprocess.run(["pnpm", "dev"], cwd=site_dir)` 即可
 - [ ] **mini-book 用 stub 跑通**:`init_book → convert → structure → split → generate → check → index`,产 `bookwiki.sqlite`,site 能起来
+  - [x] `init_book → convert → structure → split → generate → check → index`
+  - [x] 产 `bookwiki.sqlite`
+  - [ ] site 启动验证
 
 ### 产物
 - `scripts/*.py` 9 个脚本可执行
