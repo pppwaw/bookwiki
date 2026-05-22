@@ -4,6 +4,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import yaml
+
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
 from bookwiki.agents.structure_agent import StructureAgent
 from bookwiki.pipeline.nodes import split_node, structure_node
@@ -14,64 +16,27 @@ from bookwiki.split.chapter_splitter import (
     split_sources_by_structure,
 )
 
-APPROVED = """# Proposed Structure
-
-## Chapter 1 Search Foundations
-
-### Goal
-Explain state-space search.
-
-### Scope
-textbook p1-p2.
-
-### Topics
-- State space search
-
-### Source refs
-- `textbook-p001`
-
-### Evidence
-- textbook: states and goals
-
-## Chapter 2 Heuristics
-
-### Goal
-Explain heuristic search.
-
-### Scope
-textbook p3.
-
-### Topics
-- Heuristic search
-
-### Source refs
-- `textbook-p002`
-
-### Evidence
-- textbook: heuristics
+APPROVED = """chapters:
+  - title: Chapter 1 Search Foundations
+    topics:
+      - State space search
+    source_refs:
+      - textbook-p001
+  - title: Chapter 2 Heuristics
+    topics:
+      - Heuristic search
+    source_refs:
+      - textbook-p002
 """
 
-APPROVED_V2 = """# Proposed Structure
-
-## Chapter 6 Point Estimation
-
-### Goal
-Explain point estimation through method of moments and maximum likelihood estimation.
-
-### Scope
-Week 9 and Week 10; covers point estimators and sampling distributions.
-
-### Topics
-- Method of moments
-- Maximum likelihood estimation
-
-### Source refs
-- `Week-9-p001`
-- `Week-10-p001`
-
-### Evidence
-- Week-9: sampling distributions
-- Week-10: point estimation
+APPROVED_V2 = """chapters:
+  - title: Chapter 6 Point Estimation
+    topics:
+      - Method of moments
+      - Maximum likelihood estimation
+    source_refs:
+      - Week-9-p001
+      - Week-10-p001
 """
 
 
@@ -80,53 +45,73 @@ def test_parse_approved_structure_extracts_chapters_and_sources() -> None:
 
     assert [chapter.chapter_id for chapter in chapters] == ["chapter-1", "chapter-2"]
     assert chapters[0].title == "Search Foundations"
-    assert chapters[0].goal == "Explain state-space search."
-    assert chapters[0].scope == "textbook p1-p2."
+    assert chapters[0].topics == ["State space search"]
     assert chapters[0].source_refs == ["textbook-p001"]
     assert chapters[1].source_refs == ["textbook-p002"]
 
 
-def test_parse_approved_structure_rejects_legacy_bullet_format() -> None:
+def test_parse_approved_structure_rejects_legacy_markdown_bullet_format() -> None:
     legacy = (
         "# Mini Book\n\n"
         "## Chapter 6 Point Estimation\n\n"
-        "- 目标: Explain estimators.\n"
-        "- 范围: Week 9 and Week 10.\n"
-        "- 来源:\n"
+        "- Target: Explain estimators.\n"
+        "- Scope: Week 9 and Week 10.\n"
+        "- Sources:\n"
         "  - Week-9-p001\n"
     )
 
     try:
         parse_approved_structure(legacy)
     except ValueError as exc:
-        assert "new Structure format" in str(exc)
+        assert "top-level chapters list" in str(exc)
     else:
-        raise AssertionError("legacy bullet format should be rejected")
+        raise AssertionError("legacy Markdown bullet format should be rejected")
+
+
+def test_parse_approved_structure_rejects_legacy_markdown_section_format() -> None:
+    legacy_sections = """# Proposed Structure
+
+## Chapter 6 Point Estimation
+
+### Goal
+Explain estimators.
+
+### Scope
+Week 10.
+
+### Topics
+- Method of moments
+
+### Source refs
+- `Week-10-p001`
+"""
+
+    try:
+        parse_approved_structure(legacy_sections)
+    except ValueError as exc:
+        assert "top-level chapters list" in str(exc)
+    else:
+        raise AssertionError("section-based Markdown structure format should be rejected")
 
 
 def test_parse_approved_structure_rejects_legacy_chapter_ids() -> None:
-    legacy = APPROVED.replace("## Chapter 1 Search Foundations", "## ch01 Search Foundations")
+    legacy = APPROVED.replace("Chapter 1 Search Foundations", "ch01 Search Foundations")
 
     try:
         parse_approved_structure(legacy)
     except ValueError as exc:
-        assert "Chapter 6" in str(exc)
+        assert "chapter titles" in str(exc)
     else:
         raise AssertionError("legacy chNN headings should be rejected")
 
 
-def test_parse_approved_structure_accepts_review_friendly_sections() -> None:
+def test_parse_approved_structure_accepts_yaml_contract() -> None:
     chapters = parse_approved_structure(APPROVED_V2)
 
     assert len(chapters) == 1
     assert chapters[0].chapter_id == "chapter-6"
     assert chapters[0].title == "Point Estimation"
-    assert chapters[0].goal == (
-        "Explain point estimation through method of moments and maximum likelihood estimation."
-    )
-    assert chapters[0].scope == (
-        "Week 9 and Week 10; covers point estimators and sampling distributions."
-    )
+    assert chapters[0].topics == ["Method of moments", "Maximum likelihood estimation"]
     assert chapters[0].source_refs == ["Week-9-p001", "Week-10-p001"]
 
 
@@ -135,7 +120,7 @@ def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_pa
     source.write_text(
         "# Week-10\n\n"
         "<!-- source_ref: Week-10-p001 -->\n\n"
-        "# Chapter 6 The point estimation (点估计)\n\n"
+        "# Chapter 6 The point estimation (bad ocr)\n\n"
         "The method of moments and maximum likelihood estimation.",
         encoding="utf-8",
     )
@@ -148,15 +133,17 @@ def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_pa
         )
     )
 
+    structure = yaml.safe_load(result.proposed_structure_yaml)
+
     assert summary.detected_chapter_id == "ch06"
     assert summary.detected_title == "Point Estimation"
-    assert "## Chapter 6 Point Estimation" in result.proposed_structure_md
-    assert "### Goal" in result.proposed_structure_md
-    assert "### Scope" in result.proposed_structure_md
-    assert "### Source refs" in result.proposed_structure_md
-    assert "鐩爣" not in result.proposed_structure_md
-    assert "## ch06 Point Estimation" not in result.proposed_structure_md
-    assert "## ch02 Week 10" not in result.proposed_structure_md
+    assert structure["chapters"][0]["title"] == "Chapter 6 Point Estimation"
+    assert structure["chapters"][0]["source_refs"] == ["Week-10-p001"]
+    assert "goal" not in structure["chapters"][0]
+    assert "scope" not in structure["chapters"][0]
+    assert "evidence" not in structure["chapters"][0]
+    assert "ch06" not in result.proposed_structure_yaml
+    assert "ch02" not in result.proposed_structure_yaml
 
 
 def test_structure_agent_reflects_source_content_in_chapter_plan(tmp_path: Path) -> None:
@@ -181,12 +168,12 @@ def test_structure_agent_reflects_source_content_in_chapter_plan(tmp_path: Path)
     )
 
     assert "Week-10" not in summary.headings
-    assert "method of moments" in result.proposed_structure_md
-    assert "maximum likelihood estimation" in result.proposed_structure_md
-    assert "More general case" in result.proposed_structure_md
-    assert "## Chapter 2 Practice" not in result.proposed_structure_md
-    assert "Cover the source material assigned" not in result.proposed_structure_md
-    assert "Automatically grouped source set" not in result.proposed_structure_md
+    assert "method of moments" in result.proposed_structure_yaml
+    assert "maximum likelihood estimation" in result.proposed_structure_yaml
+    assert "More general case" in result.proposed_structure_yaml
+    assert "Chapter 2 Practice" not in result.proposed_structure_yaml
+    assert "Cover the source material assigned" not in result.proposed_structure_yaml
+    assert "Automatically grouped source set" not in result.proposed_structure_yaml
 
 
 def test_structure_agent_merges_sources_with_same_detected_chapter() -> None:
@@ -213,11 +200,14 @@ def test_structure_agent_merges_sources_with_same_detected_chapter() -> None:
         )
     )
 
-    assert result.proposed_structure_md.count("## Chapter 6 Point Estimation") == 1
-    assert "## ch06 Point Estimation" not in result.proposed_structure_md
-    assert "## Chapter 2 Practice" not in result.proposed_structure_md
-    assert "- `Week-9-p001`" in result.proposed_structure_md
-    assert "- `Week-10-p001`" in result.proposed_structure_md
+    structure = yaml.safe_load(result.proposed_structure_yaml)
+
+    assert [chapter["title"] for chapter in structure["chapters"]] == [
+        "Chapter 6 Point Estimation"
+    ]
+    assert "ch06 Point Estimation" not in result.proposed_structure_yaml
+    assert "Chapter 2 Practice" not in result.proposed_structure_yaml
+    assert structure["chapters"][0]["source_refs"] == ["Week-9-p001", "Week-10-p001"]
 
 
 def test_split_sources_by_structure_aligns_fragments_and_writes_appendix(tmp_path: Path) -> None:

@@ -39,7 +39,14 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
                 "key_terms": ["method of moments"],
             },
             {
-                "proposed_structure_md": "# Proposed Structure\n\n## Chapter 6 Point Estimation",
+                "proposed_structure_yaml": (
+                    "chapters:\n"
+                    "  - title: Chapter 6 Point Estimation\n"
+                    "    topics:\n"
+                    "      - Method of moments\n"
+                    "    source_refs:\n"
+                    "      - Week-10-p001\n"
+                ),
                 "chapters": ["Chapter 6 Point Estimation"],
             },
             {
@@ -131,18 +138,12 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         {
             "source_paths": [str(source)],
             "approved_structure": (
-                "# Proposed Structure\n\n"
-                "## Chapter 6 Point Estimation\n\n"
-                "### Goal\n"
-                "Explain point estimation.\n\n"
-                "### Scope\n"
-                "Week 10.\n\n"
-                "### Topics\n"
-                "- Method of moments\n\n"
-                "### Source refs\n"
-                "- `Week-10-p001`\n\n"
-                "### Evidence\n"
-                "- Week-10: method of moments\n"
+                "chapters:\n"
+                "  - title: Chapter 6 Point Estimation\n"
+                "    topics:\n"
+                "      - Method of moments\n"
+                "    source_refs:\n"
+                "      - Week-10-p001\n"
             ),
         },
         model="deepseek-v4-flash",

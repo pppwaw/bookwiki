@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 from bookwiki.convert.common import SOURCE_REF_RE
 
 
@@ -11,8 +13,7 @@ from bookwiki.convert.common import SOURCE_REF_RE
 class ChapterSpec:
     chapter_id: str
     title: str
-    goal: str = ""
-    scope: str = ""
+    topics: list[str] = field(default_factory=list)
     source_refs: list[str] = field(default_factory=list)
 
 
@@ -33,40 +34,42 @@ class SplitResult:
     report_md: str
 
 
-def parse_approved_structure(markdown: str) -> list[ChapterSpec]:
-    if re.search(r"^##\s+ch\d+\b", markdown, flags=re.IGNORECASE | re.MULTILINE):
-        msg = "approved structure must use headings like '## Chapter 6 Point Estimation'"
+def parse_approved_structure(structure_yaml: str) -> list[ChapterSpec]:
+    try:
+        payload = yaml.safe_load(structure_yaml)
+    except yaml.YAMLError as exc:
+        msg = "approved structure must be YAML with a top-level chapters list"
+        raise ValueError(msg) from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("chapters"), list):
+        msg = "approved structure must be YAML with a top-level chapters list"
         raise ValueError(msg)
-    headings = [
-        (match, parsed)
-        for match in re.finditer(r"^##\s+(.+?)\s*$", markdown, flags=re.MULTILINE)
-        if (parsed := _parse_chapter_heading(match.group(1)))
-    ]
     chapters: list[ChapterSpec] = []
-    for index, (match, (chapter_id, title)) in enumerate(headings):
-        start = match.end()
-        end = headings[index + 1][0].start() if index + 1 < len(headings) else len(markdown)
-        block = markdown[start:end]
-        goal = _extract_field(block, "goal")
-        scope = _extract_field(block, "scope")
-        source_refs = _extract_source_refs(block)
-        if not goal or not scope or not source_refs:
+    for index, item in enumerate(payload["chapters"], start=1):
+        if not isinstance(item, dict):
+            msg = f"chapter entry {index} must be a mapping"
+            raise ValueError(msg)
+        parsed = _parse_chapter_heading(str(item.get("title") or ""))
+        if not parsed:
+            msg = "approved structure chapter titles must look like 'Chapter 6 Point Estimation'"
+            raise ValueError(msg)
+        chapter_id, title = parsed
+        topics = _string_list(item.get("topics"))
+        source_refs = _string_list(item.get("source_refs"))
+        if not topics or not source_refs:
             msg = (
-                f"chapter {chapter_id!r} must use the new Structure format with "
-                "### Goal, ### Scope, and ### Source refs sections"
+                f"chapter {chapter_id!r} must include non-empty topics and source_refs lists"
             )
             raise ValueError(msg)
         chapters.append(
             ChapterSpec(
                 chapter_id=chapter_id,
                 title=title,
-                goal=goal,
-                scope=scope,
+                topics=topics,
                 source_refs=source_refs,
             )
         )
     if not chapters:
-        msg = "approved structure must contain headings like '## Chapter 6 Point Estimation'"
+        msg = "approved structure must contain at least one chapter"
         raise ValueError(msg)
     return chapters
 
@@ -120,8 +123,10 @@ def extract_source_fragments(path: str | Path) -> list[SourceFragment]:
     return fragments
 
 
-def split_sources_by_structure(source_paths: list[str | Path], approved_md: str) -> SplitResult:
-    specs = parse_approved_structure(approved_md)
+def split_sources_by_structure(
+    source_paths: list[str | Path], approved_structure: str
+) -> SplitResult:
+    specs = parse_approved_structure(approved_structure)
     fragments = [
         fragment
         for source_path in source_paths
@@ -166,47 +171,15 @@ def split_sources_by_structure(source_paths: list[str | Path], approved_md: str)
     return SplitResult(chapters, chapter_titles, alignment, coverage, report_md)
 
 
-def _extract_field(block: str, *names: str) -> str:
-    for name in names:
-        section = _extract_section(block, name)
-        if section:
-            return _section_text(section)
-    return ""
-
-
-def _extract_source_refs(block: str) -> list[str]:
-    refs: list[str] = []
-    section = _extract_section(block, "source refs")
-    if section:
-        refs.extend(_extract_source_ref_items(section))
-    return refs
-
-
-def _extract_section(block: str, name: str) -> str:
-    match = re.search(
-        rf"^###\s+{re.escape(name)}\s*$\n(.*?)(?=^###\s+|^##\s+|\Z)",
-        block,
-        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
-    )
-    return match.group(1).strip() if match else ""
-
-
-def _section_text(section: str) -> str:
-    lines = [
-        line.strip()
-        for line in section.splitlines()
-        if line.strip() and not line.strip().startswith("-")
-    ]
-    return " ".join(lines)
-
-
-def _extract_source_ref_items(section: str) -> list[str]:
-    refs: list[str] = []
-    for line in section.splitlines():
-        item = re.match(r"^\s*-\s+(.+?)\s*$", line)
-        if item:
-            refs.append(item.group(1).strip("` "))
-    return refs
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        text = str(item).strip().strip("` ")
+        if text:
+            items.append(text)
+    return items
 
 
 def _assign_fragment(fragment: SourceFragment, specs: list[ChapterSpec]) -> tuple[str, float, str]:
@@ -217,7 +190,7 @@ def _assign_fragment(fragment: SourceFragment, specs: list[ChapterSpec]) -> tupl
     best: tuple[str, float, str] | None = None
     text = fragment.body.lower()
     for spec in specs:
-        terms = _keywords(f"{spec.title} {spec.goal} {spec.scope}")
+        terms = _keywords(" ".join([spec.title, *spec.topics]))
         matches = sum(1 for term in terms if term in text)
         if matches == 0:
             continue

@@ -46,10 +46,10 @@ def _read_all_markdown(paths: list[Path]) -> str:
     return "\n\n".join(path.read_text(encoding="utf-8") for path in paths)
 
 
-def _chapter_titles(approved_md: str) -> list[tuple[str, str]]:
+def _chapter_titles(approved_structure: str) -> list[tuple[str, str]]:
     return [
         (chapter.chapter_id, chapter.title)
-        for chapter in parse_approved_structure(approved_md)
+        for chapter in parse_approved_structure(approved_structure)
     ]
 
 
@@ -115,15 +115,15 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
 
     out_dir = ensure_dir(cfg.work_dir / "structure")
     proposed_path = write_text(
-        out_dir / "proposed-structure.md", structure.result.proposed_structure_md
+        out_dir / "proposed-structure.yaml", structure.result.proposed_structure_yaml
     )
-    approved_path = out_dir / "approved-structure.md"
+    approved_path = out_dir / "approved-structure.yaml"
     if not approved_path.exists():
-        write_text(approved_path, structure.result.proposed_structure_md)
+        write_text(approved_path, structure.result.proposed_structure_yaml)
     write_text(
         out_dir / "structure-review.md",
         "# Structure Review\n\n"
-        "Review `proposed-structure.md`, edit `approved-structure.md`, then run split.\n\n"
+        "Review `proposed-structure.yaml`, edit `approved-structure.yaml`, then run split.\n\n"
         f"Source summaries: {len(summaries)}\n",
     )
 
@@ -136,9 +136,9 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
 
 async def split_node(state: State, cfg: BookConfig) -> State:
     approved_path = cfg.book_dir / state.get(
-        "approved_structure", "work/structure/approved-structure.md"
+        "approved_structure", "work/structure/approved-structure.yaml"
     )
-    approved_md = approved_path.read_text(encoding="utf-8")
+    approved_structure = approved_path.read_text(encoding="utf-8")
     source_paths = [cfg.book_dir / rel for rel in state.get("sources_md", [])]
     split = await run_with_cache(
         ChapterSplitAgent,
@@ -148,7 +148,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
                 sha256_text(path.read_text(encoding="utf-8", errors="ignore"))
                 for path in source_paths
             ],
-            "approved_structure": approved_md,
+            "approved_structure": approved_structure,
         },
         model=cfg.model_for("split"),
         cache_dir=_cache_dir(cfg),
@@ -158,7 +158,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     out_dir = ensure_dir(cfg.work_dir / "chapter_sources")
     _clear_chapter_source_dirs(out_dir)
     chapter_sources: dict[str, str] = {}
-    titles = split.result.chapter_titles or dict(_chapter_titles(approved_md))
+    titles = split.result.chapter_titles or dict(_chapter_titles(approved_structure))
     for ch_id, md in split.result.chapters.items():
         title = titles.get(ch_id, ch_id)
         chapter_dir = ensure_dir(out_dir / ch_id)

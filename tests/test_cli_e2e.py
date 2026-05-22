@@ -99,31 +99,19 @@ def test_structure_then_split_allows_manual_approved_structure_edit(tmp_path) ->
     assert checkpoint["status"] == "paused"
     assert checkpoint["next_node"] == "split"
 
-    approved = book_dir / "work" / "structure" / "approved-structure.md"
+    approved = book_dir / "work" / "structure" / "approved-structure.yaml"
     approved.write_text(
-        "# Mini\n\n"
-        "## Chapter 1 Intro Search\n\n"
-        "### Goal\n"
-        "Intro.\n\n"
-        "### Scope\n"
-        "intro.\n\n"
-        "### Topics\n"
-        "- State space search\n\n"
-        "### Source refs\n"
-        "- `intro-text`\n\n"
-        "### Evidence\n"
-        "- intro source\n\n"
-        "## Chapter 2 Heuristic Search\n\n"
-        "### Goal\n"
-        "Heuristics.\n\n"
-        "### Scope\n"
-        "advanced.\n\n"
-        "### Topics\n"
-        "- Heuristic search\n\n"
-        "### Source refs\n"
-        "- `advanced-text`\n\n"
-        "### Evidence\n"
-        "- advanced source\n",
+        "chapters:\n"
+        "  - title: Chapter 1 Intro Search\n"
+        "    topics:\n"
+        "      - State space search\n"
+        "    source_refs:\n"
+        "      - intro-text\n"
+        "  - title: Chapter 2 Heuristic Search\n"
+        "    topics:\n"
+        "      - Heuristic search\n"
+        "    source_refs:\n"
+        "      - advanced-text\n",
         encoding="utf-8",
     )
 

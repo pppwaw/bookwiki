@@ -4,50 +4,46 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+import yaml
+
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.source import StructureResult
 
 
+class _IndentedSafeDumper(yaml.SafeDumper):
+    def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
+        return super().increase_indent(flow, False)
+
+
 class StructureAgent:
-    kind: ClassVar[str] = "structure_llm_v1"
+    kind: ClassVar[str] = "structure_llm_v2"
     output_model: ClassVar[type[StructureResult]] = StructureResult
     model_key: ClassVar[str] = "structure"
     prompt_name: ClassVar[str] = "structure"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
+        version="v2",
         body="""You are the book-structure agent.
 
 Create a proposed learning structure from the source summaries.
-Return proposed_structure_md in this exact Markdown shape:
+Return proposed_structure_yaml as YAML in this exact shape:
 
-# Proposed Structure
-
-## Chapter 6 Point Estimation
-
-### Goal
-One concrete learning goal.
-
-### Scope
-Specific source-grounded scope.
-
-### Topics
-- Topic or heading visible in the sources.
-
-### Source refs
-- `Week-9-p001`
-
-### Evidence
-- Week-9: short evidence note.
+chapters:
+  - title: Chapter 6 Point Estimation
+    topics:
+      - Topic or heading visible in the sources.
+    source_refs:
+      - Week-9-p001
 
 Use visible headings like "Chapter 6 Point Estimation" when the source clearly contains
 a chapter number.
-Do not output internal-only ids such as ch06 in the Markdown heading.
+Do not output internal-only ids such as ch06 in the title.
 Avoid empty placeholder chapters.
-Each chapter section must include Goal, Scope, Topics, Source refs, and Evidence sections.
+Each chapter entry must include only title, topics, and source_refs.
+Do not include goal, scope, evidence, prose paragraphs, Markdown, or code fences.
 
-The Markdown should reflect the real source content, not generic boilerplate.""",
+The YAML should reflect the real source content, not generic boilerplate.""",
     )
 
     async def run(
@@ -75,45 +71,28 @@ The Markdown should reflect the real source content, not generic boilerplate."""
 def _draft_structure(summaries: list[dict[str, Any]]) -> StructureResult:
     chapters = _chapter_specs_from_sources(summaries)
     return StructureResult(
-        proposed_structure_md=_render_structure_markdown(chapters),
+        proposed_structure_yaml=_render_structure_yaml(chapters),
         chapters=[_display_heading(plan) for plan in chapters],
     )
 
 
-def _render_structure_markdown(chapters: list[_ChapterPlan]) -> str:
-    lines = [
-        "# Proposed Structure",
-        "",
-        "<!-- Review this file, edit as needed, then copy/keep it as approved-structure.md. -->",
-        "",
-    ]
-    for index, plan in enumerate(chapters, start=1):
-        heading = _display_heading(plan)
+def _render_structure_yaml(chapters: list[_ChapterPlan]) -> str:
+    payload = {"chapters": []}
+    for plan in chapters:
         topics = _topic_terms(plan)
-        lines.extend(
-            [
-                f"## {heading}",
-                "",
-                "### Goal",
-                _render_goal(plan, topics),
-                "",
-                "### Scope",
-                _render_scope(plan, topics, index),
-                "",
-                "### Topics",
-            ]
+        payload["chapters"].append(
+            {
+                "title": _display_heading(plan),
+                "topics": topics[:8] or ["Source-grounded overview"],
+                "source_refs": plan.source_refs,
+            }
         )
-        lines.extend(f"- {topic}" for topic in topics[:8])
-        if not topics:
-            lines.append("- Source-grounded overview")
-
-        lines.extend(["", "### Source refs"])
-        lines.extend(f"- `{ref}`" for ref in plan.source_refs)
-
-        lines.extend(["", "### Evidence"])
-        lines.extend(f"- {note}" for note in _evidence_notes(plan))
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+    return yaml.dump(
+        payload,
+        Dumper=_IndentedSafeDumper,
+        sort_keys=False,
+        allow_unicode=True,
+    )
 
 
 @dataclass
@@ -201,36 +180,6 @@ def _display_heading(plan: _ChapterPlan) -> str:
     if chapter:
         return f"Chapter {int(chapter.group(1))} {plan.title}"
     return f"{plan.chapter_id} {plan.title}"
-
-
-def _render_goal(plan: _ChapterPlan, topics: list[str]) -> str:
-    if topics:
-        return f"Explain {plan.title} through {', '.join(topics[:4])}."
-    return f"Organize the available source material for {plan.title}."
-
-
-def _render_scope(plan: _ChapterPlan, topics: list[str], index: int) -> str:
-    sources = ", ".join(plan.source_ids) if plan.source_ids else f"chapter slot {index}"
-    refs = (
-        f"{len(plan.source_refs)} source ref(s)"
-        if plan.source_refs
-        else "no explicit source refs"
-    )
-    if topics:
-        return f"{sources}; covers {', '.join(topics[:6])} ({refs})."
-    return f"{sources}; {refs}."
-
-
-def _evidence_notes(plan: _ChapterPlan) -> list[str]:
-    notes: list[str] = []
-    for source_id, summary in zip(plan.source_ids, plan.summaries, strict=False):
-        cleaned = re.sub(r"\s+", " ", summary).strip()
-        if cleaned:
-            notes.append(f"{source_id}: {cleaned[:180]}")
-    notes.extend(f"heading: {heading}" for heading in plan.headings[:4])
-    if not notes:
-        notes.append("No detailed evidence extracted; review source refs before approval.")
-    return notes[:6]
 
 
 _KNOWN_TOPIC_PHRASES = (

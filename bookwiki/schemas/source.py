@@ -16,7 +16,7 @@ class SourceSummaryResult(VersionedModel):
 
 
 class StructureResult(VersionedModel):
-    proposed_structure_md: str
+    proposed_structure_yaml: str
     chapters: list[str] = Field(default_factory=list)
 
 

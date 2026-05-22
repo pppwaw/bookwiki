@@ -101,7 +101,7 @@ flowchart LR
 - `python scripts/run.py books/mini` 跑完产出 vault + sqlite
 - `python scripts/run.py books/mini --resume` 命中所有 cache,< 1 秒结束
 - `python scripts/run.py books/mini --force-from convert` 全部重跑
-- `python scripts/structure.py books/mini` 跑完停在 split 前(interrupt_before);手动建 approved-structure.md;`python scripts/split.py books/mini` 直接放行往下跑
+- `python scripts/structure.py books/mini` 跑完停在 split 前(interrupt_before);手动建 approved-structure.yaml;`python scripts/split.py books/mini` 直接放行往下跑
 - `python scripts/run.py books/mini --dry-run` 输出 Mermaid 图 + 预估 token
 
 ---
@@ -140,7 +140,7 @@ flowchart LR
 
 ## M3 · 结构 + 切分(2 - 3 天)
 
-**目标**: AI 重组大纲 → 人工锁 approved-structure.md → 按主题对齐切 chapter_sources/。
+**目标**: AI 重组大纲 → 人工锁 approved-structure.yaml → 按主题对齐切 chapter_sources/。
 **责任人**: C\*(StructureAgent + ChapterSplit prompt 与 schema)。
 **依赖**: M1 完成 + M2 有真的 sources_md 可吃(可以先用 M2 的 fixture)。
 
@@ -149,10 +149,10 @@ flowchart LR
 - [x] **`bookwiki/agents/source_summary_agent.py`**:每份 sources_md → 摘要 JSON(`models.sourceSummary`,默认 `deepseek-v4-flash`)
 - [x] **`bookwiki/agents/structure_agent.py`**:
   - 输入:所有 source summaries
-  - 输出:`proposed-structure.md`(Markdown 大纲,格式见 §7.1)
+  - 输出:`proposed-structure.yaml`(YAML 大纲,只含 title/topics/source_refs)
   - rule-only 策略参数支持 `pedagogical` / `source` 两种策略
 - [x] **`bookwiki/split/chapter_splitter.py`**:
-  - 解析 `approved-structure.md`(Markdown parser,提取章节 id/标题/范围/source_refs 列表)
+  - 解析 `approved-structure.yaml`(YAML parser,提取章节 id/标题/topics/source_refs 列表)
   - 把 sources_md 的片段按主题归到章节,产 `_alignment.json` 含 confidence
   - 写 `work/logs/chapter-split-report.md`(来源 × 章节矩阵 + 未归属清单)
 - [x] **`bookwiki/agents/chapter_split_agent.py`**:对低置信度片段调 LLM 做归属仲裁(可选,先 rule-only)
@@ -160,14 +160,14 @@ flowchart LR
 - [x] interrupt 测试:`structure.py` 跑完确实停在 split 前,人编辑后 `split.py` 续跑成功
 
 ### 产物
-- `work/structure/proposed-structure.md`
-- `work/structure/approved-structure.md`(人工编辑后)
+- `work/structure/proposed-structure.yaml`
+- `work/structure/approved-structure.yaml`(人工编辑后)
 - `work/chapter_sources/chxx/*.md`
 - `work/logs/chapter-split-report.md`
 
 ### 验收
 - [x] mini-book 跑出至少 2 章合理切分
-- [x] 修改 approved-structure.md 后 `split.py` 重跑得到不同 chapter_sources
+- [x] 修改 approved-structure.yaml 后 `split.py` 重跑得到不同 chapter_sources
 - [x] 至少 80% 的片段有 source_ref 归属,未归属的进附录桶
 
 ---
@@ -181,7 +181,7 @@ flowchart LR
 ### 任务
 
 - [ ] **`bookwiki/agents/chapter_agent.py`**:
-  - 输入:chapter_source + (可选)approved-structure.md
+  - 输入:chapter_source + (可选)approved-structure.yaml
   - 输出:`ChapterResult` Pydantic(含 `concepts`, `source_refs`, `body_md`)
   - prompt 使用 `<document>...<chunk ref="...">...</chunk></document>` 包裹(§11.3 注入防御)
   - 走 `models.chapter` = `deepseek-v4-pro`,via `instructor` + `response_model=ChapterResult`
@@ -306,7 +306,7 @@ flowchart LR
 - [ ] **GitHub Actions** (或等价 CI):`pytest -k smoke` 必过才能 merge
 - [ ] **`skills/bookwiki/SKILL.md`**:按 §20 写;含触发条件、标准流程、失败时看哪些文件
 - [ ] **`skills/bookwiki/references/runbook.md`**:每个阶段脚本怎么跑、`--force-from` 怎么用、interrupt 怎么处理
-- [ ] **`skills/bookwiki/references/contracts.md`**:`approved-structure.md` / `*.reconciled.json` / `check-report.json` / `bookwiki.sqlite` schema 摘要
+- [ ] **`skills/bookwiki/references/contracts.md`**:`approved-structure.yaml` / `*.reconciled.json` / `check-report.json` / `bookwiki.sqlite` schema 摘要
 - [ ] **Skill 自验**:让一个没读 design.md 的 AI agent 只加载 skill,完成一次 mini-book 从 `init_book` 到访问网站的流程,根据 check-report 决定 repair / 人工
 
 ### 产物
