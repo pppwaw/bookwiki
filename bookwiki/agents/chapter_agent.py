@@ -24,7 +24,7 @@ class ChapterAgent:
         version="v1",
         body="""You are the chapter authoring agent.
 
-Write an Obsidian-ready chapter from the provided chapter document.
+Write a Fumadocs MDX-ready chapter from the provided chapter document.
 The source document is wrapped as:
 <document>
   <chunk ref="source-ref">source text</chunk>

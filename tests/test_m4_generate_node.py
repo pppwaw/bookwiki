@@ -80,15 +80,21 @@ async def test_concept_pages_node_preserves_unicode_concept_file_names(tmp_path)
     assert (book_dir / outputs["矩法估计"]).exists()
 
 
-def test_integrate_node_uses_concept_page_file_stems_and_clears_stale_outputs(tmp_path) -> None:
+def test_integrate_node_writes_fumadocs_mdx_components_and_clears_stale_outputs(
+    tmp_path,
+) -> None:
     book_dir = tmp_path / "book"
     result_dir = book_dir / "work" / "agent_results"
     concept_dir = result_dir / "concepts"
     concept_dir.mkdir(parents=True)
-    (book_dir / "vault" / "chapters").mkdir(parents=True)
-    (book_dir / "vault" / "concepts").mkdir(parents=True)
-    (book_dir / "vault" / "chapters" / "stale.md").write_text("stale", encoding="utf-8")
-    (book_dir / "vault" / "concepts" / "stale.md").write_text("stale", encoding="utf-8")
+    (book_dir / "content" / "docs" / "chapters").mkdir(parents=True)
+    (book_dir / "content" / "docs" / "concepts").mkdir(parents=True)
+    (book_dir / "content" / "docs" / "chapters" / "stale.mdx").write_text(
+        "stale", encoding="utf-8"
+    )
+    (book_dir / "content" / "docs" / "concepts" / "stale.mdx").write_text(
+        "stale", encoding="utf-8"
+    )
     (concept_dir / "点估计.json").write_text(
         json.dumps({"name": "点估计", "body_md": "点估计正文。"}, ensure_ascii=False),
         encoding="utf-8",
@@ -113,11 +119,41 @@ def test_integrate_node_uses_concept_page_file_stems_and_clears_stale_outputs(tm
         encoding="utf-8",
     )
     (result_dir / "chapter-6.quiz.json").write_text(
-        json.dumps({"result": {"chapter_id": "chapter-6", "items": []}}, ensure_ascii=False),
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": "chapter-6",
+                    "items": [
+                        {
+                            "question": "点估计是什么?",
+                            "choices": ["估计参数", "删除样本"],
+                            "answer": "估计参数",
+                            "explanation": "点估计给出未知参数的单个估计值。",
+                            "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
+                        }
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     (result_dir / "chapter-6.card.json").write_text(
-        json.dumps({"result": {"chapter_id": "chapter-6", "items": []}}, ensure_ascii=False),
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": "chapter-6",
+                    "items": [
+                        {
+                            "front": "点估计",
+                            "back": "用单个数估计未知参数。",
+                            "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
+                        }
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
@@ -135,10 +171,17 @@ def test_integrate_node_uses_concept_page_file_stems_and_clears_stale_outputs(tm
 
     result = integrate_node(state, cfg)
 
-    assert result["vault_ready"] is True
-    assert not (book_dir / "vault" / "chapters" / "stale.md").exists()
-    assert not (book_dir / "vault" / "concepts" / "stale.md").exists()
-    assert (book_dir / "vault" / "chapters" / "chapter-6.md").exists()
-    concept_page = book_dir / "vault" / "concepts" / "点估计.md"
+    assert result["content_ready"] is True
+    assert result["content_index"] == "content/docs/index.mdx"
+    assert not (book_dir / "content" / "docs" / "chapters" / "stale.mdx").exists()
+    assert not (book_dir / "content" / "docs" / "concepts" / "stale.mdx").exists()
+    chapter_page = book_dir / "content" / "docs" / "chapters" / "chapter-6.mdx"
+    assert chapter_page.exists()
+    chapter_text = chapter_page.read_text(encoding="utf-8")
+    assert "<QuizBlock" in chapter_text
+    assert "<AnkiDeck" in chapter_text
+    assert "```quiz" not in chapter_text
+    assert "```card" not in chapter_text
+    concept_page = book_dir / "content" / "docs" / "concepts" / "点估计.mdx"
     assert concept_page.exists()
     assert "# 点估计" in concept_page.read_text(encoding="utf-8")

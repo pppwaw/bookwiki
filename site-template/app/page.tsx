@@ -3,10 +3,10 @@ export default function HomePage() {
     <main className="shell">
       <section className="hero">
         <p className="eyebrow">BookWiki M1</p>
-        <h1>Local vault and SQLite demo</h1>
+        <h1>Local MDX content and SQLite demo</h1>
         <p>
-          This template is intentionally thin. Python generates the vault and SQLite index; the
-          Next.js app is the stable site entry point for later Fumadocs integration.
+          Python generates the Fumadocs MDX content source and SQLite index; the Next.js app is
+          the stable site entry point for interactive learning components.
         </p>
       </section>
     </main>

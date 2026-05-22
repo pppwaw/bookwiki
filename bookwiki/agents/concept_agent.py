@@ -18,7 +18,7 @@ class ConceptAgent:
         version="v1",
         body="""You are the concept-page agent.
 
-Write a concise concept page suitable for an Obsidian vault.
+Write a concise concept page suitable for a Fumadocs MDX learning site.
 Explain the concept, why it matters, and how it relates to linked chapters.
 Use related only for closely connected concepts that are supported by input.
 Keep citations grounded in available chapter/source context.

@@ -177,7 +177,7 @@ class BookGraph:
                 "config_hash": self._config_hash(),
                 "nodes": nodes_log,
                 "outputs": {
-                    "vault": str(self.cfg.vault_dir),
+                    "content": str(self.cfg.content_dir),
                     "sqlite": state.get("sqlite"),
                 },
             },

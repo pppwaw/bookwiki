@@ -49,8 +49,8 @@ class BookConfig:
         return self.work_dir / ".cache"
 
     @property
-    def vault_dir(self) -> Path:
-        return self.book_dir / "vault"
+    def content_dir(self) -> Path:
+        return self.book_dir / "content" / "docs"
 
     @property
     def site_dir(self) -> Path:

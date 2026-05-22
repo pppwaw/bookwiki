@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import shutil
 import sqlite3
@@ -21,8 +22,7 @@ from bookwiki.agents import (
 )
 from bookwiki.agents.prompting import prompt_version_for
 from bookwiki.convert.common import source_id_from_stem
-from bookwiki.convert.mineru_client import convert_pdf_to_md
-from bookwiki.convert.pptx_to_md import convert_pptx_to_md
+from bookwiki.convert.mineru_client import convert_document_to_md
 from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
@@ -106,6 +106,59 @@ def _clear_generated_files(directory: Path, pattern: str) -> None:
             path.unlink()
 
 
+def _mdx_prop(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _citation_items(citations: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {"ref_id": str(item.get("ref_id", "")), "quote": str(item.get("quote", ""))}
+        for item in citations
+    ]
+
+
+def _quiz_items_for_mdx(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rendered: list[dict[str, Any]] = []
+    for index, item in enumerate(items, start=1):
+        rendered.append(
+            {
+                "id": str(item.get("id") or f"quiz-{index:03d}"),
+                "question": str(item.get("question", "")),
+                "choices": [str(choice) for choice in item.get("choices", [])],
+                "answer": str(item.get("answer", "")),
+                "explanation": str(item.get("explanation", "")),
+                "citations": _citation_items(item.get("citations", [])),
+            }
+        )
+    return rendered
+
+
+def _card_items_for_mdx(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rendered: list[dict[str, Any]] = []
+    for index, item in enumerate(items, start=1):
+        rendered.append(
+            {
+                "id": str(item.get("id") or f"card-{index:03d}"),
+                "front": str(item.get("front", "")),
+                "back": str(item.get("back", "")),
+                "citations": _citation_items(item.get("citations", [])),
+            }
+        )
+    return rendered
+
+
+def _document_title(body: str, fallback: str) -> str:
+    frontmatter = re.match(r"^---\n(.*?)\n---", body, flags=re.DOTALL)
+    if frontmatter:
+        for line in frontmatter.group(1).splitlines():
+            if line.startswith("title:"):
+                return line.split(":", 1)[1].strip().strip('"')
+    return next(
+        (line.lstrip("# ").strip() for line in body.splitlines() if line.startswith("#")),
+        fallback,
+    )
+
+
 def convert_node(state: State, cfg: BookConfig) -> State:
     input_files = sorted(path for path in cfg.input_dir.iterdir() if path.is_file())
     if not input_files:
@@ -118,10 +171,8 @@ def convert_node(state: State, cfg: BookConfig) -> State:
         source_id = source_id_from_stem(path.stem)
         out_path = out_dir / f"{source_id}.md"
         suffix = path.suffix.lower()
-        if suffix == ".pdf":
-            body = convert_pdf_to_md(path, source_id=source_id)
-        elif suffix == ".pptx":
-            body = convert_pptx_to_md(path, source_id=source_id)
+        if suffix in {".pdf", ".pptx"}:
+            body = convert_document_to_md(path, source_id=source_id)
         elif suffix in {".txt", ".md"}:
             body = convert_text_to_md(path, source_id=source_id)
         else:
@@ -373,10 +424,11 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
 
 
 def integrate_node(state: State, cfg: BookConfig) -> State:
-    chapters_dir = ensure_dir(cfg.vault_dir / "chapters")
-    concepts_dir = ensure_dir(cfg.vault_dir / "concepts")
-    _clear_generated_files(chapters_dir, "*.md")
-    _clear_generated_files(concepts_dir, "*.md")
+    content_dir = ensure_dir(cfg.content_dir)
+    chapters_dir = ensure_dir(content_dir / "chapters")
+    concepts_dir = ensure_dir(content_dir / "concepts")
+    _clear_generated_files(chapters_dir, "*.mdx")
+    _clear_generated_files(concepts_dir, "*.mdx")
     chapter_outputs: list[str] = []
 
     for ch_id, paths in state.get("agent_results", {}).items():
@@ -386,22 +438,23 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         card = _agent_result(read_json(cfg.book_dir / paths["card"]))
         citations = chapter.get("citations", [])
         citation_md = "\n".join(f"- `{c['ref_id']}`: {c['quote']}" for c in citations)
-        quiz_md = "\n".join(
-            f"- {item['question']} Answer: {item['answer']}" for item in quiz.get("items", [])
+        quiz_props = _mdx_prop(_quiz_items_for_mdx(quiz.get("items", [])))
+        card_props = _mdx_prop(_card_items_for_mdx(card.get("items", [])))
+        quiz_mdx = f"<QuizBlock items={{{quiz_props}}} />"
+        card_mdx = f"<AnkiDeck cards={{{card_props}}} />"
+        concept_links = " ".join(
+            f"[{name}](../concepts/{_safe_file_stem(str(name), fallback_prefix='concept')})"
+            for name in chapter.get("concepts", [])
         )
-        card_md = "\n".join(
-            f"- **{item['front']}**: {item['back']}" for item in card.get("items", [])
-        )
-        concept_links = " ".join(f"[[{name}]]" for name in chapter.get("concepts", []))
         path = write_text(
-            chapters_dir / f"{ch_id}.md",
+            chapters_dir / f"{ch_id}.mdx",
             (
-                f"---\nchapter_id: {ch_id}\ntitle: {chapter['title']}\n---\n\n"
+                f"---\nchapter_id: {ch_id}\ntitle: {chapter['title']}\ntype: chapter\n---\n\n"
                 f"{chapter['body_md']}\n\n"
                 f"## Summary\n\n{summary['summary_md']}\n\n"
                 f"## Concepts\n\n{concept_links}\n\n"
-                f"## Quiz\n\n{quiz_md}\n\n"
-                f"## Cards\n\n{card_md}\n\n"
+                f"## Quiz\n\n{quiz_mdx}\n\n"
+                f"## Anki Cards\n\n{card_mdx}\n\n"
                 f"## Sources\n\n{citation_md}\n"
             ),
         )
@@ -411,30 +464,42 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         concept = read_json(cfg.book_dir / rel_path)
         safe_name = Path(rel_path).stem or _safe_file_stem(name, fallback_prefix="concept")
         write_text(
-            concepts_dir / f"{safe_name}.md", f"# {concept['name']}\n\n{concept['body_md']}\n"
+            concepts_dir / f"{safe_name}.mdx",
+            f"---\ntitle: {concept['name']}\ntype: concept\n---\n\n"
+            f"# {concept['name']}\n\n{concept['body_md']}\n",
         )
 
     index_path = write_text(
-        cfg.vault_dir / "index.md",
+        content_dir / "index.mdx",
         f"# {cfg.title}\n\n"
-        + "\n".join(f"- [[chapters/{Path(path).stem}]]" for path in chapter_outputs)
+        + "\n".join(
+            f"- [chapters/{Path(path).stem}](./chapters/{Path(path).stem})"
+            for path in chapter_outputs
+        )
         + "\n",
     )
-    return {"vault_ready": True, "vault_index": _rel(index_path, cfg.book_dir)}
+    write_json(
+        content_dir / "meta.json",
+        {
+            "title": cfg.title,
+            "pages": [Path(path).with_suffix("").as_posix() for path in chapter_outputs],
+        },
+    )
+    return {"content_ready": True, "content_index": _rel(index_path, cfg.book_dir)}
 
 
 def check_node(state: State, cfg: BookConfig) -> State:
     issues: list[Issue] = []
-    if not (cfg.vault_dir / "index.md").exists():
+    if not (cfg.content_dir / "index.mdx").exists():
         issues.append(
             Issue(
                 severity="error",
-                code="MISSING_VAULT_INDEX",
-                message="vault/index.md was not generated",
-                owner_task_id="vault:index",
+                code="MISSING_CONTENT_INDEX",
+                message="content/docs/index.mdx was not generated",
+                owner_task_id="content:index",
             )
         )
-    for path in (cfg.vault_dir / "chapters").glob("*.md"):
+    for path in (cfg.content_dir / "chapters").glob("*.mdx"):
         text = path.read_text(encoding="utf-8")
         if "## Sources" not in text:
             issues.append(
@@ -502,12 +567,12 @@ def index_node(state: State, cfg: BookConfig) -> State:
         except sqlite3.OperationalError:
             has_fts = False
 
-        for path in sorted(cfg.vault_dir.rglob("*.md")):
+        for path in sorted(cfg.content_dir.rglob("*.mdx")):
             body = path.read_text(encoding="utf-8")
-            title = body.splitlines()[0].lstrip("# ").strip() if body.splitlines() else path.stem
+            title = _document_title(body, path.stem)
             cur = conn.execute(
                 "insert into documents(path, title, body) values (?, ?, ?)",
-                (_rel(path, cfg.vault_dir), title, body),
+                (_rel(path, cfg.content_dir), title, body),
             )
             doc_id = int(cur.lastrowid)
             conn.execute(

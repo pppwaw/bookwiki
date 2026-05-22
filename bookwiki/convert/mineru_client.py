@@ -49,8 +49,25 @@ def convert_pdf_to_md(
     timeout_seconds: float | None = None,
     poll_interval_seconds: float | None = None,
 ) -> str:
-    pdf_path = Path(path)
-    resolved_source_id = source_id_from_stem(source_id or pdf_path.stem)
+    return convert_document_to_md(
+        path,
+        source_id=source_id,
+        api_base_url=api_base_url,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+
+def convert_document_to_md(
+    path: str | Path,
+    *,
+    source_id: str | None = None,
+    api_base_url: str | None = None,
+    timeout_seconds: float | None = None,
+    poll_interval_seconds: float | None = None,
+) -> str:
+    document_path = Path(path)
+    resolved_source_id = source_id_from_stem(source_id or document_path.stem)
     timeout = timeout_seconds or float(
         os.getenv("MINERU_API_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
     )
@@ -61,14 +78,18 @@ def convert_pdf_to_md(
 
     if not _health_check(api_url, timeout):
         msg = (
-            f"MinerU API is required for PDF conversion, but health check failed: {api_url}/health"
+            "MinerU API is required for PDF/PPTX conversion, "
+            f"but health check failed: {api_url}/health"
         )
         raise MineruConversionError(msg)
 
     try:
-        raw_md = _parse_with_api(pdf_path, api_url, timeout, poll_interval)
+        raw_md = _parse_with_api(document_path, api_url, timeout, poll_interval)
     except Exception as exc:
-        msg = f"MinerU API is required for PDF conversion, but async task parsing failed: {exc}"
+        msg = (
+            "MinerU API is required for PDF/PPTX conversion, "
+            f"but async task parsing failed: {exc}"
+        )
         raise MineruConversionError(msg) from exc
     return normalize_mineru_markdown(raw_md, source_id=resolved_source_id)
 
@@ -182,13 +203,19 @@ def _multipart_body(*, fields: dict[str, str], files: dict[str, Path]) -> tuple[
                     f'Content-Disposition: form-data; name="{name}"; '
                     f'filename="{path.name}"\r\n'
                 ).encode(),
-                b"Content-Type: application/pdf\r\n\r\n",
+                f"Content-Type: {_content_type_for(path)}\r\n\r\n".encode(),
                 path.read_bytes(),
                 b"\r\n",
             ]
         )
     chunks.append(f"--{boundary}--\r\n".encode())
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def _content_type_for(path: Path) -> str:
+    if path.suffix.lower() == ".pptx":
+        return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    return "application/pdf"
 
 
 def _extract_markdown_from_api_response(data: dict[str, Any], stem: str) -> str:

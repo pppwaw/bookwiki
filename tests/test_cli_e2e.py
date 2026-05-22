@@ -34,10 +34,10 @@ def test_init_book_and_run_fake_llm_pipeline_to_sqlite(tmp_path) -> None:
 
     db_path = book_dir / "site" / ".bookwiki" / "bookwiki.sqlite"
     manifest_path = book_dir / "work" / "logs" / "run-manifest.json"
-    vault_index = book_dir / "vault" / "index.md"
+    content_index = book_dir / "content" / "docs" / "index.mdx"
 
     assert db_path.exists()
-    assert vault_index.exists()
+    assert content_index.exists()
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["book_id"] == "mini"

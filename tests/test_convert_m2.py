@@ -10,10 +10,10 @@ import pytest
 
 from bookwiki.convert.mineru_client import (
     MineruConversionError,
+    convert_document_to_md,
     convert_pdf_to_md,
     normalize_mineru_markdown,
 )
-from bookwiki.convert.pptx_to_md import convert_pptx_to_md
 from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.pipeline.nodes import convert_node
 from bookwiki.scheduler.config import default_config
@@ -141,6 +141,26 @@ def test_convert_pdf_to_md_uses_async_mineru_tasks(
     assert "/file_parse" not in _AsyncMineruHandler.request_paths
 
 
+def test_convert_pptx_to_md_uses_async_mineru_tasks(
+    tmp_path: Path, async_mineru_api: str
+) -> None:
+    deck = tmp_path / "tiny.pptx"
+    _write_minimal_pptx(deck)
+
+    md = convert_document_to_md(
+        deck,
+        source_id="tiny-deck",
+        api_base_url=async_mineru_api,
+        timeout_seconds=5,
+        poll_interval_seconds=0.01,
+    )
+
+    assert "Async markdown text" in md
+    assert "<!-- source_ref: tiny-deck-p001 -->" in md
+    assert "/tasks" in _AsyncMineruHandler.request_paths
+    assert "/tasks/task-1/result" in _AsyncMineruHandler.request_paths
+
+
 def test_convert_text_to_md_wraps_one_file_source_ref(tmp_path: Path) -> None:
     notes = tmp_path / "notes.txt"
     notes.write_text("Line one\nLine two\n", encoding="utf-8")
@@ -152,24 +172,15 @@ def test_convert_text_to_md_wraps_one_file_source_ref(tmp_path: Path) -> None:
     assert "Line one\nLine two" in md
 
 
-def test_convert_pptx_to_md_extracts_slide_text_and_refs(tmp_path: Path) -> None:
-    deck = tmp_path / "lecture.pptx"
-    _write_minimal_pptx(deck)
-
-    md = convert_pptx_to_md(deck, source_id="lecture9")
-
-    assert "## Slide 1: Lecture title" in md
-    assert "<!-- source_ref: lecture9-slide01 -->" in md
-    assert "First bullet" in md
-    assert "## Slide 2: Second slide" in md
-    assert "<!-- source_ref: lecture9-slide02 -->" in md
-
-
-def test_convert_node_routes_supported_non_pdf_inputs(tmp_path: Path) -> None:
+def test_convert_node_routes_text_and_pptx_to_required_converters(
+    tmp_path: Path, async_mineru_api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     cfg.input_dir.mkdir(parents=True)
     (cfg.input_dir / "notes.txt").write_text("Plain notes", encoding="utf-8")
     _write_minimal_pptx(cfg.input_dir / "slides.pptx")
+    monkeypatch.setenv("MINERU_API_URL", async_mineru_api)
+    monkeypatch.setenv("MINERU_API_POLL_INTERVAL_SECONDS", "0.01")
 
     state = convert_node({"book_id": cfg.book_id}, cfg)
 
@@ -181,9 +192,12 @@ def test_convert_node_routes_supported_non_pdf_inputs(tmp_path: Path) -> None:
     assert "Plain notes" in (cfg.book_dir / "work/sources_md/notes.md").read_text(
         encoding="utf-8"
     )
-    assert "Slide 1" in (cfg.book_dir / "work/sources_md/slides.md").read_text(
+    slides_md = (cfg.book_dir / "work/sources_md/slides.md").read_text(
         encoding="utf-8"
     )
+    assert "Async markdown text" in slides_md
+    assert "Slide 1" not in slides_md
+    assert "/tasks" in _AsyncMineruHandler.request_paths
 
 
 def test_convert_node_propagates_mineru_api_errors_for_pdf(tmp_path: Path, monkeypatch) -> None:

@@ -26,7 +26,7 @@ def init_book(book_dir: Path, source: Path | None = None, title: str | None = No
         cfg.input_dir,
         cfg.work_dir / "logs",
         cfg.work_dir / ".cache",
-        cfg.vault_dir,
+        cfg.content_dir,
         cfg.site_dir / ".bookwiki",
     ]:
         ensure_dir(path)

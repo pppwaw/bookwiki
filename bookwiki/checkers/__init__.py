@@ -1,1 +1,1 @@
-"""M1 vault checker placeholders."""
+"""M1 content checker placeholders."""

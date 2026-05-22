@@ -39,3 +39,138 @@ p {
   line-height: 1.65;
   max-width: 680px;
 }
+
+button {
+  font: inherit;
+}
+
+.quiz-block,
+.anki-deck {
+  margin: 28px 0;
+}
+
+.quiz-item {
+  border: 1px solid #d8ddd2;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  padding: 18px;
+}
+
+.quiz-title {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+}
+
+.quiz-title span {
+  background: #2f6f5e;
+  border-radius: 999px;
+  color: white;
+  display: inline-grid;
+  flex: 0 0 auto;
+  font-family: "Trebuchet MS", sans-serif;
+  font-size: 13px;
+  height: 28px;
+  place-items: center;
+  width: 28px;
+}
+
+.quiz-title h3 {
+  font-size: 20px;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.quiz-options {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.quiz-option,
+.quiz-check,
+.anki-toolbar button {
+  background: white;
+  border: 1px solid #c8d0c4;
+  border-radius: 6px;
+  color: #17201b;
+  cursor: pointer;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.quiz-option.selected {
+  border-color: #2f6f5e;
+  box-shadow: inset 0 0 0 1px #2f6f5e;
+}
+
+.quiz-check {
+  background: #2f6f5e;
+  color: white;
+  text-align: center;
+}
+
+.quiz-check:disabled,
+.anki-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.quiz-feedback {
+  border-radius: 6px;
+  margin-top: 14px;
+  padding: 12px;
+}
+
+.quiz-feedback p {
+  font-size: 16px;
+  margin: 6px 0 0;
+}
+
+.quiz-feedback.correct {
+  background: #e7f4ed;
+}
+
+.quiz-feedback.wrong {
+  background: #f7e8df;
+}
+
+.anki-toolbar {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.anki-toolbar div {
+  display: flex;
+  gap: 8px;
+}
+
+.anki-card {
+  align-items: center;
+  background: #fffdf7;
+  border: 1px solid #d8ddd2;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  min-height: 180px;
+  padding: 24px;
+  width: 100%;
+}
+
+.anki-card span {
+  display: block;
+  font-size: 22px;
+  line-height: 1.45;
+  margin: 0 auto;
+  max-width: 640px;
+  text-align: center;
+}
+
+.source-ref {
+  border-bottom: 1px dotted #2f6f5e;
+  color: #2f6f5e;
+  font-family: "Trebuchet MS", sans-serif;
+  font-size: 0.9em;
+}
