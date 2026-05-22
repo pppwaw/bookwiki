@@ -159,6 +159,9 @@ def split_sources_by_structure(source_paths: list[str | Path], approved_md: str)
 
 def _extract_field(block: str, *names: str) -> str:
     for name in names:
+        section = _extract_section(block, name)
+        if section:
+            return _section_text(section)
         match = re.search(rf"^\s*-\s*{re.escape(name)}\s*[:：]\s*(.+)$", block, re.MULTILINE)
         if match:
             return match.group(1).strip()
@@ -167,6 +170,13 @@ def _extract_field(block: str, *names: str) -> str:
 
 def _extract_source_refs(block: str) -> list[str]:
     refs: list[str] = []
+    for section_name in ("source refs", "sources", "source_refs"):
+        section = _extract_section(block, section_name)
+        if section:
+            refs.extend(_extract_source_ref_items(section))
+        if refs:
+            return refs
+
     in_sources = False
     for line in block.splitlines():
         stripped = line.strip()
@@ -183,6 +193,33 @@ def _extract_source_refs(block: str) -> list[str]:
         inline = re.match(r"^-\s*(source_ref|来源)\s*[:：]\s*(.+)$", stripped, flags=re.IGNORECASE)
         if inline:
             refs.append(inline.group(2).strip("` "))
+    return refs
+
+
+def _extract_section(block: str, name: str) -> str:
+    match = re.search(
+        rf"^###\s+{re.escape(name)}\s*$\n(.*?)(?=^###\s+|^##\s+|\Z)",
+        block,
+        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _section_text(section: str) -> str:
+    lines = [
+        line.strip()
+        for line in section.splitlines()
+        if line.strip() and not line.strip().startswith("-")
+    ]
+    return " ".join(lines)
+
+
+def _extract_source_ref_items(section: str) -> list[str]:
+    refs: list[str] = []
+    for line in section.splitlines():
+        item = re.match(r"^\s*-\s+(.+?)\s*$", line)
+        if item:
+            refs.append(item.group(1).strip("` "))
     return refs
 
 

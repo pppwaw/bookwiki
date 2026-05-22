@@ -20,15 +20,32 @@ class StructureAgent:
         body="""You are the book-structure agent.
 
 Create a proposed learning structure from the source summaries.
+Return proposed_structure_md in this exact Markdown shape:
+
+# Proposed Structure
+
+## Chapter 6 Point Estimation
+
+### Goal
+One concrete learning goal.
+
+### Scope
+Specific source-grounded scope.
+
+### Topics
+- Topic or heading visible in the sources.
+
+### Source refs
+- `Week-9-p001`
+
+### Evidence
+- Week-9: short evidence note.
+
 Use visible headings like "Chapter 6 Point Estimation" when the source clearly contains
 a chapter number.
 Do not output internal-only ids such as ch06 in the Markdown heading.
 Avoid empty placeholder chapters.
-Each chapter section should include:
-- a concrete learning goal,
-- a scope grounded in the actual source topics,
-- source_refs copied exactly,
-- the main headings or concepts that justify the chapter.
+Each chapter section must include Goal, Scope, Topics, Source refs, and Evidence sections.
 
 The Markdown should reflect the real source content, not generic boilerplate.""",
     )
@@ -57,33 +74,46 @@ The Markdown should reflect the real source content, not generic boilerplate."""
 
 def _draft_structure(summaries: list[dict[str, Any]]) -> StructureResult:
     chapters = _chapter_specs_from_sources(summaries)
-    lines = ["# Proposed Structure", ""]
-    chapter_names: list[str] = []
+    return StructureResult(
+        proposed_structure_md=_render_structure_markdown(chapters),
+        chapters=[_display_heading(plan) for plan in chapters],
+    )
+
+
+def _render_structure_markdown(chapters: list[_ChapterPlan]) -> str:
+    lines = [
+        "# Proposed Structure",
+        "",
+        "<!-- Review this file, edit as needed, then copy/keep it as approved-structure.md. -->",
+        "",
+    ]
     for index, plan in enumerate(chapters, start=1):
         heading = _display_heading(plan)
-        chapter_names.append(heading)
         topics = _topic_terms(plan)
         lines.extend(
             [
                 f"## {heading}",
                 "",
-                f"- 目标: {_render_goal(plan, topics)}",
-                f"- 范围: {_render_scope(plan, topics, index)}",
+                "### Goal",
+                _render_goal(plan, topics),
+                "",
+                "### Scope",
+                _render_scope(plan, topics, index),
+                "",
+                "### Topics",
             ]
         )
-        if plan.headings:
-            lines.append("- 内容:")
-            lines.extend(f"  - {heading}" for heading in plan.headings[:5])
-        if topics:
-            lines.append(f"- 关键词: {', '.join(topics[:8])}.")
-        lines.extend(
-            [
-                "- 来源:",
-            ]
-        )
-        lines.extend(f"  - {ref}" for ref in plan.source_refs)
+        lines.extend(f"- {topic}" for topic in topics[:8])
+        if not topics:
+            lines.append("- Source-grounded overview")
+
+        lines.extend(["", "### Source refs"])
+        lines.extend(f"- `{ref}`" for ref in plan.source_refs)
+
+        lines.extend(["", "### Evidence"])
+        lines.extend(f"- {note}" for note in _evidence_notes(plan))
         lines.append("")
-    return StructureResult(proposed_structure_md="\n".join(lines), chapters=chapter_names)
+    return "\n".join(lines).rstrip() + "\n"
 
 
 @dataclass
@@ -191,6 +221,18 @@ def _render_scope(plan: _ChapterPlan, topics: list[str], index: int) -> str:
     if topics:
         return f"{sources}; covers {', '.join(topics[:6])} ({refs})."
     return f"{sources}; {refs}."
+
+
+def _evidence_notes(plan: _ChapterPlan) -> list[str]:
+    notes: list[str] = []
+    for source_id, summary in zip(plan.source_ids, plan.summaries, strict=False):
+        cleaned = re.sub(r"\s+", " ", summary).strip()
+        if cleaned:
+            notes.append(f"{source_id}: {cleaned[:180]}")
+    notes.extend(f"heading: {heading}" for heading in plan.headings[:4])
+    if not notes:
+        notes.append("No detailed evidence extracted; review source refs before approval.")
+    return notes[:6]
 
 
 _KNOWN_TOPIC_PHRASES = (

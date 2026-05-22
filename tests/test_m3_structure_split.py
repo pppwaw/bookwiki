@@ -31,6 +31,29 @@ APPROVED = """# Mini Book
   - textbook-p002
 """
 
+APPROVED_V2 = """# Proposed Structure
+
+## Chapter 6 Point Estimation
+
+### Goal
+Explain point estimation through method of moments and maximum likelihood estimation.
+
+### Scope
+Week 9 and Week 10; covers point estimators and sampling distributions.
+
+### Topics
+- Method of moments
+- Maximum likelihood estimation
+
+### Source refs
+- `Week-9-p001`
+- `Week-10-p001`
+
+### Evidence
+- Week-9: sampling distributions
+- Week-10: point estimation
+"""
+
 
 def test_parse_approved_structure_extracts_chapters_and_sources() -> None:
     chapters = parse_approved_structure(APPROVED)
@@ -61,6 +84,21 @@ def test_parse_approved_structure_accepts_chapter_style_headings() -> None:
     assert chapters[0].source_refs == ["Week-9-p001"]
 
 
+def test_parse_approved_structure_accepts_review_friendly_sections() -> None:
+    chapters = parse_approved_structure(APPROVED_V2)
+
+    assert len(chapters) == 1
+    assert chapters[0].chapter_id == "chapter-6"
+    assert chapters[0].title == "Point Estimation"
+    assert chapters[0].goal == (
+        "Explain point estimation through method of moments and maximum likelihood estimation."
+    )
+    assert chapters[0].scope == (
+        "Week 9 and Week 10; covers point estimators and sampling distributions."
+    )
+    assert chapters[0].source_refs == ["Week-9-p001", "Week-10-p001"]
+
+
 def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_path: Path) -> None:
     source = tmp_path / "Week-10.md"
     source.write_text(
@@ -82,6 +120,10 @@ def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_pa
     assert summary.detected_chapter_id == "ch06"
     assert summary.detected_title == "Point Estimation"
     assert "## Chapter 6 Point Estimation" in result.proposed_structure_md
+    assert "### Goal" in result.proposed_structure_md
+    assert "### Scope" in result.proposed_structure_md
+    assert "### Source refs" in result.proposed_structure_md
+    assert "鐩爣" not in result.proposed_structure_md
     assert "## ch06 Point Estimation" not in result.proposed_structure_md
     assert "## ch02 Week 10" not in result.proposed_structure_md
 
@@ -143,8 +185,8 @@ def test_structure_agent_merges_sources_with_same_detected_chapter() -> None:
     assert result.proposed_structure_md.count("## Chapter 6 Point Estimation") == 1
     assert "## ch06 Point Estimation" not in result.proposed_structure_md
     assert "## Chapter 2 Practice" not in result.proposed_structure_md
-    assert "  - Week-9-p001" in result.proposed_structure_md
-    assert "  - Week-10-p001" in result.proposed_structure_md
+    assert "- `Week-9-p001`" in result.proposed_structure_md
+    assert "- `Week-10-p001`" in result.proposed_structure_md
 
 
 def test_split_sources_by_structure_aligns_fragments_and_writes_appendix(tmp_path: Path) -> None:
