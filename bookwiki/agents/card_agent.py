@@ -12,6 +12,7 @@ class CardAgent:
     kind: ClassVar[str] = "card_llm_v1"
     output_model: ClassVar[type[CardResult]] = CardResult
     model_key: ClassVar[str] = "card"
+    prompt_name: ClassVar[str] = "card"
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> CardResult:
         ch_id = chapter_id(inp)
@@ -27,7 +28,7 @@ class CardAgent:
             model=model,
             output_model=CardResult,
             agent_name=self.__class__.__name__,
-            task="Create concise flashcards grounded in the chapter source.",
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )

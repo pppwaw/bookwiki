@@ -14,6 +14,7 @@ class SourceSummaryAgent:
     kind: ClassVar[str] = "source_summary_llm_v1"
     output_model: ClassVar[type[SourceSummaryResult]] = SourceSummaryResult
     model_key: ClassVar[str] = "summary"
+    prompt_name: ClassVar[str] = "source_summary"
 
     async def run(
         self, inp: str | Path | dict[str, str], *, model: str, runtime: LLMRuntime
@@ -32,11 +33,7 @@ class SourceSummaryAgent:
             model=model,
             output_model=SourceSummaryResult,
             agent_name=self.__class__.__name__,
-            task=(
-                "Summarize this source markdown for later book structuring. Detect chapter "
-                "numbers/titles when present, list source_refs exactly, and extract "
-                "headings/key terms."
-            ),
+            prompt_name=self.prompt_name,
             inp=payload,
             draft=draft,
         )

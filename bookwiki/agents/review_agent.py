@@ -11,6 +11,7 @@ class ReviewAgent:
     kind: ClassVar[str] = "review_llm_v1"
     output_model: ClassVar[type[RepairResult]] = RepairResult
     model_key: ClassVar[str] = "review"
+    prompt_name: ClassVar[str] = "review"
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> RepairResult:
         owner = str(inp.get("owner_task_id", "unknown:review"))
@@ -24,7 +25,7 @@ class ReviewAgent:
             model=model,
             output_model=RepairResult,
             agent_name=self.__class__.__name__,
-            task="Produce a repair action for the failing owner task.",
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )

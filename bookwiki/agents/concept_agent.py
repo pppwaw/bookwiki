@@ -12,6 +12,7 @@ class ConceptAgent:
     kind: ClassVar[str] = "concept_llm_v1"
     output_model: ClassVar[type[ConceptResult]] = ConceptResult
     model_key: ClassVar[str] = "concept"
+    prompt_name: ClassVar[str] = "concept"
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> ConceptResult:
         name = str(inp.get("canonical") or inp.get("name") or "Concept")
@@ -28,7 +29,7 @@ class ConceptAgent:
             model=model,
             output_model=ConceptResult,
             agent_name=self.__class__.__name__,
-            task="Write an Obsidian-ready concept page grounded in linked chapter context.",
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )

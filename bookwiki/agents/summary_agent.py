@@ -12,6 +12,7 @@ class SummaryAgent:
     kind: ClassVar[str] = "summary_llm_v1"
     output_model: ClassVar[type[SummaryResult]] = SummaryResult
     model_key: ClassVar[str] = "summary"
+    prompt_name: ClassVar[str] = "summary"
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> SummaryResult:
         ch_id = chapter_id(inp)
@@ -28,7 +29,7 @@ class SummaryAgent:
             model=model,
             output_model=SummaryResult,
             agent_name=self.__class__.__name__,
-            task="Summarize the chapter for study notes using only the provided source.",
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )

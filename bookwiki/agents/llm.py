@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from pydantic import BaseModel
 
+from bookwiki.agents.prompting import render_prompt
 from bookwiki.scheduler.llm import LLMRuntime
 
 
@@ -14,27 +14,22 @@ async def generate_with_llm(
     model: str,
     output_model: type[BaseModel],
     agent_name: str,
-    task: str,
+    prompt_name: str,
     inp: Any,
     draft: BaseModel | dict[str, Any],
 ) -> BaseModel:
-    system = (
-        "You are a BookWiki agent. Return valid JSON only. "
-        f"The JSON must validate against the {output_model.__name__} schema. "
-        "Preserve source_ref values exactly and do not invent citations."
-    )
-    user = (
-        f"Agent: {agent_name}\n\n"
-        f"Task:\n{task}\n\n"
-        f"Input JSON:\n{_json(inp)}\n\n"
-        f"Draft JSON:\n{_json(draft)}\n\n"
-        "Return only the final JSON object."
+    prompt = render_prompt(
+        prompt_name=prompt_name,
+        agent_name=agent_name,
+        inp=compact_input(inp),
+        draft=draft,
+        output_model=output_model,
     )
     return await runtime.generate(
         model=model,
         output_model=output_model,
-        system=system,
-        user=user,
+        system=prompt.system,
+        user=prompt.user,
     )
 
 
@@ -46,9 +41,3 @@ def compact_input(value: Any, *, max_chars: int = 40_000) -> Any:
     if isinstance(value, list):
         return [compact_input(item, max_chars=max_chars) for item in value]
     return value
-
-
-def _json(value: Any) -> str:
-    if isinstance(value, BaseModel):
-        value = value.model_dump(mode="json")
-    return json.dumps(compact_input(value), ensure_ascii=False, indent=2, sort_keys=True)

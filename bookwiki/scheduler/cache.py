@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from bookwiki.agents.prompting import prompt_cache_key
 from bookwiki.scheduler.llm import LLMRuntime, build_runtime
 
 
@@ -36,6 +37,7 @@ def task_key(agent_cls: type[Any], *inputs: Any, model: str) -> str:
         "agent": f"{agent_cls.__module__}.{agent_cls.__name__}",
         "kind": getattr(agent_cls, "kind", agent_cls.__name__),
         "model": model,
+        "prompt": prompt_cache_key(getattr(agent_cls, "prompt_name", None)),
         "inputs": _jsonable(inputs),
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

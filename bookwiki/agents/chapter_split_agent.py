@@ -12,6 +12,7 @@ class ChapterSplitAgent:
     kind: ClassVar[str] = "chapter_split_llm_v1"
     output_model: ClassVar[type[ChapterSplitResult]] = ChapterSplitResult
     model_key: ClassVar[str] = "split"
+    prompt_name: ClassVar[str] = "chapter_split"
 
     async def run(
         self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime
@@ -31,10 +32,7 @@ class ChapterSplitAgent:
             model=model,
             output_model=ChapterSplitResult,
             agent_name=self.__class__.__name__,
-            task=(
-                "Audit the deterministic source split. Preserve chapters, chapter_titles, "
-                "alignment, and coverage exactly; update report_md only if useful."
-            ),
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )

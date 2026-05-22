@@ -59,7 +59,6 @@ class LiteLLMRuntime:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            response_format=output_model,
             temperature=0,
         )
         return _parse_structured_response(response, output_model)
@@ -251,7 +250,12 @@ def _extract_draft_payload(user: str) -> Any | None:
     marker = "Draft JSON:\n"
     if marker not in user:
         return None
-    draft = user.split(marker, 1)[1].split("\n\nReturn only", 1)[0].strip()
+    draft = user.split(marker, 1)[1].strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```", draft, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        draft = fenced.group(1).strip()
+    else:
+        draft = draft.split("\n\nReturn only", 1)[0].strip()
     return json.loads(draft)
 
 

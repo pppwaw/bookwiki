@@ -13,6 +13,7 @@ class StructureAgent:
     kind: ClassVar[str] = "structure_llm_v1"
     output_model: ClassVar[type[StructureResult]] = StructureResult
     model_key: ClassVar[str] = "structure"
+    prompt_name: ClassVar[str] = "structure"
 
     async def run(
         self,
@@ -28,11 +29,7 @@ class StructureAgent:
             model=model,
             output_model=StructureResult,
             agent_name=self.__class__.__name__,
-            task=(
-                "Create a proposed book structure from source summaries. Use visible headings "
-                "like 'Chapter 6 Title' when the source detects a chapter number, include source "
-                "refs exactly, and avoid empty placeholder chapters."
-            ),
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )

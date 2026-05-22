@@ -12,6 +12,7 @@ class ConceptExtractAgent:
     kind: ClassVar[str] = "concept_extract_llm_v1"
     output_model: ClassVar[type[ConceptCandidate]] = ConceptCandidate
     model_key: ClassVar[str] = "concept"
+    prompt_name: ClassVar[str] = "concept_extract"
 
     async def run(
         self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime
@@ -29,7 +30,7 @@ class ConceptExtractAgent:
             model=model,
             output_model=ConceptCandidate,
             agent_name=self.__class__.__name__,
-            task="Extract the most important canonical concept from the chapter source.",
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )

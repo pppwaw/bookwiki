@@ -12,6 +12,7 @@ class QuizAgent:
     kind: ClassVar[str] = "quiz_llm_v1"
     output_model: ClassVar[type[QuizResult]] = QuizResult
     model_key: ClassVar[str] = "quiz"
+    prompt_name: ClassVar[str] = "quiz"
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> QuizResult:
         ch_id = chapter_id(inp)
@@ -29,7 +30,7 @@ class QuizAgent:
             model=model,
             output_model=QuizResult,
             agent_name=self.__class__.__name__,
-            task="Create source-grounded multiple-choice quiz items for this chapter.",
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )

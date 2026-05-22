@@ -95,7 +95,7 @@ async def test_litellm_runtime_parses_json_content(monkeypatch: pytest.MonkeyPat
 
     assert result.title == "Point Estimation"
     assert router.calls[0]["model"] == "deepseek-v4-pro"
-    assert router.calls[0]["response_format"] is ChapterResult
+    assert "response_format" not in router.calls[0]
 
 
 @pytest.mark.asyncio

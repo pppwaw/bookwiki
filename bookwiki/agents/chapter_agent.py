@@ -12,6 +12,7 @@ class ChapterAgent:
     kind: ClassVar[str] = "chapter_llm_v1"
     output_model: ClassVar[type[ChapterResult]] = ChapterResult
     model_key: ClassVar[str] = "chapter"
+    prompt_name: ClassVar[str] = "chapter"
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> ChapterResult:
         ch_id = chapter_id(inp)
@@ -33,10 +34,7 @@ class ChapterAgent:
             model=model,
             output_model=ChapterResult,
             agent_name=self.__class__.__name__,
-            task=(
-                "Write a concise chapter from the source markdown. Keep chapter_id, title, "
-                "owner_task_id, and citation ref_id values stable."
-            ),
+            prompt_name=self.prompt_name,
             inp=inp,
             draft=draft,
         )
