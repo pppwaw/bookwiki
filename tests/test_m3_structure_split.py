@@ -4,6 +4,8 @@ import asyncio
 import json
 from pathlib import Path
 
+from bookwiki.agents.source_summary_agent import SourceSummaryAgent
+from bookwiki.agents.structure_agent import StructureAgent
 from bookwiki.pipeline.nodes import split_node, structure_node
 from bookwiki.scheduler.config import default_config
 from bookwiki.split.chapter_splitter import (
@@ -38,6 +40,56 @@ def test_parse_approved_structure_extracts_chapters_and_sources() -> None:
     assert chapters[0].scope == "textbook p1-p2."
     assert chapters[0].source_refs == ["textbook-p001"]
     assert chapters[1].source_refs == ["textbook-p002"]
+
+
+def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_path: Path) -> None:
+    source = tmp_path / "Week-10.md"
+    source.write_text(
+        "# Week-10\n\n"
+        "<!-- source_ref: Week-10-p001 -->\n\n"
+        "# Chapter 6 The point estimation (点估计)\n\n"
+        "The method of moments and maximum likelihood estimation.",
+        encoding="utf-8",
+    )
+
+    summary = asyncio.run(SourceSummaryAgent().run(source, model="stub"))
+    result = asyncio.run(
+        StructureAgent().run({"summaries": [summary.model_dump(mode="json")]}, model="stub")
+    )
+
+    assert summary.detected_chapter_id == "ch06"
+    assert summary.detected_title == "Point Estimation"
+    assert "## ch06 Point Estimation" in result.proposed_structure_md
+    assert "## ch02 Week 10" not in result.proposed_structure_md
+
+
+def test_structure_agent_merges_sources_with_same_detected_chapter() -> None:
+    result = asyncio.run(
+        StructureAgent().run(
+            {
+                "summaries": [
+                    {
+                        "source_id": "Week-9",
+                        "source_refs": ["Week-9-p001"],
+                        "detected_chapter_id": "ch06",
+                        "detected_title": "Point Estimation",
+                    },
+                    {
+                        "source_id": "Week-10",
+                        "source_refs": ["Week-10-p001"],
+                        "detected_chapter_id": "ch06",
+                        "detected_title": "Point Estimation",
+                    },
+                ]
+            },
+            model="stub",
+        )
+    )
+
+    assert result.proposed_structure_md.count("## ch06 Point Estimation") == 1
+    assert "## ch02 Point Estimation" not in result.proposed_structure_md
+    assert "  - Week-9-p001" in result.proposed_structure_md
+    assert "  - Week-10-p001" in result.proposed_structure_md
 
 
 def test_split_sources_by_structure_aligns_fragments_and_writes_appendix(tmp_path: Path) -> None:
@@ -82,6 +134,9 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
         encoding="utf-8",
     )
     state = {"book_id": cfg.book_id, "sources_md": ["work/sources_md/textbook.md"]}
+    stale = cfg.work_dir / "chapter_sources" / "ch99" / "source.md"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale", encoding="utf-8")
 
     structure_state = asyncio.run(structure_node(state, cfg))
     approved_path = cfg.book_dir / structure_state["approved_structure"]
@@ -99,3 +154,4 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
     assert "Heuristic search material" in ch02.read_text(encoding="utf-8")
     assert alignment["coverage"]["assigned_ratio"] == 1.0
     assert split_state["chapter_titles"]["ch01"] == "Search Foundations"
+    assert not stale.exists()

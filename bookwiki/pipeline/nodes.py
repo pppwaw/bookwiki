@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -152,6 +153,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     )
 
     out_dir = ensure_dir(cfg.work_dir / "chapter_sources")
+    _clear_chapter_source_dirs(out_dir)
     chapter_sources: dict[str, str] = {}
     titles = split.result.chapter_titles or dict(_chapter_titles(approved_md))
     for ch_id, md in split.result.chapters.items():
@@ -181,6 +183,12 @@ async def split_node(state: State, cfg: BookConfig) -> State:
         "chapter_split_report": _rel(report_path, cfg.book_dir),
         "cache_hit": split.cache_hit,
     }
+
+
+def _clear_chapter_source_dirs(out_dir: Path) -> None:
+    for child in out_dir.iterdir():
+        if child.is_dir() and re.fullmatch(r"(ch\d+|appendix)", child.name):
+            shutil.rmtree(child)
 
 
 async def generate_node(state: State, cfg: BookConfig) -> State:

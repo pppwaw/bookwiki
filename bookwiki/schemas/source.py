@@ -9,6 +9,8 @@ class SourceSummaryResult(VersionedModel):
     source_id: str
     summary_md: str
     source_refs: list[str] = Field(default_factory=list)
+    detected_chapter_id: str | None = None
+    detected_title: str | None = None
 
 
 class StructureResult(VersionedModel):
