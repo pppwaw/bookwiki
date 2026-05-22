@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel
@@ -83,12 +84,14 @@ class TestLLMRuntime:
 
 
 def build_runtime() -> LLMRuntime:
+    load_dotenv()
     if os.getenv("BOOKWIKI_TEST_LLM") == "1":
         return TestLLMRuntime()
     return LiteLLMRuntime()
 
 
 def build_router() -> Any:
+    load_dotenv()
     try:
         from litellm import Router
     except Exception as exc:  # pragma: no cover - exercised only without optional extra
@@ -106,6 +109,7 @@ def build_router() -> Any:
 
 
 def _model_list() -> list[dict[str, Any]]:
+    load_dotenv()
     return [
         {
             "model_name": "deepseek-v4-pro",
@@ -136,6 +140,7 @@ def _model_list() -> list[dict[str, Any]]:
 
 
 def _ensure_api_key(model: str) -> None:
+    load_dotenv()
     env_name = _api_key_env(model)
     if not env_name:
         raise UnsupportedLLMModel(model)
@@ -150,6 +155,59 @@ def _api_key_env(model: str) -> str | None:
     if normalized.startswith("kimi") or normalized.startswith("moonshot/"):
         return "MOONSHOT_API_KEY"
     return None
+
+
+def load_dotenv(path: str | Path | None = None) -> bool:
+    dotenv_path = Path(path) if path is not None else _default_dotenv_path()
+    if dotenv_path is None or not dotenv_path.exists():
+        return False
+    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_dotenv_line(raw_line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        os.environ.setdefault(key, value)
+    return True
+
+
+def _default_dotenv_path() -> Path | None:
+    override = os.getenv("BOOKWIKI_DOTENV_PATH")
+    if override:
+        return Path(override)
+    for parent in (Path.cwd(), *Path.cwd().parents):
+        candidate = parent / ".env"
+        if candidate.exists():
+            return candidate
+    repo_candidate = Path(__file__).resolve().parents[2] / ".env"
+    return repo_candidate if repo_candidate.exists() else None
+
+
+def _parse_dotenv_line(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    if stripped.startswith("export "):
+        stripped = stripped.removeprefix("export ").lstrip()
+    if "=" not in stripped:
+        return None
+    key, value = stripped.split("=", 1)
+    key = key.strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        return None
+    return key, _parse_dotenv_value(value.strip())
+
+
+def _parse_dotenv_value(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return _strip_unquoted_comment(value).strip()
+
+
+def _strip_unquoted_comment(value: str) -> str:
+    for index, char in enumerate(value):
+        if char == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index]
+    return value
 
 
 def _parse_structured_response(response: Any, output_model: type[BaseModel]) -> BaseModel:
