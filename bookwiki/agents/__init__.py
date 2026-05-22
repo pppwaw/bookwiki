@@ -1,4 +1,4 @@
-"""Deterministic M1 stub agents."""
+"""BookWiki LLM-backed agents."""
 
 from bookwiki.agents.card_agent import CardAgent
 from bookwiki.agents.chapter_agent import ChapterAgent

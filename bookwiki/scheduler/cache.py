@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from bookwiki.scheduler.llm import LLMRuntime, build_runtime
+
 
 @dataclass(frozen=True)
 class CacheResult:
@@ -47,6 +49,7 @@ async def run_with_cache(
     model: str,
     cache_dir: str | Path = "work/.cache/tasks",
     force: bool = False,
+    runtime: LLMRuntime | None = None,
 ) -> CacheResult:
     cache_path = Path(cache_dir)
     cache_path.mkdir(parents=True, exist_ok=True)
@@ -59,7 +62,8 @@ async def run_with_cache(
         return CacheResult(output_model.model_validate(payload["result"]), True, key, output_path)
 
     inp = inputs[0] if len(inputs) == 1 else list(inputs)
-    result = await agent_cls().run(inp, model=model)
+    llm_runtime = runtime if runtime is not None else build_runtime()
+    result = await agent_cls().run(inp, model=model, runtime=llm_runtime)
     output_path.write_text(
         json.dumps(
             {

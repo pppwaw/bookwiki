@@ -99,6 +99,7 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
             {"path": str(path), "sha256": sha256_text(text)},
             model=cfg.model_for("source_summary"),
             cache_dir=_cache_dir(cfg),
+            runtime=cfg.llm_runtime,
         )
         results.append(result)
         summaries.append(_json_model(result.result))
@@ -108,6 +109,7 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
         {"summaries": summaries, "strategy": "pedagogical"},
         model=cfg.model_for("structure"),
         cache_dir=_cache_dir(cfg),
+        runtime=cfg.llm_runtime,
     )
     results.append(structure)
 
@@ -150,6 +152,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
         },
         model=cfg.model_for("split"),
         cache_dir=_cache_dir(cfg),
+        runtime=cfg.llm_runtime,
     )
 
     out_dir = ensure_dir(cfg.work_dir / "chapter_sources")
@@ -211,22 +214,36 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             payload,
             model=cfg.model_for("chapter"),
             cache_dir=_cache_dir(cfg),
+            runtime=cfg.llm_runtime,
         )
         summary, quiz, card, concept = await asyncio.gather(
             run_with_cache(
-                SummaryAgent, payload, model=cfg.model_for("summary"), cache_dir=_cache_dir(cfg)
+                SummaryAgent,
+                payload,
+                model=cfg.model_for("summary"),
+                cache_dir=_cache_dir(cfg),
+                runtime=cfg.llm_runtime,
             ),
             run_with_cache(
-                QuizAgent, payload, model=cfg.model_for("quiz"), cache_dir=_cache_dir(cfg)
+                QuizAgent,
+                payload,
+                model=cfg.model_for("quiz"),
+                cache_dir=_cache_dir(cfg),
+                runtime=cfg.llm_runtime,
             ),
             run_with_cache(
-                CardAgent, payload, model=cfg.model_for("card"), cache_dir=_cache_dir(cfg)
+                CardAgent,
+                payload,
+                model=cfg.model_for("card"),
+                cache_dir=_cache_dir(cfg),
+                runtime=cfg.llm_runtime,
             ),
             run_with_cache(
                 ConceptExtractAgent,
                 payload,
                 model=cfg.model_for("concept"),
                 cache_dir=_cache_dir(cfg),
+                runtime=cfg.llm_runtime,
             ),
         )
         cache_results.extend([chapter, summary, quiz, card, concept])
@@ -257,6 +274,7 @@ async def reconcile_node(state: State, cfg: BookConfig) -> State:
         candidates,
         model=cfg.model_for("concept"),
         cache_dir=_cache_dir(cfg),
+        runtime=cfg.llm_runtime,
     )
     out_dir = ensure_dir(cfg.work_dir / "concepts")
     reconciled = write_json(out_dir / "reconciled.json", _json_model(result.result))
@@ -279,6 +297,7 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
             item,
             model=cfg.model_for("concept"),
             cache_dir=_cache_dir(cfg),
+            runtime=cfg.llm_runtime,
         )
         cache_results.append(result)
         safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", result.result.name).strip("-") or "concept"
@@ -380,6 +399,7 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
             model=cfg.model_for("review"),
             cache_dir=_cache_dir(cfg),
             force=True,
+            runtime=cfg.llm_runtime,
         )
         path = write_json(out_dir / f"{target.replace(':', '-')}.json", _json_model(result.result))
         outputs.append(_rel(path, cfg.book_dir))

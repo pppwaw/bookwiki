@@ -26,7 +26,7 @@ def main() -> None:
         "--from", dest="from_node", choices=NODE_ORDER, help="Alias for --force-from"
     )
     parser.add_argument("--to", dest="to_node", choices=NODE_ORDER, help="Stop after this node")
-    parser.add_argument("--only", help="Accepted for M1 CLI compatibility; ignored by stub nodes")
+    parser.add_argument("--only", help="Accepted for M1 CLI compatibility; ignored")
     args = parser.parse_args()
 
     cfg = load_config(args.book_dir)

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
+    env["BOOKWIKI_TEST_LLM"] = "1"
     return subprocess.run(
         [sys.executable, *args],
         cwd=cwd,
@@ -23,7 +24,7 @@ def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]
     )
 
 
-def test_init_book_and_run_stub_pipeline_to_sqlite(tmp_path) -> None:
+def test_init_book_and_run_fake_llm_pipeline_to_sqlite(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
     source = tmp_path / "notes.txt"
     source.write_text("BookWiki offline CLI smoke source.", encoding="utf-8")

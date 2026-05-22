@@ -30,6 +30,7 @@ class BookConfig:
     pause_after: list[str] = field(default_factory=list)
     dry_run: bool = False
     force_from: str | None = None
+    llm_runtime: Any | None = None
 
     @property
     def input_dir(self) -> Path:

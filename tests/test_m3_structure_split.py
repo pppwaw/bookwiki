@@ -8,6 +8,7 @@ from bookwiki.agents.source_summary_agent import SourceSummaryAgent
 from bookwiki.agents.structure_agent import StructureAgent
 from bookwiki.pipeline.nodes import split_node, structure_node
 from bookwiki.scheduler.config import default_config
+from bookwiki.scheduler.llm import TestLLMRuntime
 from bookwiki.split.chapter_splitter import (
     parse_approved_structure,
     split_sources_by_structure,
@@ -70,9 +71,12 @@ def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_pa
         encoding="utf-8",
     )
 
-    summary = asyncio.run(SourceSummaryAgent().run(source, model="stub"))
+    runtime = TestLLMRuntime()
+    summary = asyncio.run(SourceSummaryAgent().run(source, model="stub", runtime=runtime))
     result = asyncio.run(
-        StructureAgent().run({"summaries": [summary.model_dump(mode="json")]}, model="stub")
+        StructureAgent().run(
+            {"summaries": [summary.model_dump(mode="json")]}, model="stub", runtime=runtime
+        )
     )
 
     assert summary.detected_chapter_id == "ch06"
@@ -95,9 +99,12 @@ def test_structure_agent_reflects_source_content_in_chapter_plan(tmp_path: Path)
         encoding="utf-8",
     )
 
-    summary = asyncio.run(SourceSummaryAgent().run(source, model="stub"))
+    runtime = TestLLMRuntime()
+    summary = asyncio.run(SourceSummaryAgent().run(source, model="stub", runtime=runtime))
     result = asyncio.run(
-        StructureAgent().run({"summaries": [summary.model_dump(mode="json")]}, model="stub")
+        StructureAgent().run(
+            {"summaries": [summary.model_dump(mode="json")]}, model="stub", runtime=runtime
+        )
     )
 
     assert "Week-10" not in summary.headings
@@ -129,6 +136,7 @@ def test_structure_agent_merges_sources_with_same_detected_chapter() -> None:
                 ]
             },
             model="stub",
+            runtime=TestLLMRuntime(),
         )
     )
 
@@ -169,6 +177,7 @@ def test_split_sources_by_structure_aligns_fragments_and_writes_appendix(tmp_pat
 
 def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: Path) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = TestLLMRuntime()
     sources_dir = cfg.work_dir / "sources_md"
     sources_dir.mkdir(parents=True)
     source = sources_dir / "textbook.md"

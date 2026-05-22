@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from bookwiki.agents.llm import generate_with_llm
+from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.concept import (
     ConceptReconciledItem,
     ConceptReconcileResult,
@@ -9,11 +11,13 @@ from bookwiki.schemas.concept import (
 
 
 class ConceptReconcileAgent:
-    kind: ClassVar[str] = "concept_reconcile"
+    kind: ClassVar[str] = "concept_reconcile_llm_v1"
     output_model: ClassVar[type[ConceptReconcileResult]] = ConceptReconcileResult
     model_key: ClassVar[str] = "concept"
 
-    async def run(self, inp: list[dict[str, Any]], *, model: str) -> ConceptReconcileResult:
+    async def run(
+        self, inp: list[dict[str, Any]], *, model: str, runtime: LLMRuntime
+    ) -> ConceptReconcileResult:
         by_name: dict[str, ConceptReconciledItem] = {}
         alias_map: dict[str, str] = {}
         for item in inp:
@@ -33,4 +37,14 @@ class ConceptReconcileAgent:
             alias_map[canonical] = canonical
             for alias in aliases:
                 alias_map[alias] = canonical
-        return ConceptReconcileResult(concepts=list(by_name.values()), alias_map=alias_map)
+        draft = ConceptReconcileResult(concepts=list(by_name.values()), alias_map=alias_map)
+        result = await generate_with_llm(
+            runtime=runtime,
+            model=model,
+            output_model=ConceptReconcileResult,
+            agent_name=self.__class__.__name__,
+            task="Merge synonymous concept candidates into canonical concepts.",
+            inp=inp,
+            draft=draft,
+        )
+        return ConceptReconcileResult.model_validate(result)

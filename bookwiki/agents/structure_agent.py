@@ -4,46 +4,70 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from bookwiki.agents.llm import generate_with_llm
+from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.source import StructureResult
 
 
 class StructureAgent:
-    kind: ClassVar[str] = "structure_v5"
+    kind: ClassVar[str] = "structure_llm_v1"
     output_model: ClassVar[type[StructureResult]] = StructureResult
     model_key: ClassVar[str] = "structure"
 
     async def run(
-        self, inp: list[dict[str, Any]] | dict[str, Any], *, model: str
+        self,
+        inp: list[dict[str, Any]] | dict[str, Any],
+        *,
+        model: str,
+        runtime: LLMRuntime,
     ) -> StructureResult:
         summaries = inp.get("summaries", []) if isinstance(inp, dict) else inp
-        chapters = _chapter_specs_from_sources(summaries)
-        lines = ["# Proposed Structure", ""]
-        chapter_names: list[str] = []
-        for index, plan in enumerate(chapters, start=1):
-            heading = _display_heading(plan)
-            chapter_names.append(heading)
-            topics = _topic_terms(plan)
-            lines.extend(
-                [
-                    f"## {heading}",
-                    "",
-                    f"- 目标: {_render_goal(plan, topics)}",
-                    f"- 范围: {_render_scope(plan, topics, index)}",
-                ]
-            )
-            if plan.headings:
-                lines.append("- 内容:")
-                lines.extend(f"  - {heading}" for heading in plan.headings[:5])
-            if topics:
-                lines.append(f"- 关键词: {', '.join(topics[:8])}.")
-            lines.extend(
-                [
-                    "- 来源:",
-                ]
-            )
-            lines.extend(f"  - {ref}" for ref in plan.source_refs)
-            lines.append("")
-        return StructureResult(proposed_structure_md="\n".join(lines), chapters=chapter_names)
+        draft = _draft_structure(summaries)
+        result = await generate_with_llm(
+            runtime=runtime,
+            model=model,
+            output_model=StructureResult,
+            agent_name=self.__class__.__name__,
+            task=(
+                "Create a proposed book structure from source summaries. Use visible headings "
+                "like 'Chapter 6 Title' when the source detects a chapter number, include source "
+                "refs exactly, and avoid empty placeholder chapters."
+            ),
+            inp=inp,
+            draft=draft,
+        )
+        return StructureResult.model_validate(result)
+
+
+def _draft_structure(summaries: list[dict[str, Any]]) -> StructureResult:
+    chapters = _chapter_specs_from_sources(summaries)
+    lines = ["# Proposed Structure", ""]
+    chapter_names: list[str] = []
+    for index, plan in enumerate(chapters, start=1):
+        heading = _display_heading(plan)
+        chapter_names.append(heading)
+        topics = _topic_terms(plan)
+        lines.extend(
+            [
+                f"## {heading}",
+                "",
+                f"- 目标: {_render_goal(plan, topics)}",
+                f"- 范围: {_render_scope(plan, topics, index)}",
+            ]
+        )
+        if plan.headings:
+            lines.append("- 内容:")
+            lines.extend(f"  - {heading}" for heading in plan.headings[:5])
+        if topics:
+            lines.append(f"- 关键词: {', '.join(topics[:8])}.")
+        lines.extend(
+            [
+                "- 来源:",
+            ]
+        )
+        lines.extend(f"  - {ref}" for ref in plan.source_refs)
+        lines.append("")
+    return StructureResult(proposed_structure_md="\n".join(lines), chapters=chapter_names)
 
 
 @dataclass

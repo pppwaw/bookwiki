@@ -2,18 +2,30 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from bookwiki.agents.llm import generate_with_llm
+from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.source import RepairResult
 
 
 class ReviewAgent:
-    kind: ClassVar[str] = "review"
+    kind: ClassVar[str] = "review_llm_v1"
     output_model: ClassVar[type[RepairResult]] = RepairResult
     model_key: ClassVar[str] = "review"
 
-    async def run(self, inp: dict[str, Any], *, model: str) -> RepairResult:
+    async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> RepairResult:
         owner = str(inp.get("owner_task_id", "unknown:review"))
-        return RepairResult(
+        draft = RepairResult(
             owner_task_id=owner,
-            action="noop",
-            notes="M1 stub repair recorded the issue without changing generated content.",
+            action="review",
+            notes="Review the issue and propose a targeted repair.",
         )
+        result = await generate_with_llm(
+            runtime=runtime,
+            model=model,
+            output_model=RepairResult,
+            agent_name=self.__class__.__name__,
+            task="Produce a repair action for the failing owner task.",
+            inp=inp,
+            draft=draft,
+        )
+        return RepairResult.model_validate(result)
