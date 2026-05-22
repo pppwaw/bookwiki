@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import json
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -90,15 +92,19 @@ class BookGraph:
             nodes_log: list[dict[str, Any]] = []
         else:
             checkpoint = read_json(self.checkpoint_path, default={})
-            if resume and checkpoint.get("status") == "completed":
+            checkpoint_matches_config = checkpoint.get("config_hash") == self._config_hash()
+            if resume and checkpoint.get("status") == "completed" and checkpoint_matches_config:
                 state = checkpoint.get("state", {"book_id": self.cfg.book_id})
                 print("resume: completed checkpoint found; cache_hit: true")
                 return state
-            if resume and checkpoint.get("state"):
+            if resume and checkpoint.get("state") and checkpoint_matches_config:
                 state = checkpoint["state"]
                 next_node = checkpoint.get("next_node")
                 start_index = NODE_ORDER.index(next_node) if next_node in NODE_ORDER else 0
                 nodes_log = read_json(self.manifest_path, default={}).get("nodes", [])
+            elif resume and checkpoint.get("state"):
+                state, start_index = self._state_after_config_change(checkpoint["state"])
+                nodes_log = []
             else:
                 state = initial_state or {"book_id": self.cfg.book_id}
                 start_index = 0
@@ -153,13 +159,22 @@ class BookGraph:
             if next_index is not None and next_index < len(NODE_ORDER)
             else None
         )
-        write_json(self.checkpoint_path, {"status": status, "next_node": next_node, "state": state})
+        write_json(
+            self.checkpoint_path,
+            {
+                "status": status,
+                "next_node": next_node,
+                "config_hash": self._config_hash(),
+                "state": state,
+            },
+        )
         write_json(
             self.manifest_path,
             {
                 "book_id": self.cfg.book_id,
                 "status": status,
                 "next_node": next_node,
+                "config_hash": self._config_hash(),
                 "nodes": nodes_log,
                 "outputs": {
                     "vault": str(self.cfg.vault_dir),
@@ -167,6 +182,28 @@ class BookGraph:
                 },
             },
         )
+
+    def _config_hash(self) -> str:
+        payload = json.dumps(
+            self.cfg.to_json(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+    def _state_after_config_change(
+        self, checkpoint_state: dict[str, Any]
+    ) -> tuple[dict[str, Any], int]:
+        sources_md = checkpoint_state.get("sources_md")
+        if sources_md and self.stop_after != "convert":
+            print("resume: config changed; rerunning from structure")
+            return (
+                {
+                    "book_id": checkpoint_state.get("book_id", self.cfg.book_id),
+                    "sources_md": sources_md,
+                },
+                NODE_ORDER.index("structure"),
+            )
+        print("resume: config changed; rerunning from convert")
+        return {"book_id": self.cfg.book_id}, 0
 
     def _clear_for_force(self) -> None:
         if self.checkpoint_path.exists():

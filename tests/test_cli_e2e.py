@@ -73,6 +73,31 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
     assert "cache_hit" in resumed.stdout
 
 
+def test_completed_checkpoint_is_not_reused_after_language_change(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    source = tmp_path / "notes.txt"
+    source.write_text("BookWiki language checkpoint smoke source.", encoding="utf-8")
+
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
+    run_script("scripts/run.py", str(book_dir))
+    (book_dir / "input" / source.name).unlink()
+    config_path = book_dir / "book.config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["language"] = "en-US"
+    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    result = run_script("scripts/structure.py", str(book_dir))
+
+    assert "completed checkpoint found" not in result.stdout
+    assert "stage complete: structure" in result.stdout
+    checkpoint = json.loads(
+        (book_dir / "work" / ".cache" / "checkpoint.json").read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "paused"
+    assert checkpoint["next_node"] == "split"
+    assert checkpoint["config_hash"]
+
+
 def test_dry_run_prints_mermaid_and_estimate(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
     source = tmp_path / "notes.txt"

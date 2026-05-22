@@ -114,7 +114,7 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
         text = path.read_text(encoding="utf-8", errors="ignore")
         result = await run_with_cache(
             SourceSummaryAgent,
-            {"path": str(path), "sha256": sha256_text(text)},
+            {"path": str(path), "sha256": sha256_text(text), "language": cfg.language},
             model=cfg.model_for("source_summary"),
             cache_dir=_cache_dir(cfg),
             runtime=cfg.llm_runtime,
@@ -124,7 +124,7 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
 
     structure = await run_with_cache(
         StructureAgent,
-        {"summaries": summaries, "strategy": "pedagogical"},
+        {"summaries": summaries, "strategy": "pedagogical", "language": cfg.language},
         model=cfg.model_for("structure"),
         cache_dir=_cache_dir(cfg),
         runtime=cfg.llm_runtime,

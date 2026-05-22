@@ -274,3 +274,25 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
     assert alignment["coverage"]["assigned_ratio"] == 1.0
     assert split_state["chapter_titles"]["chapter-1"] == "Search Foundations"
     assert not stale.exists()
+
+
+def test_structure_node_cache_key_changes_when_language_changes(tmp_path: Path) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = TestLLMRuntime()
+    sources_dir = cfg.work_dir / "sources_md"
+    sources_dir.mkdir(parents=True)
+    source = sources_dir / "textbook.md"
+    source.write_text(
+        "# Textbook\n\n"
+        "<!-- source_ref: textbook-p001 -->\n\n"
+        "Introductory search material.\n",
+        encoding="utf-8",
+    )
+    state = {"book_id": cfg.book_id, "sources_md": ["work/sources_md/textbook.md"]}
+
+    first = asyncio.run(structure_node(state, cfg))
+    cfg.language = "en-US"
+    second = asyncio.run(structure_node(state, cfg))
+
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is False
