@@ -11,6 +11,8 @@ class SourceSummaryResult(VersionedModel):
     source_refs: list[str] = Field(default_factory=list)
     detected_chapter_id: str | None = None
     detected_title: str | None = None
+    headings: list[str] = Field(default_factory=list)
+    key_terms: list[str] = Field(default_factory=list)
 
 
 class StructureResult(VersionedModel):

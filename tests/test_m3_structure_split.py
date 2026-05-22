@@ -63,6 +63,32 @@ def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_pa
     assert "## ch02 Week 10" not in result.proposed_structure_md
 
 
+def test_structure_agent_reflects_source_content_in_chapter_plan(tmp_path: Path) -> None:
+    source = tmp_path / "Week-10.md"
+    source.write_text(
+        "# Week-10\n\n"
+        "<!-- source_ref: Week-10-p001 -->\n\n"
+        "# Chapter 6 The point estimation\n\n"
+        "Point estimation introduces the method of moments and maximum likelihood "
+        "estimation for unknown parameters.\n\n"
+        "# More general case\n\n"
+        "Moment estimators equate sample moments with population moments.",
+        encoding="utf-8",
+    )
+
+    summary = asyncio.run(SourceSummaryAgent().run(source, model="stub"))
+    result = asyncio.run(
+        StructureAgent().run({"summaries": [summary.model_dump(mode="json")]}, model="stub")
+    )
+
+    assert "Week-10" not in summary.headings
+    assert "method of moments" in result.proposed_structure_md
+    assert "maximum likelihood estimation" in result.proposed_structure_md
+    assert "More general case" in result.proposed_structure_md
+    assert "Cover the source material assigned" not in result.proposed_structure_md
+    assert "Automatically grouped source set" not in result.proposed_structure_md
+
+
 def test_structure_agent_merges_sources_with_same_detected_chapter() -> None:
     result = asyncio.run(
         StructureAgent().run(
