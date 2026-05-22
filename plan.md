@@ -192,7 +192,7 @@ flowchart LR
   - `Citation` Pydantic 加 `@field_validator('ref_id')`,在 instructor 调用 context 里塞当前 chunk ref 集合,validator 校验
   - 各 agent 输出 schema 嵌套 `Citation`
 - [ ] **`generate_node` 实现**(替换 M1 stub):Send fan-out 每章一子任务,内部 asyncio.gather 4 个 agent
-- [ ] **`bookwiki/agents/prompts/`**:每个 prompt 单独文件,带 `PROMPT_VERSION = "v1"` 常量
+- [ ] **prompt 内置在各 agent 模块**:每个 agent 的 `prompt_template = PromptTemplate(version="v1", body=...)`,不设独立 `agents/prompts/` 目录
 
 ### 产物
 - `work/agent_results/{chXX}.{chapter,summary,quiz,card}.json`(JSON,顶部带 `_schema_version` / `_prompt_version`)
@@ -200,7 +200,7 @@ flowchart LR
 ### 验收
 - mini-book 每章有 4 份 JSON 都通过 Pydantic
 - cite tool 测试:故意让 LLM 编 ref_id → instructor 自动重试纠错(看日志)
-- 改一个 prompt 文件里的版本号,`--resume` 时该 agent 全部重跑(input_hash 失效)
+- 改某个 agent 内置 `prompt_template.version` 或 `body`,`--resume` 时该 agent 全部重跑(input_hash 失效)
 - `--dry-run` 估算与实测对比,记录到 cost-model 笔记里手动改 ESTIMATE 常量
 
 ---

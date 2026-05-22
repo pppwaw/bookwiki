@@ -961,7 +961,8 @@ async def chapter_agent(ch_source: ChapterSource) -> ChapterResult:
 import diskcache as dc, hashlib
 cache = dc.Cache("work/.cache/results")
 
-PROMPT_VERSION = "v3"
+def prompt_version(agent_cls):
+    return agent_cls.prompt_template.version
 SCHEMA_VERSION = {                       # 跟着 Pydantic 模型走
     ChapterResult: "1.2",
     SummaryResult: "1.0",
@@ -971,7 +972,7 @@ SCHEMA_VERSION = {                       # 跟着 Pydantic 模型走
 def task_key(agent_cls, *inputs, model):
     h = hashlib.sha256()
     h.update(f"{agent_cls.__name__}|{model}|"
-             f"{PROMPT_VERSION}|{SCHEMA_VERSION[agent_cls.output_model]}".encode())
+             f"{prompt_version(agent_cls)}|{SCHEMA_VERSION[agent_cls.output_model]}".encode())
     for x in inputs:
         h.update(Path(x).read_bytes() if isinstance(x, Path) else str(x).encode())
     return h.hexdigest()
@@ -1688,7 +1689,7 @@ bookwiki/
       concept_reconcile.py       # 产 reconciled.json + alias_map
       concept_agent.py
       review_agent.py            # 强制 models.review,带上一轮失败输出
-      prompts/                   # 每个 prompt 带版本号
+      # 各 agent 模块内置 PromptTemplate(version, body)
 
     schemas/
       chapter.py  summary.py  quiz.py  card.py
@@ -1841,7 +1842,7 @@ skills/bookwiki/
 负责 StructureAgent、ChapterSplitAgent、ChapterAgent、ConceptExtract/Reconcile、ConceptAgent,以及主要内容 prompt 与输出
 schema。
 
-交付物:`bookwiki/split/`、`agents/chapter_agent.py`、`agents/concept_*.py`、`agents/prompts/`。
+交付物:`bookwiki/split/`、`agents/chapter_agent.py`、`agents/concept_*.py`;prompt 内置在对应 agent 模块的 `PromptTemplate` 中。
 验收:能切章节生成 `chapter_sources/chxx`;章节正文有结构有来源;概念能去重归并、一个概念一页;JSON 能通过 schema 检查。
 
 ### 21.4 成员 D:Quiz / Cards / 检查与修复

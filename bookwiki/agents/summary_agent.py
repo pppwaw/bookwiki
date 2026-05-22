@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents._helpers import chapter_id, chapter_title, citation, source_refs
+from bookwiki.agents._helpers import (
+    chapter_document,
+    chapter_id,
+    chapter_title,
+    citation,
+    source_refs,
+)
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
@@ -15,7 +21,7 @@ class SummaryAgent:
     model_key: ClassVar[str] = "summary"
     prompt_name: ClassVar[str] = "summary"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v2",
+        version="v1",
         body="""You are the chapter-summary agent.
 
 Summarize the chapter for fast review.
@@ -31,6 +37,7 @@ Do not introduce concepts that are absent from the chapter source.""",
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> SummaryResult:
         ch_id = chapter_id(inp)
         title = chapter_title(inp)
+        refs = source_refs(inp)
         draft = SummaryResult(
             chapter_id=ch_id,
             summary_md=f"{title} introduces the core ideas available in the source bundle.",
@@ -38,6 +45,7 @@ Do not introduce concepts that are absent from the chapter source.""",
             citations=[citation(inp)],
             owner_task_id=f"{ch_id}:summary",
         )
+        llm_input = _content_input(inp, refs)
         result = await generate_with_llm(
             runtime=runtime,
             model=model,
@@ -45,8 +53,15 @@ Do not introduce concepts that are absent from the chapter source.""",
             agent_name=self.__class__.__name__,
             prompt_name=self.prompt_name,
             prompt_template=self.prompt_template,
-            inp=inp,
+            inp=llm_input,
             draft=draft,
-            allowed_citation_refs=source_refs(inp),
+            allowed_citation_refs=refs,
         )
         return SummaryResult.model_validate(result)
+
+
+def _content_input(inp: dict[str, Any], refs: set[str]) -> dict[str, Any]:
+    payload = {key: value for key, value in inp.items() if key != "source_md"}
+    payload["document_xml"] = chapter_document(inp)
+    payload["allowed_source_refs"] = sorted(refs)
+    return payload

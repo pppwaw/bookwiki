@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents._helpers import chapter_id, chapter_title, citation, source_refs
+from bookwiki.agents._helpers import (
+    chapter_document,
+    chapter_id,
+    chapter_title,
+    citation,
+    source_refs,
+)
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
@@ -29,6 +35,7 @@ Avoid cards that merely repeat a chapter title or ask vague questions.""",
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> CardResult:
         ch_id = chapter_id(inp)
         title = chapter_title(inp)
+        refs = source_refs(inp)
         count = _requested_count(inp, "cards_per_chapter", "cardsPerChapter", 1)
         cards = [
             CardItem(
@@ -39,6 +46,7 @@ Avoid cards that merely repeat a chapter title or ask vague questions.""",
             for index in range(count)
         ]
         draft = CardResult(chapter_id=ch_id, items=cards, owner_task_id=f"{ch_id}:card")
+        llm_input = _content_input(inp, refs)
         result = await generate_with_llm(
             runtime=runtime,
             model=model,
@@ -46,11 +54,18 @@ Avoid cards that merely repeat a chapter title or ask vague questions.""",
             agent_name=self.__class__.__name__,
             prompt_name=self.prompt_name,
             prompt_template=self.prompt_template,
-            inp=inp,
+            inp=llm_input,
             draft=draft,
-            allowed_citation_refs=source_refs(inp),
+            allowed_citation_refs=refs,
         )
         return CardResult.model_validate(result)
+
+
+def _content_input(inp: dict[str, Any], refs: set[str]) -> dict[str, Any]:
+    payload = {key: value for key, value in inp.items() if key != "source_md"}
+    payload["document_xml"] = chapter_document(inp)
+    payload["allowed_source_refs"] = sorted(refs)
+    return payload
 
 
 def _requested_count(inp: dict[str, Any], snake_key: str, camel_key: str, default: int) -> int:

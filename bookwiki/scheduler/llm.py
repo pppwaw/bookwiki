@@ -17,6 +17,8 @@ class LLMRuntime(Protocol):
         output_model: type[BaseModel],
         system: str,
         user: str,
+        context: dict[str, Any] | None = None,
+        max_retries: int = 2,
     ) -> BaseModel:
         """Return a validated structured result from a real or explicitly injected LLM."""
 
@@ -41,6 +43,7 @@ class LLMRuntimeUnavailable(RuntimeError):
 class LiteLLMRuntime:
     def __init__(self, router: Any | None = None) -> None:
         self.router = router
+        self.client: Any | None = None
 
     async def generate(
         self,
@@ -49,19 +52,28 @@ class LiteLLMRuntime:
         output_model: type[BaseModel],
         system: str,
         user: str,
+        context: dict[str, Any] | None = None,
+        max_retries: int = 2,
     ) -> BaseModel:
         _ensure_api_key(model)
         router = self.router if self.router is not None else build_router()
         self.router = router
-        response = await router.acompletion(
+        client = self.client if self.client is not None else build_instructor_client(router)
+        self.client = client
+        result = await client.create(
             model=model,
+            response_model=output_model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
+            max_retries=max_retries,
+            context=context,
             temperature=0,
         )
-        return _parse_structured_response(response, output_model)
+        if isinstance(result, output_model):
+            return result
+        return output_model.model_validate(result, context=context)
 
 
 class TestLLMRuntime:
@@ -74,12 +86,14 @@ class TestLLMRuntime:
         output_model: type[BaseModel],
         system: str,
         user: str,
+        context: dict[str, Any] | None = None,
+        max_retries: int = 2,
     ) -> BaseModel:
         draft = _extract_draft_payload(user)
         if draft is None:
             msg = f"test runtime needs a Draft JSON block for {output_model.__name__}"
             raise ValueError(msg)
-        return output_model.model_validate(draft)
+        return output_model.model_validate(draft, context=context)
 
 
 def build_runtime() -> LLMRuntime:
@@ -259,5 +273,12 @@ def _extract_draft_payload(user: str) -> Any | None:
     return json.loads(draft)
 
 
-def build_instructor_client(router: Any) -> None:
-    return None
+def build_instructor_client(router: Any) -> Any:
+    try:
+        import instructor
+    except Exception as exc:  # pragma: no cover - exercised only without optional extra
+        raise LLMRuntimeUnavailable(
+            "Instructor is required for structured LLM calls; install the runtime extra"
+        ) from exc
+
+    return instructor.from_litellm(router.acompletion)

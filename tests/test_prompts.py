@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+
 from bookwiki.agents.chapter_agent import ChapterAgent
 from bookwiki.agents.prompting import PromptTemplate, prompt_cache_key, render_prompt
 from bookwiki.agents.summary_agent import SummaryAgent
@@ -98,3 +100,11 @@ def test_agent_prompt_includes_target_language_instruction() -> None:
 
     assert "Target language: en-US" in rendered.user
     assert "Write learner-facing content in the target language" in rendered.user
+
+
+def test_m4_content_prompts_are_embedded_in_agent_modules() -> None:
+    assert importlib.util.find_spec("bookwiki.agents.prompts") is None
+    assert ChapterAgent.prompt_template.version == "v1"
+    assert "<document>" in ChapterAgent.prompt_template.body
+    assert "<chunk ref=" in ChapterAgent.prompt_template.body
+    assert "untrusted" in ChapterAgent.prompt_template.body

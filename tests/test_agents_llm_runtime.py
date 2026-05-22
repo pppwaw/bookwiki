@@ -195,6 +195,71 @@ async def test_quiz_and_card_agents_seed_requested_counts_from_config() -> None:
 
 
 @pytest.mark.asyncio
+async def test_content_agents_pass_allowed_refs_in_validation_context() -> None:
+    payload = {
+        "chapter_id": "chapter-1",
+        "title": "Search",
+        "source_md": "<!-- source_ref: source-p001 -->\nState space search.",
+        "source_path": "work/chapter_sources/chapter-1/source.md",
+        "language": "zh-CN",
+    }
+    runtime = RecordingRuntime(
+        [
+            {
+                "chapter_id": "chapter-1",
+                "title": "Search",
+                "body_md": "# Search\n\nBody.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                "owner_task_id": "chapter-1:chapter",
+            }
+        ]
+    )
+
+    await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+
+    assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"source-p001"}}
+    assert runtime.calls[0]["max_retries"] == 2
+
+
+@pytest.mark.asyncio
+async def test_chapter_agent_wraps_source_as_document_chunks() -> None:
+    payload = {
+        "chapter_id": "chapter-1",
+        "title": "Search",
+        "source_md": (
+            "# Search\n\n"
+            "<!-- source_ref: source-p001 -->\n\n"
+            "State space search.\n\n"
+            "<!-- source_ref: source-p002 -->\n\n"
+            "Heuristic search."
+        ),
+        "source_path": "work/chapter_sources/chapter-1/source.md",
+        "language": "zh-CN",
+    }
+    runtime = RecordingRuntime(
+        [
+            {
+                "chapter_id": "chapter-1",
+                "title": "Search",
+                "body_md": "# Search\n\nBody.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                "owner_task_id": "chapter-1:chapter",
+            }
+        ]
+    )
+
+    await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+
+    user_prompt = runtime.calls[0]["user"]
+    assert "<document>" in user_prompt
+    assert '<chunk ref="source-p001">' in user_prompt
+    assert '<chunk ref="source-p002">' in user_prompt
+    assert "State space search." in user_prompt
+
+
+@pytest.mark.asyncio
 async def test_agent_retries_when_llm_invents_citation_ref_id() -> None:
     payload = {
         "chapter_id": "chapter-1",
@@ -228,8 +293,10 @@ async def test_agent_retries_when_llm_invents_citation_ref_id() -> None:
 
     assert result.citations[0].ref_id == "source-p001"
     assert len(runtime.calls) == 2
-    assert "invented-p999" in runtime.calls[1]["user"]
-    assert "source-p001" in runtime.calls[1]["user"]
+    assert all(
+        call["context"] == {"allowed_citation_refs": {"source-p001"}}
+        for call in runtime.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -249,9 +316,9 @@ async def test_agent_raises_after_repeated_invalid_citation_ref_ids() -> None:
         "citations": [{"ref_id": "invented-p999", "quote": "State"}],
         "owner_task_id": "chapter-1:chapter",
     }
-    runtime = RecordingRuntime([bad_response, bad_response, bad_response])
+    runtime = RecordingRuntime([bad_response, bad_response])
 
     with pytest.raises(ValueError, match="invented-p999"):
         await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
-    assert len(runtime.calls) == 3
+    assert len(runtime.calls) == 2

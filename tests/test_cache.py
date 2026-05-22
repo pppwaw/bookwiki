@@ -33,14 +33,22 @@ async def test_run_with_cache_marks_second_call_as_hit(tmp_path) -> None:
     )
     first = await run_with_cache(
         ChapterAgent,
-        {"chapter_id": "ch01", "title": "Foundations", "source_md": "hello"},
+        {
+            "chapter_id": "ch01",
+            "title": "Foundations",
+            "source_md": "<!-- source_ref: source-p001 -->\nhello",
+        },
         model="stub",
         cache_dir=cache_dir,
         runtime=runtime,
     )
     second = await run_with_cache(
         ChapterAgent,
-        {"chapter_id": "ch01", "title": "Foundations", "source_md": "hello"},
+        {
+            "chapter_id": "ch01",
+            "title": "Foundations",
+            "source_md": "<!-- source_ref: source-p001 -->\nhello",
+        },
         model="stub",
         cache_dir=cache_dir,
         runtime=runtime,

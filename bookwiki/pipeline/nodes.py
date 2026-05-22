@@ -12,7 +12,6 @@ from bookwiki.agents import (
     ChapterAgent,
     ChapterSplitAgent,
     ConceptAgent,
-    ConceptExtractAgent,
     ConceptReconcileAgent,
     QuizAgent,
     ReviewAgent,
@@ -234,15 +233,14 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
         summary_model = cfg.model_for("summary")
         quiz_model = cfg.model_for("quiz")
         card_model = cfg.model_for("card")
-        concept_model = cfg.model_for("concept")
-        chapter = await run_with_cache(
-            ChapterAgent,
-            payload,
-            model=chapter_model,
-            cache_dir=_cache_dir(cfg),
-            runtime=cfg.llm_runtime,
-        )
-        summary, quiz, card, concept = await asyncio.gather(
+        chapter, summary, quiz, card = await asyncio.gather(
+            run_with_cache(
+                ChapterAgent,
+                payload,
+                model=chapter_model,
+                cache_dir=_cache_dir(cfg),
+                runtime=cfg.llm_runtime,
+            ),
             run_with_cache(
                 SummaryAgent,
                 payload,
@@ -264,15 +262,8 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
                 cache_dir=_cache_dir(cfg),
                 runtime=cfg.llm_runtime,
             ),
-            run_with_cache(
-                ConceptExtractAgent,
-                payload,
-                model=concept_model,
-                cache_dir=_cache_dir(cfg),
-                runtime=cfg.llm_runtime,
-            ),
         )
-        cache_results.extend([chapter, summary, quiz, card, concept])
+        cache_results.extend([chapter, summary, quiz, card])
         paths = {
             "chapter": write_json(
                 result_dir / f"{ch_id}.chapter.json",
@@ -290,10 +281,6 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
                 result_dir / f"{ch_id}.card.json",
                 _agent_result_payload(CardAgent, card_model, card.result),
             ),
-            "concepts": write_json(
-                result_dir / f"{ch_id}.concepts.json",
-                _agent_result_payload(ConceptExtractAgent, concept_model, concept.result),
-            ),
         }
         chapter_results[ch_id] = {name: _rel(path, cfg.book_dir) for name, path in paths.items()}
 
@@ -302,8 +289,20 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
 
 async def reconcile_node(state: State, cfg: BookConfig) -> State:
     candidates = []
-    for paths in state.get("agent_results", {}).values():
-        candidates.append(_agent_result(read_json(cfg.book_dir / paths["concepts"])))
+    for ch_id, paths in state.get("agent_results", {}).items():
+        if "concepts" in paths:
+            candidates.append(_agent_result(read_json(cfg.book_dir / paths["concepts"])))
+            continue
+        chapter = _agent_result(read_json(cfg.book_dir / paths["chapter"]))
+        for concept_name in chapter.get("concepts", []):
+            candidates.append(
+                {
+                    "name": str(concept_name),
+                    "aliases": [],
+                    "source_chapter_id": ch_id,
+                    "owner_task_id": f"{ch_id}:concept_extract",
+                }
+            )
     result = await run_with_cache(
         ConceptReconcileAgent,
         candidates,

@@ -20,7 +20,7 @@ async def generate_with_llm(
     inp: Any,
     draft: BaseModel | dict[str, Any],
     allowed_citation_refs: Iterable[str] | None = None,
-    max_attempts: int = 3,
+    max_attempts: int = 2,
 ) -> BaseModel:
     prompt = render_prompt(
         prompt_name=prompt_name,
@@ -31,21 +31,15 @@ async def generate_with_llm(
         output_model=output_model,
     )
     allowed_refs = set(allowed_citation_refs or [])
-    user = prompt.user
-    for attempt in range(1, max_attempts + 1):
-        result = await runtime.generate(
-            model=model,
-            output_model=output_model,
-            system=prompt.system,
-            user=user,
-        )
-        invalid_refs = _invalid_citation_refs(result, allowed_refs)
-        if not invalid_refs:
-            return result
-        if attempt == max_attempts:
-            raise ValueError(_citation_error_message(invalid_refs, allowed_refs))
-        user = f"{prompt.user}\n\n{_citation_retry_instruction(invalid_refs, allowed_refs)}"
-    raise RuntimeError("unreachable citation retry state")
+    context = {"allowed_citation_refs": allowed_refs} if allowed_refs else None
+    return await runtime.generate(
+        model=model,
+        output_model=output_model,
+        system=prompt.system,
+        user=prompt.user,
+        context=context,
+        max_retries=max_attempts,
+    )
 
 
 def compact_input(value: Any, *, max_chars: int = 40_000) -> Any:

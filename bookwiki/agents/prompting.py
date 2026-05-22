@@ -65,6 +65,8 @@ Draft JSON:
 {draft_json}
 ```
 
+{document_xml_block}
+
 Use the draft as a structural starting point.
 Improve the content according to the agent instructions.
 Return only the final JSON object.""",
@@ -94,6 +96,7 @@ def render_prompt(
             "agent_instructions": agent.body,
             "input_json": _json(inp),
             "draft_json": _json(draft),
+            "document_xml_block": _document_xml_block(inp),
         }
     )
     cache_key = _hash_template_set(agent)
@@ -131,6 +134,14 @@ def _target_language(value: Any) -> str:
         if isinstance(language, str) and language.strip():
             return language.strip()
     return "zh-CN"
+
+
+def _document_xml_block(value: Any) -> str:
+    if isinstance(value, dict):
+        document_xml = value.get("document_xml")
+        if isinstance(document_xml, str) and document_xml.strip():
+            return f"Chapter document:\n{document_xml.strip()}"
+    return ""
 
 
 def _hash_template_set(agent: PromptTemplate) -> str:

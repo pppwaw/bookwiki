@@ -19,6 +19,21 @@ def test_citation_requires_non_empty_fields() -> None:
         Citation(ref_id="", quote="missing ref")
 
 
+def test_citation_ref_id_uses_validation_context_whitelist() -> None:
+    citation = Citation.model_validate(
+        {"ref_id": "source-p001", "quote": "source text"},
+        context={"allowed_citation_refs": {"source-p001", "source-p002"}},
+    )
+
+    assert citation.ref_id == "source-p001"
+
+    with pytest.raises(ValidationError, match="source-p999"):
+        Citation.model_validate(
+            {"ref_id": "source-p999", "quote": "source text"},
+            context={"allowed_citation_refs": {"source-p001", "source-p002"}},
+        )
+
+
 def test_core_result_models_include_schema_version_and_owner() -> None:
     chapter = ChapterResult(
         chapter_id="ch01",

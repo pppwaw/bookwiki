@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 
 import pytest
@@ -17,6 +16,18 @@ class _Router:
     async def acompletion(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(kwargs)
         return {"choices": [{"message": {"content": self.content}}]}
+
+
+class _InstructorClient:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.calls: list[dict[str, object]] = []
+
+    async def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        output_model = kwargs["response_model"]
+        context = kwargs.get("context")
+        return output_model.model_validate(self.payload, context=context)
 
 
 def test_load_dotenv_reads_project_env_without_overriding_existing(
@@ -73,7 +84,9 @@ async def test_litellm_runtime_requires_kimi_api_key(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
-async def test_litellm_runtime_parses_json_content(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_litellm_runtime_uses_instructor_client_with_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     payload = {
         "chapter_id": "chapter-6",
@@ -83,7 +96,9 @@ async def test_litellm_runtime_parses_json_content(monkeypatch: pytest.MonkeyPat
         "citations": [{"ref_id": "Week-10-p001", "quote": "method of moments"}],
         "owner_task_id": "chapter-6:chapter",
     }
-    router = _Router(json.dumps(payload))
+    client = _InstructorClient(payload)
+    monkeypatch.setattr("instructor.from_litellm", lambda completion: client)
+    router = _Router("{}")
     runtime = LiteLLMRuntime(router=router)
 
     result = await runtime.generate(
@@ -91,11 +106,20 @@ async def test_litellm_runtime_parses_json_content(monkeypatch: pytest.MonkeyPat
         output_model=ChapterResult,
         system="system",
         user="user",
+        context={"allowed_citation_refs": {"Week-10-p001"}},
+        max_retries=2,
     )
 
     assert result.title == "Point Estimation"
-    assert router.calls[0]["model"] == "deepseek-v4-pro"
-    assert "response_format" not in router.calls[0]
+    assert len(client.calls) == 1
+    assert client.calls[0]["model"] == "deepseek-v4-pro"
+    assert client.calls[0]["response_model"] is ChapterResult
+    assert client.calls[0]["context"] == {"allowed_citation_refs": {"Week-10-p001"}}
+    assert client.calls[0]["max_retries"] == 2
+    assert client.calls[0]["messages"] == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "user"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -114,7 +138,9 @@ async def test_litellm_runtime_loads_dotenv_before_key_check(
         "citations": [{"ref_id": "Week-10-p001", "quote": "method of moments"}],
         "owner_task_id": "chapter-6:chapter",
     }
-    router = _Router(json.dumps(payload))
+    client = _InstructorClient(payload)
+    monkeypatch.setattr("instructor.from_litellm", lambda completion: client)
+    router = _Router("{}")
     runtime = LiteLLMRuntime(router=router)
 
     result = await runtime.generate(
