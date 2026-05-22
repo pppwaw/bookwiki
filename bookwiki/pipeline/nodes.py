@@ -78,6 +78,34 @@ def _stage_cache_hit(results: list[CacheResult]) -> bool:
     return bool(results) and all(item.cache_hit for item in results)
 
 
+def _safe_file_stem(value: str, *, fallback_prefix: str = "item") -> str:
+    normalized = re.sub(r"[^\w.-]+", "-", value.strip(), flags=re.UNICODE)
+    normalized = re.sub(r"-{2,}", "-", normalized).strip("-.")
+    if normalized:
+        return normalized
+    return f"{fallback_prefix}-{sha256_text(value)[:8]}"
+
+
+def _unique_file_stem(value: str, used: set[str], *, fallback_prefix: str = "item") -> str:
+    stem = _safe_file_stem(value, fallback_prefix=fallback_prefix)
+    candidate = stem
+    if candidate in used:
+        digest = sha256_text(value)[:8]
+        candidate = f"{stem}-{digest}"
+        counter = 2
+        while candidate in used:
+            candidate = f"{stem}-{digest}-{counter}"
+            counter += 1
+    used.add(candidate)
+    return candidate
+
+
+def _clear_generated_files(directory: Path, pattern: str) -> None:
+    for path in directory.glob(pattern):
+        if path.is_file():
+            path.unlink()
+
+
 def convert_node(state: State, cfg: BookConfig) -> State:
     input_files = sorted(path for path in cfg.input_dir.iterdir() if path.is_file())
     if not input_files:
@@ -323,8 +351,10 @@ async def reconcile_node(state: State, cfg: BookConfig) -> State:
 async def concept_pages_node(state: State, cfg: BookConfig) -> State:
     data = read_json(cfg.book_dir / state["reconciled_concepts"], default={"concepts": []})
     out_dir = ensure_dir(cfg.work_dir / "agent_results" / "concepts")
+    _clear_generated_files(out_dir, "*.json")
     outputs: dict[str, str] = {}
     cache_results: list[CacheResult] = []
+    used_stems: set[str] = set()
     for item in data.get("concepts", []):
         result = await run_with_cache(
             ConceptAgent,
@@ -334,7 +364,9 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
             runtime=cfg.llm_runtime,
         )
         cache_results.append(result)
-        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", result.result.name).strip("-") or "concept"
+        safe_name = _unique_file_stem(
+            result.result.name, used_stems, fallback_prefix="concept"
+        )
         path = write_json(out_dir / f"{safe_name}.json", _json_model(result.result))
         outputs[result.result.name] = _rel(path, cfg.book_dir)
     return {"concept_pages": outputs, "cache_hit": _stage_cache_hit(cache_results)}
@@ -343,6 +375,8 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
 def integrate_node(state: State, cfg: BookConfig) -> State:
     chapters_dir = ensure_dir(cfg.vault_dir / "chapters")
     concepts_dir = ensure_dir(cfg.vault_dir / "concepts")
+    _clear_generated_files(chapters_dir, "*.md")
+    _clear_generated_files(concepts_dir, "*.md")
     chapter_outputs: list[str] = []
 
     for ch_id, paths in state.get("agent_results", {}).items():
@@ -375,7 +409,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
 
     for name, rel_path in state.get("concept_pages", {}).items():
         concept = read_json(cfg.book_dir / rel_path)
-        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-") or "concept"
+        safe_name = Path(rel_path).stem or _safe_file_stem(name, fallback_prefix="concept")
         write_text(
             concepts_dir / f"{safe_name}.md", f"# {concept['name']}\n\n{concept['body_md']}\n"
         )
