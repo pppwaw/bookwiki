@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 
 from bookwiki.agents._helpers import chapter_id, chapter_title, citation
 from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.card import CardItem, CardResult
 
@@ -13,6 +14,16 @@ class CardAgent:
     output_model: ClassVar[type[CardResult]] = CardResult
     model_key: ClassVar[str] = "card"
     prompt_name: ClassVar[str] = "card"
+    prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
+        version="v1",
+        body="""You are the flashcard-generation agent.
+
+Create concise recall cards for the chapter.
+The front should be a question, term, or prompt that is easy to review.
+The back should be short, precise, and source-grounded.
+Prefer high-value concepts, definitions, formula meanings, and common confusions.
+Avoid cards that merely repeat a chapter title or ask vague questions.""",
+    )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> CardResult:
         ch_id = chapter_id(inp)
@@ -29,6 +40,7 @@ class CardAgent:
             output_model=CardResult,
             agent_name=self.__class__.__name__,
             prompt_name=self.prompt_name,
+            prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
         )

@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from bookwiki.agents.prompting import render_prompt
+from bookwiki.agents.prompting import PromptTemplate, render_prompt
 from bookwiki.scheduler.llm import LLMRuntime
 
 
@@ -15,11 +15,13 @@ async def generate_with_llm(
     output_model: type[BaseModel],
     agent_name: str,
     prompt_name: str,
+    prompt_template: PromptTemplate,
     inp: Any,
     draft: BaseModel | dict[str, Any],
 ) -> BaseModel:
     prompt = render_prompt(
         prompt_name=prompt_name,
+        prompt_template=prompt_template,
         agent_name=agent_name,
         inp=compact_input(inp),
         draft=draft,

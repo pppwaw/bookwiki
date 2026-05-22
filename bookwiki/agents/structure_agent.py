@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.source import StructureResult
 
@@ -14,6 +15,23 @@ class StructureAgent:
     output_model: ClassVar[type[StructureResult]] = StructureResult
     model_key: ClassVar[str] = "structure"
     prompt_name: ClassVar[str] = "structure"
+    prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
+        version="v1",
+        body="""You are the book-structure agent.
+
+Create a proposed learning structure from the source summaries.
+Use visible headings like "Chapter 6 Point Estimation" when the source clearly contains
+a chapter number.
+Do not output internal-only ids such as ch06 in the Markdown heading.
+Avoid empty placeholder chapters.
+Each chapter section should include:
+- a concrete learning goal,
+- a scope grounded in the actual source topics,
+- source_refs copied exactly,
+- the main headings or concepts that justify the chapter.
+
+The Markdown should reflect the real source content, not generic boilerplate.""",
+    )
 
     async def run(
         self,
@@ -30,6 +48,7 @@ class StructureAgent:
             output_model=StructureResult,
             agent_name=self.__class__.__name__,
             prompt_name=self.prompt_name,
+            prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
         )

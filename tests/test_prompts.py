@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bookwiki.agents import prompting
+from bookwiki.agents.chapter_agent import ChapterAgent
 from bookwiki.agents.prompting import PromptTemplate, prompt_cache_key, render_prompt
 from bookwiki.scheduler import cache as cache_module
 
@@ -8,13 +8,15 @@ from bookwiki.scheduler import cache as cache_module
 class _PromptedAgent:
     kind = "prompted"
     prompt_name = "chapter"
+    prompt_template = PromptTemplate(version="v1", body="You are the original prompt.")
 
 
-def test_render_prompt_uses_python_prompt_registry() -> None:
-    assert "chapter" in prompting.PROMPTS
+def test_render_prompt_uses_agent_local_prompt_template() -> None:
+    assert "chapter authoring agent" in ChapterAgent.prompt_template.body
 
     rendered = render_prompt(
-        prompt_name="chapter",
+        prompt_name=ChapterAgent.prompt_name,
+        prompt_template=ChapterAgent.prompt_template,
         agent_name="ChapterAgent",
         inp={"chapter_id": "chapter-6", "source_md": "method of moments"},
         draft={"chapter_id": "chapter-6", "body_md": "draft"},
@@ -28,22 +30,26 @@ def test_render_prompt_uses_python_prompt_registry() -> None:
     assert '"chapter_id": "chapter-6"' in rendered.user
 
 
-def test_prompt_cache_key_reflects_python_prompt_changes(monkeypatch) -> None:
-    original = prompt_cache_key("chapter")
-    monkeypatch.setitem(
-        prompting.PROMPTS,
-        "chapter",
+def test_prompt_cache_key_reflects_agent_local_prompt_changes(monkeypatch) -> None:
+    original = prompt_cache_key(_PromptedAgent.prompt_template)
+    monkeypatch.setattr(
+        _PromptedAgent,
+        "prompt_template",
         PromptTemplate(version="v1-test", body="You are the changed chapter authoring agent."),
     )
 
-    assert prompt_cache_key("chapter") != original
+    assert prompt_cache_key(_PromptedAgent.prompt_template) != original
 
 
 def test_prompt_cache_key_changes_task_key(monkeypatch) -> None:
     first = cache_module.task_key(_PromptedAgent, {"chapter_id": "chapter-6"}, model="stub")
-    monkeypatch.setattr(cache_module, "prompt_cache_key", lambda prompt_name: "changed")
+    monkeypatch.setattr(
+        _PromptedAgent,
+        "prompt_template",
+        PromptTemplate(version="v2", body="You are a different prompt."),
+    )
 
     second = cache_module.task_key(_PromptedAgent, {"chapter_id": "chapter-6"}, model="stub")
 
-    assert prompt_cache_key("chapter")
+    assert prompt_cache_key(_PromptedAgent.prompt_template)
     assert first != second

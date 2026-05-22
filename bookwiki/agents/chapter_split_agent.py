@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.source import ChapterSplitResult
 from bookwiki.split.chapter_splitter import split_sources_by_structure
@@ -13,6 +14,17 @@ class ChapterSplitAgent:
     output_model: ClassVar[type[ChapterSplitResult]] = ChapterSplitResult
     model_key: ClassVar[str] = "split"
     prompt_name: ClassVar[str] = "chapter_split"
+    prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
+        version="v1",
+        body="""You are the chapter-split audit agent.
+
+Review the deterministic source split for coverage and obvious assignment mistakes.
+Preserve chapters, chapter_titles, alignment, and coverage exactly unless the input
+explicitly asks you to repair them.
+Write report_md as a concise audit note explaining source coverage, unassigned fragments,
+and any risk.
+Never move source text between chapters in this audit response.""",
+    )
 
     async def run(
         self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime
@@ -33,6 +45,7 @@ class ChapterSplitAgent:
             output_model=ChapterSplitResult,
             agent_name=self.__class__.__name__,
             prompt_name=self.prompt_name,
+            prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
         )

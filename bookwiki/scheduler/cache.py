@@ -37,7 +37,7 @@ def task_key(agent_cls: type[Any], *inputs: Any, model: str) -> str:
         "agent": f"{agent_cls.__module__}.{agent_cls.__name__}",
         "kind": getattr(agent_cls, "kind", agent_cls.__name__),
         "model": model,
-        "prompt": prompt_cache_key(getattr(agent_cls, "prompt_name", None)),
+        "prompt": prompt_cache_key(getattr(agent_cls, "prompt_template", None)),
         "inputs": _jsonable(inputs),
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

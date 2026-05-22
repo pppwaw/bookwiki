@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.concept import (
     ConceptReconciledItem,
@@ -15,6 +16,17 @@ class ConceptReconcileAgent:
     output_model: ClassVar[type[ConceptReconcileResult]] = ConceptReconcileResult
     model_key: ClassVar[str] = "concept"
     prompt_name: ClassVar[str] = "concept_reconcile"
+    prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
+        version="v1",
+        body="""You are the concept-reconciliation agent.
+
+Merge concept candidates that refer to the same idea.
+Choose stable canonical names that are concise and pedagogically useful.
+Keep source_chapter_ids complete and deduplicated.
+Populate alias_map so every alias and every original candidate name maps to its
+canonical concept.
+Do not merge concepts that are merely related but distinct.""",
+    )
 
     async def run(
         self, inp: list[dict[str, Any]], *, model: str, runtime: LLMRuntime
@@ -45,6 +57,7 @@ class ConceptReconcileAgent:
             output_model=ConceptReconcileResult,
             agent_name=self.__class__.__name__,
             prompt_name=self.prompt_name,
+            prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
         )
