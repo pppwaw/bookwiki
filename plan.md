@@ -14,7 +14,7 @@ flowchart LR
     M0[M0 项目骨架] --> M1[M1 调度骨架 + mock 端到端]
     M1 --> M2[M2 资料转换]
     M1 --> M3[M3 结构 + 切分]
-    M1 --> M6P[M6a 网站骨架 + 样例 vault]
+    M1 --> M6P[M6a 网站骨架 + 样例 MDX content]
     M2 --> M3
     M3 --> M4[M4 内容生成 agents]
     M4 --> M5[M5 概念归并 + 整合 + 检查 + 修复]
@@ -36,7 +36,7 @@ flowchart LR
 
 ### 任务
 
-- [x] `pyproject.toml`:固定 Python ≥ 3.12,依赖:`langgraph`、`litellm`、`instructor`、`pydantic`、`diskcache`、`tiktoken`、`pyyaml`、`mineru[pipeline,core]`、`pytest`、`pytest-asyncio`、`ruff`
+- [x] `pyproject.toml`:固定 Python ≥ 3.12,依赖:`langgraph`、`litellm`、`instructor`、`pydantic`、`diskcache`、`tiktoken`、`pyyaml`、`httpx`、`pytest`、`pytest-asyncio`、`ruff`
 - [x] 目录骨架按 §19,空文件占位 + `__init__.py`
 - [x] `.env.example` 列出所有 API key 与 `BOOKWIKI_*` 环境变量
 - [x] `pre-commit` + `ruff` 配置
@@ -98,7 +98,7 @@ flowchart LR
 - mini-book 端到端 stub 跑通
 
 ### 验收
-- `python scripts/run.py books/mini` 跑完产出 vault + sqlite
+- `python scripts/run.py books/mini` 跑完产出 `content/docs` + sqlite
 - `python scripts/run.py books/mini --resume` 命中所有 cache,< 1 秒结束
 - `python scripts/run.py books/mini --force-from convert` 全部重跑
 - `python scripts/structure.py books/mini` 跑完停在 split 前(interrupt_before);手动建 approved-structure.yaml;`python scripts/split.py books/mini` 直接放行往下跑
@@ -108,7 +108,7 @@ flowchart LR
 
 ## M2 · 资料转换(2 天,**与 M3 可并行**)
 
-**目标**: 真的 PDF → sources_md/,PPTX/TXT 也能转。
+**目标**: 真的 PDF/PPTX 经 MinerU VLM 异步 API → sources_md/,TXT/MD 也能转。
 **责任人**: B(MinerU 部署 + convert/),A 协助接图。
 **依赖**: M1 完成(agent 协议固定)。
 
@@ -119,21 +119,22 @@ flowchart LR
   - 同机或邻机起 `mineru-api --host 0.0.0.0 --port 8000 --enable-vlm-preload true`
   - 文档 `docs/mineru-setup.md` 写部署步骤、依赖版本、健康检查 URL
 - [x] **`bookwiki/convert/mineru_client.py`**:
-  - 只调用 `mineru-api`:`GET /health` 探活 + `POST /tasks` 异步提交
+  - 只调用 `mineru-api`:`GET /health` 探活 + `POST /tasks` 异步提交 PDF/PPTX
   - 轮询 `GET /tasks/{task_id}` 并读取 `GET /tasks/{task_id}/result`
-  - 超时/异常 → 报错退出,不降级到 `vlm-http-client` / `pipeline`
+  - 超时/异常/任务失败/结果缺失 → 报错退出,不降级到 `vlm-http-client` / `pipeline` / `python-pptx`
   - 输出规范化为带 `<!-- source_ref: textbook-pXX -->` 注释的 Markdown
-- [x] **`bookwiki/convert/pptx_to_md.py`**:`python-pptx` 抽文本 + 标题,每 slide 一段,写 `source_ref: lectureN-slideMM`
+- [ ] **移除 PPTX 本地文本降级路径**:`pptx_to_md.py` 不再作为生产路径;PPTX 与 PDF 一样提交 MinerU VLM 异步解析
 - [x] **`bookwiki/convert/text_to_md.py`**:TXT/MD 简单 wrap(每文件一段 source_ref)
-- [x] **`convert_node` 实现**(替换 M1 的 stub):路由文件后缀到对应转换器
+- [x] **`convert_node` 实现**(替换 M1 的 stub):PDF/PPTX 路由到 MinerU,VLM 异步失败即失败;TXT/MD 路由到轻量 wrap
 
 ### 产物
 - `work/sources_md/*.md`,每段有 `source_ref`
 - `docs/mineru-setup.md`
 
 ### 验收
-- [x] 小 PDF 经 MinerU API 解析为 markdown,可读、断页清理 ok、每页有 source_ref
-- [x] MinerU API 失败/关闭时重跑 → 报错退出,不做降级
+- [x] 小 PDF 经 MinerU VLM 异步 API 解析为 markdown,可读、断页清理 ok、每页有 source_ref
+- [ ] PPTX 经 MinerU VLM 异步 API 解析为 markdown,每张幻灯片或稳定块有 source_ref
+- [x] MinerU API 失败/关闭/任务失败时重跑 → 报错退出,不做降级
 - [x] 跑出来的 sources_md 能被 M3 的 ChapterSplit 接收
 
 ---
@@ -207,7 +208,7 @@ flowchart LR
 
 ## M5 · 概念归并 + 整合 + 检查 + 修复(3 - 4 天)
 
-**目标**: 概念页一致、双链对齐、check-report 路由 owner、repair 自愈。
+**目标**: 概念页一致、概念链接对齐、check-report 路由 owner、repair 自愈。
 **责任人**: A(integrate / checker / repair 框架),D\*(checker 实际规则),C\*(concept_*)。
 **依赖**: M4 产出 agent_results。
 
@@ -220,12 +221,12 @@ flowchart LR
   - 产 `concepts.reconciled.json` 含 `alias_map`
 - [ ] **`bookwiki/agents/concept_agent.py`**:每唯一概念一份 ConceptResult,上下文聚合所有引用章节
 - [ ] **`bookwiki/integrator/`**:
-  - `chapter_integrator.py`:agent_results JSON → chapter Markdown(BOOKWIKI:BODY/SUMMARY/QUIZ/CARDS 区块)
-  - `concept_integrator.py`:concept JSON → concepts/.md
-  - `markdown_renderers.normalize_wikilinks(text, alias_map)`:正则替换 `[[别名]]` → `[[规范名]]`
+  - `chapter_integrator.py`:agent_results JSON → chapter MDX(BOOKWIKI:BODY/SUMMARY/QUIZ/ANKI 区块,Quiz/Anki 渲染为 MDX 组件)
+  - `concept_integrator.py`:concept JSON → `content/docs/concepts/*.mdx`
+  - `mdx_renderers.normalize_concept_links(text, alias_map)`:把概念引用统一到 Fumadocs canonical 页面
   - `source_ref_validator.py`:cite tool 兜底,白名单外的 ref 报 issue
   - **不调用 LLM**
-- [ ] **`integrate_node` 实现**:顶层图独立 node,在 concept_pages 之后,渲染整个 vault/
+- [ ] **`integrate_node` 实现**:顶层图独立 node,在 concept_pages 之后,渲染整个 `content/docs/`
 - [ ] **`bookwiki/checkers/`**:
   - `frontmatter_checker.py`, `quiz_checker.py`, `card_checker.py`, `link_checker.py`, `source_ref_checker.py`, `injection_checker.py`(可疑指令字符串,warning 不阻塞)
   - 每个 issue 必须带 `owner_task_id` + `severity`
@@ -235,39 +236,39 @@ flowchart LR
 
 ### 产物
 - `work/agent_results/concepts.reconciled.json` + `concept.<name>.json`
-- `vault/chapters/*.md` + `vault/concepts/*.md`
+- `content/docs/chapters/*.mdx` + `content/docs/concepts/*.mdx`
 - `work/logs/check-report.{md,json}`
 
 ### 验收
 - mini-book 产出至少 5 个概念页,无重复
 - 故意改一份 chapter.json 的 quiz 让答案不在 options → check 报 issue,owner_task_id 正确,repair 自动修复后 check 通过
-- 故意把"递归"和"递推"在两章用不同名 → reconcile 合并后双链统一指向规范名
+- 故意把"递归"和"递推"在两章用不同名 → reconcile 合并后概念链接统一指向规范名
 - `--pause-after reconcile_concepts` 停下来,手动改 `concepts.reconciled.json` 拆分误合并,resume 后 concept_pages 跑出来反映修改
 
 ---
 
 ## M6 · SQLite indexer + 网站
 
-### M6a · 网站骨架 + 样例 vault(2 天,**可在 M1 后即开,与 M2-M5 并行**)
+### M6a · 网站骨架 + 样例 MDX content(2 天,**可在 M1 后即开,与 M2-M5 并行**)
 
-**目标**: 用手写样例 vault 验证 Next.js + Fumadocs 渲染、Quiz/Cards 组件、SQLite 搜索接口。
+**目标**: 用手写样例 `content/docs` 验证 Next.js + Fumadocs MDX 渲染、Quiz/Anki 组件、SQLite 搜索接口。
 **责任人**: E\*。
 
 - [ ] `site-template/` 全套(app router、Fumadocs 接入、theme)
-- [ ] 组件:`WikiLink`、`QuizBlock`、`CardBlock`、`SourceRef`、`SearchBox`、`ChatBox`
+- [ ] 组件:`ConceptLink`、`QuizBlock`、`AnkiDeck`、`SourceRef`、`SearchBox`、`ChatBox`
 - [ ] `lib/sqlite.ts`:better-sqlite3 包装,只读
-- [ ] `lib/markdown.ts`:从 vault Markdown 读 frontmatter + 渲染
+- [ ] `lib/mdx.ts`:从 `content/docs` 读 Fumadocs MDX source + 渲染
 - [ ] `lib/rag.ts`:`/api/chat` 接 `models.chat`(gemma-4)
-- [ ] 手写 2 个样例 chapter.md + 2 个 concept.md 当 fixture
+- [ ] 手写 2 个样例 `chapter.mdx` + 2 个 `concept.mdx` 当 fixture,章节内直接调用 `<QuizBlock />` 和 `<AnkiDeck />`
 - [ ] 用 fixture 跑 `pnpm dev`,所有功能在浏览器里点一遍
 
 ### M6b · indexer + 真数据接通(2 - 3 天)
 
-**目标**: vault → bookwiki.sqlite,网站换接真数据。
+**目标**: `content/docs` → bookwiki.sqlite,网站换接真数据。
 **责任人**: E\*,A 协助 schema。
-**依赖**: M5 产出 vault/ + M6a 网站骨架。
+**依赖**: M5 产出 `content/docs/` + M6a 网站骨架。
 
-- [ ] **`bookwiki/indexer/markdown_parser.py`**:解析 vault Markdown 的 frontmatter + 区块
+- [ ] **`bookwiki/indexer/mdx_parser.py`**:解析 `content/docs` MDX 的 frontmatter、标题、正文文本和组件 props
 - [ ] **`bookwiki/indexer/rag_chunker.py`**:按 heading 切 chunks,记 source_refs
 - [ ] **`bookwiki/indexer/sqlite_builder.py`**:
   - 按 §14 schema 全量建表
@@ -275,7 +276,7 @@ flowchart LR
   - 灌完 chunks 跑 `INSERT INTO fts_chunks(fts_chunks) VALUES('rebuild')`
   - 写到 `.tmp` → `os.replace` 原子换
 - [ ] **`index_node` 实现**:替换 M1 stub
-- [ ] 网站搜索/Quiz/Cards 从 mini-book 真数据走通
+- [ ] 网站搜索/Quiz/Anki 从 mini-book 真数据走通
 - [ ] `/api/chat` 用 gemma-4 真回答 mini-book 问题,显示 source_refs
 
 ### 产物
@@ -284,7 +285,7 @@ flowchart LR
 
 ### 验收
 - 浏览器搜"启发函数"能找到对应章节 chunk
-- 完成一道 Quiz、看一张 Card 翻转
+- 完成一道 Quiz、看一张 Anki card 翻转
 - 问"什么是 A 星算法?"得到带 source_ref 的回答
 - 前端 bundle 不含 OpenAI/Anthropic key(grep 检查)
 
@@ -301,7 +302,7 @@ flowchart LR
 - [ ] **`tests/test_schemas.py`**:每个 Pydantic 模型对照 fixture JSON snapshot;改 schema 必须改 fixture
 - [ ] **`tests/test_agents.py`**:每个 agent 用 `litellm.completion(..., mock_response=...)` 跑通
 - [ ] **`tests/test_scheduler.py`**:LangGraph DAG 拓扑、Send fan-out、`run_with_cache` cache hit/miss、`resume_or_start` 路径分支
-- [ ] **`tests/test_integrator.py`**:固定输入 → diff 输出 Markdown
+- [ ] **`tests/test_integrator.py`**:固定输入 → diff 输出 MDX
 - [ ] **`tests/test_e2e_smoke.py`**:mini-book 全流程,LLM 全 mock,跑通到 SQLite + 启 HTTP server 一秒 smoke
 - [ ] **GitHub Actions** (或等价 CI):`pytest -k smoke` 必过才能 merge
 - [ ] **`skills/bookwiki/SKILL.md`**:按 §20 写;含触发条件、标准流程、失败时看哪些文件
@@ -340,7 +341,7 @@ flowchart LR
 | 输入:1 PDF + 2 课件资料(PDF/PPTX),不要求试卷 | §26 | M0 fixture |
 | sources_md 每份能生成 | §26 | M2 |
 | ≥ 5 章节资料包 | §26 | M3 |
-| ≥ 5 章节 Markdown | §26 | M5 |
+| ≥ 5 章节 MDX | §26 | M5 |
 | ≥ 20 概念页无重复 | §26 | M5 |
 | 每章 ≥ 5 题 / 8 卡 | §26 | M4 |
 | source_refs 真实存在 | §26 | M4 cite + M5 兜底 |
