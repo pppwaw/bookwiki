@@ -281,4 +281,4 @@ def build_instructor_client(router: Any) -> Any:
             "Instructor is required for structured LLM calls; install the runtime extra"
         ) from exc
 
-    return instructor.from_litellm(router.acompletion)
+    return instructor.from_litellm(router.acompletion, mode=instructor.Mode.JSON)

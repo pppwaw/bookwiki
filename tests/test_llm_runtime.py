@@ -4,7 +4,12 @@ import os
 
 import pytest
 
-from bookwiki.scheduler.llm import LiteLLMRuntime, MissingLLMApiKey, load_dotenv
+from bookwiki.scheduler.llm import (
+    LiteLLMRuntime,
+    MissingLLMApiKey,
+    build_instructor_client,
+    load_dotenv,
+)
 from bookwiki.schemas.chapter import ChapterResult
 
 
@@ -53,6 +58,24 @@ def test_load_dotenv_reads_project_env_without_overriding_existing(
     assert os.environ["EXISTING"] == "from-env"
 
 
+def test_build_instructor_client_uses_json_mode_for_deepseek(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    def fake_from_litellm(completion, *, mode):
+        calls.append({"completion": completion, "mode": mode})
+        return object()
+
+    router = _Router("{}")
+    monkeypatch.setattr("instructor.from_litellm", fake_from_litellm)
+
+    build_instructor_client(router)
+
+    assert calls[0]["completion"] == router.acompletion
+    assert calls[0]["mode"].value == "json_mode"
+
+
 @pytest.mark.asyncio
 async def test_litellm_runtime_requires_deepseek_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -97,7 +120,7 @@ async def test_litellm_runtime_uses_instructor_client_with_context(
         "owner_task_id": "chapter-6:chapter",
     }
     client = _InstructorClient(payload)
-    monkeypatch.setattr("instructor.from_litellm", lambda completion: client)
+    monkeypatch.setattr("instructor.from_litellm", lambda completion, **_: client)
     router = _Router("{}")
     runtime = LiteLLMRuntime(router=router)
 
@@ -139,7 +162,7 @@ async def test_litellm_runtime_loads_dotenv_before_key_check(
         "owner_task_id": "chapter-6:chapter",
     }
     client = _InstructorClient(payload)
-    monkeypatch.setattr("instructor.from_litellm", lambda completion: client)
+    monkeypatch.setattr("instructor.from_litellm", lambda completion, **_: client)
     router = _Router("{}")
     runtime = LiteLLMRuntime(router=router)
 
