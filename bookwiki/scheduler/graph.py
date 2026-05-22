@@ -13,6 +13,9 @@ from bookwiki.pipeline.nodes import NODE_FUNCTIONS
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.dry_run import summarize
 from bookwiki.utils.files import ensure_dir, read_json, write_json
+from bookwiki.utils.logging import get_logger
+
+LOGGER = get_logger(__name__)
 
 NODE_ORDER = [
     "convert",
@@ -116,17 +119,34 @@ class BookGraph:
         while index < len(NODE_ORDER):
             node_name = NODE_ORDER[index]
             if node_name == "repair" and not state.get("repair_targets"):
+                LOGGER.info(
+                    "node skip name=%s book_id=%s reason=no_repair_targets",
+                    node_name,
+                    self.cfg.book_id,
+                )
                 index += 1
                 continue
 
             fn = NODE_FUNCTIONS[node_name]
-            delta = self._run_node(fn, state)
+            LOGGER.info("node start name=%s book_id=%s", node_name, self.cfg.book_id)
+            try:
+                delta = self._run_node(fn, state)
+            except Exception:
+                LOGGER.exception("node error name=%s book_id=%s", node_name, self.cfg.book_id)
+                raise
             state.update(delta)
+            cache_hit = bool(delta.get("cache_hit", False))
+            LOGGER.info(
+                "node done name=%s book_id=%s cache_hit=%s",
+                node_name,
+                self.cfg.book_id,
+                cache_hit,
+            )
             nodes_log.append(
                 {
                     "name": node_name,
                     "status": "completed",
-                    "cache_hit": bool(delta.get("cache_hit", False)),
+                    "cache_hit": cache_hit,
                 }
             )
 

@@ -10,6 +10,9 @@ from pydantic import BaseModel
 
 from bookwiki.agents.prompting import prompt_cache_key
 from bookwiki.scheduler.llm import LLMRuntime, build_runtime
+from bookwiki.utils.logging import get_logger
+
+LOGGER = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -58,19 +61,32 @@ async def run_with_cache(
     key = task_key(agent_cls, *inputs, model=model)
     output_path = cache_path / f"{key}.json"
     output_model = agent_cls.output_model
+    agent_name = agent_cls.__name__
 
     if output_path.exists() and not force:
+        LOGGER.info(
+            "agent cache_hit agent=%s model=%s key=%s path=%s",
+            agent_name,
+            model,
+            key,
+            output_path,
+        )
         payload = json.loads(output_path.read_text(encoding="utf-8"))
         return CacheResult(output_model.model_validate(payload["result"]), True, key, output_path)
 
     inp = inputs[0] if len(inputs) == 1 else list(inputs)
     llm_runtime = runtime if runtime is not None else build_runtime()
-    result = await agent_cls().run(inp, model=model, runtime=llm_runtime)
+    LOGGER.info("agent start agent=%s model=%s key=%s", agent_name, model, key)
+    try:
+        result = await agent_cls().run(inp, model=model, runtime=llm_runtime)
+    except Exception:
+        LOGGER.exception("agent error agent=%s model=%s key=%s", agent_name, model, key)
+        raise
     output_path.write_text(
         json.dumps(
             {
                 "key": key,
-                "agent": agent_cls.__name__,
+                "agent": agent_name,
                 "model": model,
                 "result": result.model_dump(mode="json"),
             },
@@ -78,5 +94,12 @@ async def run_with_cache(
             indent=2,
         ),
         encoding="utf-8",
+    )
+    LOGGER.info(
+        "agent done agent=%s model=%s key=%s path=%s",
+        agent_name,
+        model,
+        key,
+        output_path,
     )
     return CacheResult(result, False, key, output_path)
