@@ -90,7 +90,7 @@ class BookGraph:
 
         if self.cfg.force_from:
             self._clear_for_force()
-            state: dict[str, Any] = {"book_id": self.cfg.book_id}
+            state = self._state_for_force_from()
             start_index = NODE_ORDER.index(self.cfg.force_from)
             nodes_log: list[dict[str, Any]] = []
         else:
@@ -224,6 +224,31 @@ class BookGraph:
             )
         print("resume: config changed; rerunning from convert")
         return {"book_id": self.cfg.book_id}, 0
+
+    def _state_for_force_from(self) -> dict[str, Any]:
+        state: dict[str, Any] = {"book_id": self.cfg.book_id}
+        if self.cfg.force_from and NODE_ORDER.index(self.cfg.force_from) >= NODE_ORDER.index(
+            "structure"
+        ):
+            sources = self._existing_sources_md()
+            if not sources:
+                msg = (
+                    f"--from {self.cfg.force_from} requires converted markdown in "
+                    f"{self.cfg.work_dir / 'sources_md'}; run convert first"
+                )
+                raise FileNotFoundError(msg)
+            state["sources_md"] = sources
+        return state
+
+    def _existing_sources_md(self) -> list[str]:
+        sources_dir = self.cfg.work_dir / "sources_md"
+        if not sources_dir.exists():
+            return []
+        return [
+            path.relative_to(self.cfg.book_dir).as_posix()
+            for path in sorted(sources_dir.glob("*.md"))
+            if path.is_file()
+        ]
 
     def _clear_for_force(self) -> None:
         if self.checkpoint_path.exists():
