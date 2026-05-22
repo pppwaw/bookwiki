@@ -34,6 +34,9 @@ class SplitResult:
 
 
 def parse_approved_structure(markdown: str) -> list[ChapterSpec]:
+    if re.search(r"^##\s+ch\d+\b", markdown, flags=re.IGNORECASE | re.MULTILINE):
+        msg = "approved structure must use headings like '## Chapter 6 Point Estimation'"
+        raise ValueError(msg)
     headings = [
         (match, parsed)
         for match in re.finditer(r"^##\s+(.+?)\s*$", markdown, flags=re.MULTILINE)
@@ -44,26 +47,32 @@ def parse_approved_structure(markdown: str) -> list[ChapterSpec]:
         start = match.end()
         end = headings[index + 1][0].start() if index + 1 < len(headings) else len(markdown)
         block = markdown[start:end]
+        goal = _extract_field(block, "goal")
+        scope = _extract_field(block, "scope")
+        source_refs = _extract_source_refs(block)
+        if not goal or not scope or not source_refs:
+            msg = (
+                f"chapter {chapter_id!r} must use the new Structure format with "
+                "### Goal, ### Scope, and ### Source refs sections"
+            )
+            raise ValueError(msg)
         chapters.append(
             ChapterSpec(
                 chapter_id=chapter_id,
                 title=title,
-                goal=_extract_field(block, "目标", "goal"),
-                scope=_extract_field(block, "范围", "scope"),
-                source_refs=_extract_source_refs(block),
+                goal=goal,
+                scope=scope,
+                source_refs=source_refs,
             )
         )
-    return chapters or [
-        ChapterSpec("ch01", "Foundations", source_refs=[]),
-        ChapterSpec("ch02", "Practice", source_refs=[]),
-    ]
+    if not chapters:
+        msg = "approved structure must contain headings like '## Chapter 6 Point Estimation'"
+        raise ValueError(msg)
+    return chapters
 
 
 def _parse_chapter_heading(heading: str) -> tuple[str, str] | None:
     heading = heading.strip()
-    legacy = re.match(r"^(ch\d+)\s+(.+?)\s*$", heading, flags=re.IGNORECASE)
-    if legacy:
-        return legacy.group(1).lower(), legacy.group(2).strip()
     chapter = re.match(
         r"^chapter\s+(\d+)\b\s*(?::|-)?\s*(.*?)\s*$",
         heading,
@@ -162,37 +171,14 @@ def _extract_field(block: str, *names: str) -> str:
         section = _extract_section(block, name)
         if section:
             return _section_text(section)
-        match = re.search(rf"^\s*-\s*{re.escape(name)}\s*[:：]\s*(.+)$", block, re.MULTILINE)
-        if match:
-            return match.group(1).strip()
     return ""
 
 
 def _extract_source_refs(block: str) -> list[str]:
     refs: list[str] = []
-    for section_name in ("source refs", "sources", "source_refs"):
-        section = _extract_section(block, section_name)
-        if section:
-            refs.extend(_extract_source_ref_items(section))
-        if refs:
-            return refs
-
-    in_sources = False
-    for line in block.splitlines():
-        stripped = line.strip()
-        if re.match(r"^-\s*(来源|sources?)\s*[:：]\s*$", stripped, flags=re.IGNORECASE):
-            in_sources = True
-            continue
-        if in_sources:
-            item = re.match(r"^-\s+(.+)$", stripped)
-            if item:
-                refs.append(item.group(1).strip("` "))
-                continue
-            if stripped and not line.startswith((" ", "\t")):
-                in_sources = False
-        inline = re.match(r"^-\s*(source_ref|来源)\s*[:：]\s*(.+)$", stripped, flags=re.IGNORECASE)
-        if inline:
-            refs.append(inline.group(2).strip("` "))
+    section = _extract_section(block, "source refs")
+    if section:
+        refs.extend(_extract_source_ref_items(section))
     return refs
 
 

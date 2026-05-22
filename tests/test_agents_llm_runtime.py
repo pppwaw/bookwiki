@@ -128,7 +128,23 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
     await SourceSummaryAgent().run(source, model="deepseek-v4-flash", runtime=runtime)
     await StructureAgent().run({"summaries": []}, model="deepseek-v4-pro", runtime=runtime)
     await ChapterSplitAgent().run(
-        {"source_paths": [str(source)], "approved_structure": "## Chapter 6 Point Estimation"},
+        {
+            "source_paths": [str(source)],
+            "approved_structure": (
+                "# Proposed Structure\n\n"
+                "## Chapter 6 Point Estimation\n\n"
+                "### Goal\n"
+                "Explain point estimation.\n\n"
+                "### Scope\n"
+                "Week 10.\n\n"
+                "### Topics\n"
+                "- Method of moments\n\n"
+                "### Source refs\n"
+                "- `Week-10-p001`\n\n"
+                "### Evidence\n"
+                "- Week-10: method of moments\n"
+            ),
+        },
         model="deepseek-v4-flash",
         runtime=runtime,
     )

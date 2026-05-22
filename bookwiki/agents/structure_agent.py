@@ -166,8 +166,6 @@ def _chapter_specs_from_sources(
             chapter_order.append(chapter_id)
             chapters_by_id[chapter_id] = _plan_from_item(chapter_id, title, refs, source_id, item)
     chapters = [chapters_by_id[chapter_id] for chapter_id in chapter_order]
-    if len(chapters) == 1 and not chapters[0].detected:
-        chapters.append(_fallback_plan("ch02", "Practice"))
     return chapters
 
 

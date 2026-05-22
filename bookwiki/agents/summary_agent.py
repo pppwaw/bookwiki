@@ -15,12 +15,15 @@ class SummaryAgent:
     model_key: ClassVar[str] = "summary"
     prompt_name: ClassVar[str] = "summary"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
+        version="v2",
         body="""You are the chapter-summary agent.
 
 Summarize the chapter for fast review.
 Write summary_md as a compact explanation of the core ideas.
 Write key_points as specific, source-grounded bullets, not generic study advice.
+key_points must be an array of strings.
+Do not return objects inside key_points.
+Put citation objects only in the top-level citations array.
 Keep citations short and tied to the source text.
 Do not introduce concepts that are absent from the chapter source.""",
     )

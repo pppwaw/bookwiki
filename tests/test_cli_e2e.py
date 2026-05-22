@@ -102,22 +102,34 @@ def test_structure_then_split_allows_manual_approved_structure_edit(tmp_path) ->
     approved = book_dir / "work" / "structure" / "approved-structure.md"
     approved.write_text(
         "# Mini\n\n"
-        "## ch01 Intro Search\n\n"
-        "- goal: Intro.\n"
-        "- scope: intro.\n"
-        "- sources:\n"
-        "  - intro-text\n\n"
-        "## ch02 Heuristic Search\n\n"
-        "- goal: Heuristics.\n"
-        "- scope: advanced.\n"
-        "- sources:\n"
-        "  - advanced-text\n",
+        "## Chapter 1 Intro Search\n\n"
+        "### Goal\n"
+        "Intro.\n\n"
+        "### Scope\n"
+        "intro.\n\n"
+        "### Topics\n"
+        "- State space search\n\n"
+        "### Source refs\n"
+        "- `intro-text`\n\n"
+        "### Evidence\n"
+        "- intro source\n\n"
+        "## Chapter 2 Heuristic Search\n\n"
+        "### Goal\n"
+        "Heuristics.\n\n"
+        "### Scope\n"
+        "advanced.\n\n"
+        "### Topics\n"
+        "- Heuristic search\n\n"
+        "### Source refs\n"
+        "- `advanced-text`\n\n"
+        "### Evidence\n"
+        "- advanced source\n",
         encoding="utf-8",
     )
 
     run_script("scripts/split.py", str(book_dir))
 
-    ch01 = book_dir / "work" / "chapter_sources" / "ch01" / "source.md"
-    ch02 = book_dir / "work" / "chapter_sources" / "ch02" / "source.md"
+    ch01 = book_dir / "work" / "chapter_sources" / "chapter-1" / "source.md"
+    ch02 = book_dir / "work" / "chapter_sources" / "chapter-2" / "source.md"
     assert "State space search" in ch01.read_text(encoding="utf-8")
     assert "A star" in ch02.read_text(encoding="utf-8")

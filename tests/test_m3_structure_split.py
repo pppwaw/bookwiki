@@ -14,21 +14,41 @@ from bookwiki.split.chapter_splitter import (
     split_sources_by_structure,
 )
 
-APPROVED = """# Mini Book
+APPROVED = """# Proposed Structure
 
-## ch01 Search Foundations
+## Chapter 1 Search Foundations
 
-- 目标: Explain state-space search.
-- 范围: textbook p1-p2.
-- 来源:
-  - textbook-p001
+### Goal
+Explain state-space search.
 
-## ch02 Heuristics
+### Scope
+textbook p1-p2.
 
-- 目标: Explain heuristic search.
-- 范围: textbook p3.
-- 来源:
-  - textbook-p002
+### Topics
+- State space search
+
+### Source refs
+- `textbook-p001`
+
+### Evidence
+- textbook: states and goals
+
+## Chapter 2 Heuristics
+
+### Goal
+Explain heuristic search.
+
+### Scope
+textbook p3.
+
+### Topics
+- Heuristic search
+
+### Source refs
+- `textbook-p002`
+
+### Evidence
+- textbook: heuristics
 """
 
 APPROVED_V2 = """# Proposed Structure
@@ -58,7 +78,7 @@ Week 9 and Week 10; covers point estimators and sampling distributions.
 def test_parse_approved_structure_extracts_chapters_and_sources() -> None:
     chapters = parse_approved_structure(APPROVED)
 
-    assert [chapter.chapter_id for chapter in chapters] == ["ch01", "ch02"]
+    assert [chapter.chapter_id for chapter in chapters] == ["chapter-1", "chapter-2"]
     assert chapters[0].title == "Search Foundations"
     assert chapters[0].goal == "Explain state-space search."
     assert chapters[0].scope == "textbook p1-p2."
@@ -66,8 +86,8 @@ def test_parse_approved_structure_extracts_chapters_and_sources() -> None:
     assert chapters[1].source_refs == ["textbook-p002"]
 
 
-def test_parse_approved_structure_accepts_chapter_style_headings() -> None:
-    chapters = parse_approved_structure(
+def test_parse_approved_structure_rejects_legacy_bullet_format() -> None:
+    legacy = (
         "# Mini Book\n\n"
         "## Chapter 6 Point Estimation\n\n"
         "- 目标: Explain estimators.\n"
@@ -76,12 +96,23 @@ def test_parse_approved_structure_accepts_chapter_style_headings() -> None:
         "  - Week-9-p001\n"
     )
 
-    assert len(chapters) == 1
-    assert chapters[0].chapter_id == "chapter-6"
-    assert chapters[0].title == "Point Estimation"
-    assert chapters[0].goal == "Explain estimators."
-    assert chapters[0].scope == "Week 9 and Week 10."
-    assert chapters[0].source_refs == ["Week-9-p001"]
+    try:
+        parse_approved_structure(legacy)
+    except ValueError as exc:
+        assert "new Structure format" in str(exc)
+    else:
+        raise AssertionError("legacy bullet format should be rejected")
+
+
+def test_parse_approved_structure_rejects_legacy_chapter_ids() -> None:
+    legacy = APPROVED.replace("## Chapter 1 Search Foundations", "## ch01 Search Foundations")
+
+    try:
+        parse_approved_structure(legacy)
+    except ValueError as exc:
+        assert "Chapter 6" in str(exc)
+    else:
+        raise AssertionError("legacy chNN headings should be rejected")
 
 
 def test_parse_approved_structure_accepts_review_friendly_sections() -> None:
@@ -204,13 +235,13 @@ def test_split_sources_by_structure_aligns_fragments_and_writes_appendix(tmp_pat
 
     result = split_sources_by_structure([source], APPROVED)
 
-    assert "textbook-p001" in result.chapters["ch01"]
-    assert "textbook-p002" not in result.chapters["ch01"]
-    assert "A star search" in result.chapters["ch02"]
+    assert "textbook-p001" in result.chapters["chapter-1"]
+    assert "textbook-p002" not in result.chapters["chapter-1"]
+    assert "A star search" in result.chapters["chapter-2"]
     assert "textbook-p099" in result.chapters["appendix"]
     assert any(
         item["source_ref"] == "textbook-p001"
-        and item["chapter_id"] == "ch01"
+        and item["chapter_id"] == "chapter-1"
         and item["confidence"] == 1.0
         for item in result.alignment
     )
@@ -242,8 +273,8 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
 
     split_state = asyncio.run(split_node({**state, **structure_state}, cfg))
 
-    ch01 = cfg.book_dir / split_state["chapter_sources"]["ch01"]
-    ch02 = cfg.book_dir / split_state["chapter_sources"]["ch02"]
+    ch01 = cfg.book_dir / split_state["chapter_sources"]["chapter-1"]
+    ch02 = cfg.book_dir / split_state["chapter_sources"]["chapter-2"]
     alignment = json.loads(
         (cfg.work_dir / "chapter_sources" / "_alignment.json").read_text(encoding="utf-8")
     )
@@ -251,5 +282,5 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
     assert "Introductory search material" in ch01.read_text(encoding="utf-8")
     assert "Heuristic search material" in ch02.read_text(encoding="utf-8")
     assert alignment["coverage"]["assigned_ratio"] == 1.0
-    assert split_state["chapter_titles"]["ch01"] == "Search Foundations"
+    assert split_state["chapter_titles"]["chapter-1"] == "Search Foundations"
     assert not stale.exists()

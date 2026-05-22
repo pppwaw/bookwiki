@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bookwiki.agents.chapter_agent import ChapterAgent
 from bookwiki.agents.prompting import PromptTemplate, prompt_cache_key, render_prompt
+from bookwiki.agents.summary_agent import SummaryAgent
 from bookwiki.scheduler import cache as cache_module
 
 
@@ -53,3 +54,22 @@ def test_prompt_cache_key_changes_task_key(monkeypatch) -> None:
 
     assert prompt_cache_key(_PromptedAgent.prompt_template)
     assert first != second
+
+
+def test_summary_prompt_requires_plain_string_key_points() -> None:
+    rendered = render_prompt(
+        prompt_name=SummaryAgent.prompt_name,
+        prompt_template=SummaryAgent.prompt_template,
+        agent_name="SummaryAgent",
+        inp={"chapter_id": "chapter-6", "source_md": "method of moments"},
+        draft={
+            "chapter_id": "chapter-6",
+            "summary_md": "Draft.",
+            "key_points": ["Plain string bullet."],
+            "citations": [],
+            "owner_task_id": "chapter-6:summary",
+        },
+    )
+
+    assert "key_points must be an array of strings" in rendered.user
+    assert "Do not return objects inside key_points" in rendered.user
