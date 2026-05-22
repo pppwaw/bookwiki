@@ -43,10 +43,14 @@ Non-negotiable rules:
 )
 
 USER_PROMPT_TEMPLATE: Final = PromptTemplate(
-    version="v1",
+    version="v2",
     body="""Agent: {agent_name}
 Prompt: {prompt_name}@{prompt_version}
 Output schema: {output_model}
+
+Target language: {target_language}
+Write learner-facing content in the target language. Keep identifiers, file paths,
+chapter_id, owner_task_id, and source_ref values exactly as provided.
 
 Agent instructions:
 {agent_instructions}
@@ -86,6 +90,7 @@ def render_prompt(
             "prompt_name": prompt_name,
             "prompt_version": prompt_version,
             "output_model": output_name,
+            "target_language": _target_language(inp),
             "agent_instructions": agent.body,
             "input_json": _json(inp),
             "draft_json": _json(draft),
@@ -106,10 +111,26 @@ def prompt_cache_key(prompt_template: PromptTemplate | None) -> str:
     return _hash_template_set(prompt_template)
 
 
+def prompt_version_for(prompt_template: PromptTemplate) -> str:
+    return (
+        f"{COMMON_SYSTEM_PROMPT.version}+"
+        f"{USER_PROMPT_TEMPLATE.version}+"
+        f"{prompt_template.version}"
+    )
+
+
 def _json(value: Any) -> str:
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _target_language(value: Any) -> str:
+    if isinstance(value, dict):
+        language = value.get("language")
+        if isinstance(language, str) and language.strip():
+            return language.strip()
+    return "zh-CN"
 
 
 def _hash_template_set(agent: PromptTemplate) -> str:

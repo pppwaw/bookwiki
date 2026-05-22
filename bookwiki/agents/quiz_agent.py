@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents._helpers import chapter_id, chapter_title, citation
+from bookwiki.agents._helpers import chapter_id, chapter_title, citation, source_refs
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
@@ -19,6 +19,7 @@ class QuizAgent:
         body="""You are the quiz-generation agent.
 
 Create multiple-choice questions that test understanding, not trivia.
+Create exactly the requested quiz_per_chapter number of questions when provided.
 Each question must have at least two plausible choices and exactly one answer matching
 one of the choices.
 Explanations should teach why the answer is correct.
@@ -29,14 +30,18 @@ Avoid trick questions, ambiguous wording, and answers that require outside knowl
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> QuizResult:
         ch_id = chapter_id(inp)
         title = chapter_title(inp)
-        item = QuizItem(
-            question=f"What is a central idea in {title}?",
-            choices=[title, "Unrelated topic"],
-            answer=title,
-            explanation="The answer should be grounded in the chapter source.",
-            citations=[citation(inp)],
-        )
-        draft = QuizResult(chapter_id=ch_id, items=[item], owner_task_id=f"{ch_id}:quiz")
+        count = _requested_count(inp, "quiz_per_chapter", "quizPerChapter", 1)
+        items = [
+            QuizItem(
+                question=f"What is central idea {index + 1} in {title}?",
+                choices=[title, "Unrelated topic"],
+                answer=title,
+                explanation="The answer should be grounded in the chapter source.",
+                citations=[citation(inp)],
+            )
+            for index in range(count)
+        ]
+        draft = QuizResult(chapter_id=ch_id, items=items, owner_task_id=f"{ch_id}:quiz")
         result = await generate_with_llm(
             runtime=runtime,
             model=model,
@@ -46,5 +51,14 @@ Avoid trick questions, ambiguous wording, and answers that require outside knowl
             prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
+            allowed_citation_refs=source_refs(inp),
         )
         return QuizResult.model_validate(result)
+
+
+def _requested_count(inp: dict[str, Any], snake_key: str, camel_key: str, default: int) -> int:
+    try:
+        value = int(inp.get(snake_key, inp.get(camel_key, default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default

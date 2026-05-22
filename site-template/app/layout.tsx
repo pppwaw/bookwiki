@@ -7,8 +7,10 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const siteLanguage = process.env.BOOKWIKI_SITE_LANGUAGE || "zh-CN";
+
   return (
-    <html lang="en">
+    <html lang={siteLanguage}>
       <body>{children}</body>
     </html>
   );

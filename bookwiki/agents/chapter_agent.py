@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents._helpers import chapter_id, chapter_title, citation
+from bookwiki.agents._helpers import chapter_id, chapter_title, citation, source_refs
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
@@ -50,5 +50,6 @@ Do not include unsupported facts, external knowledge, or generic filler.""",
             prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
+            allowed_citation_refs=source_refs(inp),
         )
         return ChapterResult.model_validate(result)

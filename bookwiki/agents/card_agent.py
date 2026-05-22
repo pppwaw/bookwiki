@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents._helpers import chapter_id, chapter_title, citation
+from bookwiki.agents._helpers import chapter_id, chapter_title, citation, source_refs
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
@@ -19,6 +19,7 @@ class CardAgent:
         body="""You are the flashcard-generation agent.
 
 Create concise recall cards for the chapter.
+Create exactly the requested cards_per_chapter number of cards when provided.
 The front should be a question, term, or prompt that is easy to review.
 The back should be short, precise, and source-grounded.
 Prefer high-value concepts, definitions, formula meanings, and common confusions.
@@ -28,12 +29,16 @@ Avoid cards that merely repeat a chapter title or ask vague questions.""",
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> CardResult:
         ch_id = chapter_id(inp)
         title = chapter_title(inp)
-        card = CardItem(
-            front=title,
-            back="A source-grounded recall card for this chapter.",
-            citations=[citation(inp)],
-        )
-        draft = CardResult(chapter_id=ch_id, items=[card], owner_task_id=f"{ch_id}:card")
+        count = _requested_count(inp, "cards_per_chapter", "cardsPerChapter", 1)
+        cards = [
+            CardItem(
+                front=f"{title} review prompt {index + 1}",
+                back="A source-grounded recall card for this chapter.",
+                citations=[citation(inp)],
+            )
+            for index in range(count)
+        ]
+        draft = CardResult(chapter_id=ch_id, items=cards, owner_task_id=f"{ch_id}:card")
         result = await generate_with_llm(
             runtime=runtime,
             model=model,
@@ -43,5 +48,14 @@ Avoid cards that merely repeat a chapter title or ask vague questions.""",
             prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
+            allowed_citation_refs=source_refs(inp),
         )
         return CardResult.model_validate(result)
+
+
+def _requested_count(inp: dict[str, Any], snake_key: str, camel_key: str, default: int) -> int:
+    try:
+        value = int(inp.get(snake_key, inp.get(camel_key, default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default

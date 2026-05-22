@@ -24,6 +24,11 @@ def source_ref(inp: dict[str, Any]) -> str:
     return match.group(1) if match else "Prob_GZIC-p001"
 
 
+def source_refs(inp: dict[str, Any]) -> set[str]:
+    md = source_md(inp)
+    return set(re.findall(r"source_ref:\s*([A-Za-z0-9_.:-]+)", md))
+
+
 def citation(inp: dict[str, Any]) -> Citation:
     text = source_md(inp).strip().splitlines()
     quote = next((line.strip("# <!->") for line in text if line.strip()), "stub source text")

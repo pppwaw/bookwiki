@@ -20,12 +20,14 @@ from bookwiki.agents import (
     StructureAgent,
     SummaryAgent,
 )
+from bookwiki.agents.prompting import prompt_version_for
 from bookwiki.convert.common import source_id_from_stem
 from bookwiki.convert.mineru_client import convert_pdf_to_md
 from bookwiki.convert.pptx_to_md import convert_pptx_to_md
 from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
+from bookwiki.schemas import SCHEMA_VERSION
 from bookwiki.schemas.report import CheckReport, Issue
 from bookwiki.split.chapter_splitter import parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
@@ -40,6 +42,22 @@ def _rel(path: Path, base: Path) -> str:
 
 def _json_model(model: Any) -> dict[str, Any]:
     return model.model_dump(mode="json") if hasattr(model, "model_dump") else dict(model)
+
+
+def _agent_result_payload(agent_cls: type[Any], model: str, result: Any) -> dict[str, Any]:
+    payload = _json_model(result)
+    return {
+        "_schema_version": payload.get("schema_version", SCHEMA_VERSION),
+        "_prompt_version": prompt_version_for(agent_cls.prompt_template),
+        "_agent": agent_cls.__name__,
+        "_model": model,
+        "result": payload,
+    }
+
+
+def _agent_result(data: dict[str, Any]) -> dict[str, Any]:
+    result = data.get("result")
+    return result if isinstance(result, dict) else data
 
 
 def _read_all_markdown(paths: list[Path]) -> str:
@@ -208,11 +226,19 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             "title": titles.get(ch_id, ch_id),
             "source_md": source_md,
             "source_path": rel_source,
+            "language": cfg.language,
+            "quiz_per_chapter": cfg.quiz_per_chapter,
+            "cards_per_chapter": cfg.cards_per_chapter,
         }
+        chapter_model = cfg.model_for("chapter")
+        summary_model = cfg.model_for("summary")
+        quiz_model = cfg.model_for("quiz")
+        card_model = cfg.model_for("card")
+        concept_model = cfg.model_for("concept")
         chapter = await run_with_cache(
             ChapterAgent,
             payload,
-            model=cfg.model_for("chapter"),
+            model=chapter_model,
             cache_dir=_cache_dir(cfg),
             runtime=cfg.llm_runtime,
         )
@@ -220,28 +246,28 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             run_with_cache(
                 SummaryAgent,
                 payload,
-                model=cfg.model_for("summary"),
+                model=summary_model,
                 cache_dir=_cache_dir(cfg),
                 runtime=cfg.llm_runtime,
             ),
             run_with_cache(
                 QuizAgent,
                 payload,
-                model=cfg.model_for("quiz"),
+                model=quiz_model,
                 cache_dir=_cache_dir(cfg),
                 runtime=cfg.llm_runtime,
             ),
             run_with_cache(
                 CardAgent,
                 payload,
-                model=cfg.model_for("card"),
+                model=card_model,
                 cache_dir=_cache_dir(cfg),
                 runtime=cfg.llm_runtime,
             ),
             run_with_cache(
                 ConceptExtractAgent,
                 payload,
-                model=cfg.model_for("concept"),
+                model=concept_model,
                 cache_dir=_cache_dir(cfg),
                 runtime=cfg.llm_runtime,
             ),
@@ -249,15 +275,24 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
         cache_results.extend([chapter, summary, quiz, card, concept])
         paths = {
             "chapter": write_json(
-                result_dir / f"{ch_id}.chapter.json", _json_model(chapter.result)
+                result_dir / f"{ch_id}.chapter.json",
+                _agent_result_payload(ChapterAgent, chapter_model, chapter.result),
             ),
             "summary": write_json(
-                result_dir / f"{ch_id}.summary.json", _json_model(summary.result)
+                result_dir / f"{ch_id}.summary.json",
+                _agent_result_payload(SummaryAgent, summary_model, summary.result),
             ),
-            "quiz": write_json(result_dir / f"{ch_id}.quiz.json", _json_model(quiz.result)),
-            "card": write_json(result_dir / f"{ch_id}.card.json", _json_model(card.result)),
+            "quiz": write_json(
+                result_dir / f"{ch_id}.quiz.json",
+                _agent_result_payload(QuizAgent, quiz_model, quiz.result),
+            ),
+            "card": write_json(
+                result_dir / f"{ch_id}.card.json",
+                _agent_result_payload(CardAgent, card_model, card.result),
+            ),
             "concepts": write_json(
-                result_dir / f"{ch_id}.concepts.json", _json_model(concept.result)
+                result_dir / f"{ch_id}.concepts.json",
+                _agent_result_payload(ConceptExtractAgent, concept_model, concept.result),
             ),
         }
         chapter_results[ch_id] = {name: _rel(path, cfg.book_dir) for name, path in paths.items()}
@@ -268,7 +303,7 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
 async def reconcile_node(state: State, cfg: BookConfig) -> State:
     candidates = []
     for paths in state.get("agent_results", {}).values():
-        candidates.append(read_json(cfg.book_dir / paths["concepts"]))
+        candidates.append(_agent_result(read_json(cfg.book_dir / paths["concepts"])))
     result = await run_with_cache(
         ConceptReconcileAgent,
         candidates,
@@ -312,10 +347,10 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     chapter_outputs: list[str] = []
 
     for ch_id, paths in state.get("agent_results", {}).items():
-        chapter = read_json(cfg.book_dir / paths["chapter"])
-        summary = read_json(cfg.book_dir / paths["summary"])
-        quiz = read_json(cfg.book_dir / paths["quiz"])
-        card = read_json(cfg.book_dir / paths["card"])
+        chapter = _agent_result(read_json(cfg.book_dir / paths["chapter"]))
+        summary = _agent_result(read_json(cfg.book_dir / paths["summary"]))
+        quiz = _agent_result(read_json(cfg.book_dir / paths["quiz"]))
+        card = _agent_result(read_json(cfg.book_dir / paths["card"]))
         citations = chapter.get("citations", [])
         citation_md = "\n".join(f"- `{c['ref_id']}`: {c['quote']}" for c in citations)
         quiz_md = "\n".join(
@@ -447,8 +482,8 @@ def index_node(state: State, cfg: BookConfig) -> State:
             )
 
         for paths in state.get("agent_results", {}).values():
-            quiz = read_json(cfg.book_dir / paths["quiz"])
-            card = read_json(cfg.book_dir / paths["card"])
+            quiz = _agent_result(read_json(cfg.book_dir / paths["quiz"]))
+            card = _agent_result(read_json(cfg.book_dir / paths["card"]))
             for item in quiz.get("items", []):
                 conn.execute(
                     "insert into quiz_items(chapter_id, question, answer) values (?, ?, ?)",

@@ -15,6 +15,7 @@ from bookwiki.agents import (
     StructureAgent,
     SummaryAgent,
 )
+from bookwiki.scheduler.llm import TestLLMRuntime
 from tests.fakes import RecordingRuntime
 
 
@@ -172,3 +173,85 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
 
     assert len(runtime.calls) == 11
     assert all("Return valid JSON" in call["system"] for call in runtime.calls)
+
+
+@pytest.mark.asyncio
+async def test_quiz_and_card_agents_seed_requested_counts_from_config() -> None:
+    payload = {
+        "chapter_id": "chapter-1",
+        "title": "Search",
+        "source_md": "<!-- source_ref: source-p001 -->\nState space search.",
+        "source_path": "work/chapter_sources/chapter-1/source.md",
+        "language": "en-US",
+        "quiz_per_chapter": 3,
+        "cards_per_chapter": 4,
+    }
+
+    quiz = await QuizAgent().run(payload, model="deepseek-v4-pro", runtime=TestLLMRuntime())
+    cards = await CardAgent().run(payload, model="deepseek-v4-flash", runtime=TestLLMRuntime())
+
+    assert len(quiz.items) == 3
+    assert len(cards.items) == 4
+
+
+@pytest.mark.asyncio
+async def test_agent_retries_when_llm_invents_citation_ref_id() -> None:
+    payload = {
+        "chapter_id": "chapter-1",
+        "title": "Search",
+        "source_md": "<!-- source_ref: source-p001 -->\nState space search.",
+        "source_path": "work/chapter_sources/chapter-1/source.md",
+        "language": "zh-CN",
+    }
+    runtime = RecordingRuntime(
+        [
+            {
+                "chapter_id": "chapter-1",
+                "title": "Search",
+                "body_md": "# Search\n\nBody.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "invented-p999", "quote": "State"}],
+                "owner_task_id": "chapter-1:chapter",
+            },
+            {
+                "chapter_id": "chapter-1",
+                "title": "Search",
+                "body_md": "# Search\n\nBody.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                "owner_task_id": "chapter-1:chapter",
+            },
+        ]
+    )
+
+    result = await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+
+    assert result.citations[0].ref_id == "source-p001"
+    assert len(runtime.calls) == 2
+    assert "invented-p999" in runtime.calls[1]["user"]
+    assert "source-p001" in runtime.calls[1]["user"]
+
+
+@pytest.mark.asyncio
+async def test_agent_raises_after_repeated_invalid_citation_ref_ids() -> None:
+    payload = {
+        "chapter_id": "chapter-1",
+        "title": "Search",
+        "source_md": "<!-- source_ref: source-p001 -->\nState space search.",
+        "source_path": "work/chapter_sources/chapter-1/source.md",
+        "language": "zh-CN",
+    }
+    bad_response = {
+        "chapter_id": "chapter-1",
+        "title": "Search",
+        "body_md": "# Search\n\nBody.",
+        "concepts": ["state space"],
+        "citations": [{"ref_id": "invented-p999", "quote": "State"}],
+        "owner_task_id": "chapter-1:chapter",
+    }
+    runtime = RecordingRuntime([bad_response, bad_response, bad_response])
+
+    with pytest.raises(ValueError, match="invented-p999"):
+        await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+
+    assert len(runtime.calls) == 3

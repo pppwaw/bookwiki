@@ -44,6 +44,14 @@ def test_init_book_and_run_fake_llm_pipeline_to_sqlite(tmp_path) -> None:
     assert manifest["status"] == "completed"
     assert manifest["nodes"][-1]["name"] == "index"
 
+    chapter_results = sorted((book_dir / "work" / "agent_results").glob("*.chapter.json"))
+    assert chapter_results
+    chapter_payload = json.loads(chapter_results[0].read_text(encoding="utf-8"))
+    assert chapter_payload["_schema_version"] == "llm.v1"
+    assert chapter_payload["_prompt_version"].startswith("v")
+    assert chapter_payload["_agent"] == "ChapterAgent"
+    assert chapter_payload["result"]["owner_task_id"].endswith(":chapter")
+
     with sqlite3.connect(db_path) as conn:
         docs = conn.execute("select count(*) from documents").fetchone()[0]
         chunks = conn.execute("select count(*) from chunks").fetchone()[0]
