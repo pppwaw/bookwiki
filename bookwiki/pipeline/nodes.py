@@ -8,6 +8,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from bookwiki.agents import (
     CardAgent,
     ChapterAgent,
@@ -145,6 +147,11 @@ def _card_items_for_mdx(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return rendered
+
+
+def _frontmatter(data: dict[str, Any]) -> str:
+    body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False).strip()
+    return f"---\n{body}\n---\n\n"
 
 
 def _document_title(body: str, fallback: str) -> str:
@@ -291,6 +298,9 @@ def _clear_chapter_source_dirs(out_dir: Path) -> None:
 
 
 async def generate_node(state: State, cfg: BookConfig) -> State:
+    if not state.get("chapter_sources"):
+        msg = "generate requires chapter_sources; run split before generate"
+        raise ValueError(msg)
     result_dir = ensure_dir(cfg.work_dir / "agent_results")
     chapter_results: dict[str, dict[str, str]] = {}
     cache_results: list[CacheResult] = []
@@ -430,6 +440,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     _clear_generated_files(chapters_dir, "*.mdx")
     _clear_generated_files(concepts_dir, "*.mdx")
     chapter_outputs: list[str] = []
+    concept_backlinks: dict[str, list[dict[str, str]]] = {}
 
     for ch_id, paths in state.get("agent_results", {}).items():
         chapter = _agent_result(read_json(cfg.book_dir / paths["chapter"]))
@@ -442,20 +453,27 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         card_props = _mdx_prop(_card_items_for_mdx(card.get("items", [])))
         quiz_mdx = f"<QuizBlock items={{{quiz_props}}} />"
         card_mdx = f"<AnkiDeck cards={{{card_props}}} />"
-        concept_links = " ".join(
-            f"[{name}](../concepts/{_safe_file_stem(str(name), fallback_prefix='concept')})"
-            for name in chapter.get("concepts", [])
-        )
+        concept_names = [str(name) for name in chapter.get("concepts", [])]
+        for name in concept_names:
+            concept_backlinks.setdefault(name, []).append(
+                {"title": str(chapter["title"]), "href": f"../chapters/{ch_id}"}
+            )
         path = write_text(
             chapters_dir / f"{ch_id}.mdx",
             (
-                f"---\nchapter_id: {ch_id}\ntitle: {chapter['title']}\ntype: chapter\n---\n\n"
-                f"{chapter['body_md']}\n\n"
-                f"## Summary\n\n{summary['summary_md']}\n\n"
-                f"## Concepts\n\n{concept_links}\n\n"
-                f"## Quiz\n\n{quiz_mdx}\n\n"
-                f"## Anki Cards\n\n{card_mdx}\n\n"
-                f"## Sources\n\n{citation_md}\n"
+                _frontmatter(
+                    {
+                        "chapter_id": ch_id,
+                        "title": chapter["title"],
+                        "type": "chapter",
+                        "summary": summary["summary_md"],
+                        "concepts": concept_names,
+                    }
+                )
+                + f"{chapter['body_md']}\n\n"
+                + f"## Quiz\n\n{quiz_mdx}\n\n"
+                + f"## Sources\n\n{citation_md}\n\n"
+                + f"## Anki Cards\n\n{card_mdx}\n"
             ),
         )
         chapter_outputs.append(_rel(path, cfg.book_dir))
@@ -463,10 +481,17 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     for name, rel_path in state.get("concept_pages", {}).items():
         concept = read_json(cfg.book_dir / rel_path)
         safe_name = Path(rel_path).stem or _safe_file_stem(name, fallback_prefix="concept")
+        backlinks = concept_backlinks.get(str(name)) or concept_backlinks.get(
+            str(concept["name"]), []
+        )
+        backlink_md = "\n".join(
+            f"- [{item['title']}]({item['href']})" for item in backlinks
+        )
+        referenced_by = f"\n\n## Referenced By\n\n{backlink_md}\n" if backlink_md else ""
         write_text(
             concepts_dir / f"{safe_name}.mdx",
-            f"---\ntitle: {concept['name']}\ntype: concept\n---\n\n"
-            f"# {concept['name']}\n\n{concept['body_md']}\n",
+            _frontmatter({"title": concept["name"], "type": "concept"})
+            + f"# {concept['name']}\n\n{concept['body_md']}{referenced_by}",
         )
 
     index_path = write_text(

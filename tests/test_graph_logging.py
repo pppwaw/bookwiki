@@ -89,3 +89,76 @@ def test_force_from_structure_pauses_before_split_for_manual_review(
     checkpoint = graph_module.read_json(BookGraph(cfg=cfg).checkpoint_path)
     assert checkpoint["status"] == "paused"
     assert checkpoint["next_node"] == "split"
+
+
+def test_force_from_generate_reuses_split_state(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    graph = BookGraph(cfg=cfg)
+    graph._write_checkpoint(
+        {
+            "book_id": cfg.book_id,
+            "sources_md": ["work/sources_md/source.md"],
+            "approved_structure": "work/structure/approved-structure.yaml",
+            "chapter_sources": {"chapter-1": "work/chapter_sources/chapter-1/source.md"},
+            "chapter_titles": {"chapter-1": "Intro"},
+            "agent_results": {"stale": {}},
+        },
+        [],
+        status="completed",
+        next_index=None,
+    )
+    cfg.force_from = "generate"
+    seen: dict[str, Any] = {}
+
+    def fake_generate(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        seen.update(state)
+        return {"agent_results": {"chapter-1": {"chapter": "fresh.json"}}}
+
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "generate", fake_generate)
+
+    state = BookGraph(cfg=cfg, stop_after="generate").invoke({"book_id": cfg.book_id})
+
+    assert seen["chapter_sources"] == {
+        "chapter-1": "work/chapter_sources/chapter-1/source.md"
+    }
+    assert seen["chapter_titles"] == {"chapter-1": "Intro"}
+    assert "agent_results" not in seen
+    assert state["agent_results"] == {"chapter-1": {"chapter": "fresh.json"}}
+
+
+def test_force_from_generate_reconstructs_split_state_from_files(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    source_path = cfg.work_dir / "chapter_sources" / "chapter-1" / "source.md"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("# Intro\n", encoding="utf-8")
+    alignment_path = cfg.work_dir / "chapter_sources" / "_alignment.json"
+    alignment_path.write_text(
+        '{"chapter_titles": {"chapter-1": "Intro"}}',
+        encoding="utf-8",
+    )
+    graph = BookGraph(cfg=cfg)
+    graph._write_checkpoint(
+        {"book_id": cfg.book_id, "sources_md": ["work/sources_md/source.md"]},
+        [],
+        status="paused",
+        next_index=4,
+    )
+    cfg.force_from = "generate"
+    seen: dict[str, Any] = {}
+
+    def fake_generate(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        seen.update(state)
+        return {"agent_results": {"chapter-1": {"chapter": "fresh.json"}}}
+
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "generate", fake_generate)
+
+    BookGraph(cfg=cfg, stop_after="generate").invoke({"book_id": cfg.book_id})
+
+    assert seen["chapter_sources"] == {
+        "chapter-1": "work/chapter_sources/chapter-1/source.md"
+    }
+    assert seen["chapter_titles"] == {"chapter-1": "Intro"}

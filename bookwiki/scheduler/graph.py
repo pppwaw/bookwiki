@@ -30,6 +30,47 @@ NODE_ORDER = [
     "index",
 ]
 
+NODE_OUTPUT_KEYS = {
+    "convert": {
+        "sources_md",
+    },
+    "structure": {
+        "proposed_structure",
+        "approved_structure",
+    },
+    "split": {
+        "chapter_sources",
+        "chapter_titles",
+        "chapter_alignment",
+        "chapter_split_report",
+    },
+    "generate": {
+        "agent_results",
+    },
+    "reconcile_concepts": {
+        "reconciled_concepts",
+        "alias_map",
+    },
+    "concept_pages": {
+        "concept_pages",
+    },
+    "integrate": {
+        "content_ready",
+        "content_index",
+    },
+    "check": {
+        "check_report",
+        "repair_targets",
+    },
+    "repair": {
+        "repairs",
+        "repair_targets",
+    },
+    "index": {
+        "sqlite",
+    },
+}
+
 
 class GraphView:
     def draw_mermaid(self) -> str:
@@ -89,8 +130,10 @@ class BookGraph:
         ensure_dir(self.cfg.work_dir / "logs")
 
         if self.cfg.force_from:
+            checkpoint = read_json(self.checkpoint_path, default={})
+            checkpoint_state = checkpoint.get("state", {})
             self._clear_for_force()
-            state = self._state_for_force_from()
+            state = self._state_for_force_from(checkpoint_state)
             start_index = NODE_ORDER.index(self.cfg.force_from)
             nodes_log: list[dict[str, Any]] = []
             resumed_next_node: str | None = None
@@ -239,11 +282,17 @@ class BookGraph:
         print("resume: config changed; rerunning from convert")
         return {"book_id": self.cfg.book_id}, 0
 
-    def _state_for_force_from(self) -> dict[str, Any]:
-        state: dict[str, Any] = {"book_id": self.cfg.book_id}
+    def _state_for_force_from(self, checkpoint_state: dict[str, Any]) -> dict[str, Any]:
+        state: dict[str, Any] = dict(checkpoint_state) if checkpoint_state else {}
+        state["book_id"] = str(state.get("book_id") or self.cfg.book_id)
+        if self.cfg.force_from:
+            start_index = NODE_ORDER.index(self.cfg.force_from)
+            for node_name in NODE_ORDER[start_index:]:
+                for key in NODE_OUTPUT_KEYS.get(node_name, set()):
+                    state.pop(key, None)
         if self.cfg.force_from and NODE_ORDER.index(self.cfg.force_from) >= NODE_ORDER.index(
             "structure"
-        ):
+        ) and not state.get("sources_md"):
             sources = self._existing_sources_md()
             if not sources:
                 msg = (
@@ -252,6 +301,16 @@ class BookGraph:
                 )
                 raise FileNotFoundError(msg)
             state["sources_md"] = sources
+        if self.cfg.force_from and NODE_ORDER.index(self.cfg.force_from) >= NODE_ORDER.index(
+            "generate"
+        ) and not state.get("chapter_sources"):
+            chapter_sources, chapter_titles, alignment_path = self._existing_split_state()
+            if chapter_sources:
+                state["chapter_sources"] = chapter_sources
+                if chapter_titles:
+                    state["chapter_titles"] = chapter_titles
+                if alignment_path:
+                    state["chapter_alignment"] = alignment_path
         return state
 
     def _existing_sources_md(self) -> list[str]:
@@ -263,6 +322,26 @@ class BookGraph:
             for path in sorted(sources_dir.glob("*.md"))
             if path.is_file()
         ]
+
+    def _existing_split_state(self) -> tuple[dict[str, str], dict[str, str], str | None]:
+        chapter_sources_dir = self.cfg.work_dir / "chapter_sources"
+        if not chapter_sources_dir.exists():
+            return {}, {}, None
+        chapter_sources = {
+            path.parent.name: path.relative_to(self.cfg.book_dir).as_posix()
+            for path in sorted(chapter_sources_dir.glob("*/source.md"))
+            if path.is_file()
+        }
+        alignment_path = chapter_sources_dir / "_alignment.json"
+        alignment_rel = None
+        chapter_titles: dict[str, str] = {}
+        if alignment_path.exists():
+            alignment_rel = alignment_path.relative_to(self.cfg.book_dir).as_posix()
+            alignment = read_json(alignment_path, default={})
+            raw_titles = alignment.get("chapter_titles", {})
+            if isinstance(raw_titles, dict):
+                chapter_titles = {str(key): str(value) for key, value in raw_titles.items()}
+        return chapter_sources, chapter_titles, alignment_rel
 
     def _clear_for_force(self) -> None:
         if self.checkpoint_path.exists():
