@@ -93,6 +93,7 @@ class BookGraph:
             state = self._state_for_force_from()
             start_index = NODE_ORDER.index(self.cfg.force_from)
             nodes_log: list[dict[str, Any]] = []
+            resumed_next_node: str | None = None
         else:
             checkpoint = read_json(self.checkpoint_path, default={})
             checkpoint_matches_config = checkpoint.get("config_hash") == self._config_hash()
@@ -104,20 +105,33 @@ class BookGraph:
                 state = checkpoint["state"]
                 next_node = checkpoint.get("next_node")
                 start_index = NODE_ORDER.index(next_node) if next_node in NODE_ORDER else 0
+                resumed_next_node = next_node if next_node in NODE_ORDER else None
                 nodes_log = read_json(self.manifest_path, default={}).get("nodes", [])
             elif resume and checkpoint.get("state"):
                 state, start_index = self._state_after_config_change(checkpoint["state"])
                 nodes_log = []
+                resumed_next_node = None
             else:
                 state = initial_state or {"book_id": self.cfg.book_id}
                 start_index = 0
                 nodes_log = []
+                resumed_next_node = None
 
         stop_index = NODE_ORDER.index(self.stop_after) if self.stop_after in NODE_ORDER else None
 
         index = start_index
         while index < len(NODE_ORDER):
             node_name = NODE_ORDER[index]
+            if node_name in self.interrupt_before and resumed_next_node != node_name:
+                LOGGER.info(
+                    "node pause_before name=%s book_id=%s",
+                    node_name,
+                    self.cfg.book_id,
+                )
+                self._write_checkpoint(state, nodes_log, status="paused", next_index=index)
+                return state
+            resumed_next_node = None
+
             if node_name == "repair" and not state.get("repair_targets"):
                 LOGGER.info(
                     "node skip name=%s book_id=%s reason=no_repair_targets",

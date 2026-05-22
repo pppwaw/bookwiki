@@ -24,7 +24,7 @@ def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]
     )
 
 
-def test_init_book_and_run_fake_llm_pipeline_to_sqlite(tmp_path) -> None:
+def test_init_book_and_run_fake_llm_pipeline_pauses_for_structure_review(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
     source = tmp_path / "notes.txt"
     source.write_text("BookWiki offline CLI smoke source.", encoding="utf-8")
@@ -34,15 +34,34 @@ def test_init_book_and_run_fake_llm_pipeline_to_sqlite(tmp_path) -> None:
 
     db_path = book_dir / "site" / ".bookwiki" / "bookwiki.sqlite"
     manifest_path = book_dir / "work" / "logs" / "run-manifest.json"
+
+    assert not db_path.exists()
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["book_id"] == "mini"
+    assert manifest["status"] == "paused"
+    assert manifest["next_node"] == "split"
+    assert manifest["nodes"][-1]["name"] == "structure"
+
+
+def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    source = tmp_path / "notes.txt"
+    source.write_text("BookWiki resume smoke source.", encoding="utf-8")
+
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
+    run_script("scripts/run.py", str(book_dir))
+    run_script("scripts/run.py", str(book_dir), "--resume")
+    resumed = run_script("scripts/run.py", str(book_dir), "--resume")
+
+    assert "resume: completed checkpoint found" in resumed.stdout
+    assert "cache_hit" in resumed.stdout
+
+    db_path = book_dir / "site" / ".bookwiki" / "bookwiki.sqlite"
     content_index = book_dir / "content" / "docs" / "index.mdx"
 
     assert db_path.exists()
     assert content_index.exists()
-
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["book_id"] == "mini"
-    assert manifest["status"] == "completed"
-    assert manifest["nodes"][-1]["name"] == "index"
 
     chapter_results = sorted((book_dir / "work" / "agent_results").glob("*.chapter.json"))
     assert chapter_results
@@ -58,19 +77,6 @@ def test_init_book_and_run_fake_llm_pipeline_to_sqlite(tmp_path) -> None:
 
     assert docs >= 1
     assert chunks >= 1
-
-
-def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
-    book_dir = tmp_path / "books" / "mini"
-    source = tmp_path / "notes.txt"
-    source.write_text("BookWiki resume smoke source.", encoding="utf-8")
-
-    run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
-    run_script("scripts/run.py", str(book_dir))
-    resumed = run_script("scripts/run.py", str(book_dir), "--resume")
-
-    assert "resume: completed checkpoint found" in resumed.stdout
-    assert "cache_hit" in resumed.stdout
 
 
 def test_completed_checkpoint_is_not_reused_after_language_change(tmp_path) -> None:

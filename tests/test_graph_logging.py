@@ -59,3 +59,33 @@ def test_force_from_structure_reuses_converted_sources(
         "work/sources_md/beta.md",
     ]
     assert state["sources_md"] == seen["sources_md"]
+
+
+def test_force_from_structure_pauses_before_split_for_manual_review(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.force_from = "structure"
+    sources_dir = cfg.work_dir / "sources_md"
+    sources_dir.mkdir(parents=True)
+    (sources_dir / "source.md").write_text("# Source\n", encoding="utf-8")
+
+    def fake_structure(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        return {
+            "proposed_structure": "work/structure/proposed-structure.yaml",
+            "approved_structure": "work/structure/approved-structure.yaml",
+            "cache_hit": False,
+        }
+
+    def fail_split(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        raise AssertionError("split should wait for manual structure approval")
+
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "structure", fake_structure)
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "split", fail_split)
+
+    state = BookGraph(cfg=cfg).invoke({"book_id": cfg.book_id})
+
+    assert state["approved_structure"] == "work/structure/approved-structure.yaml"
+    checkpoint = graph_module.read_json(BookGraph(cfg=cfg).checkpoint_path)
+    assert checkpoint["status"] == "paused"
+    assert checkpoint["next_node"] == "split"
