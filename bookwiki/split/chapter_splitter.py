@@ -34,16 +34,20 @@ class SplitResult:
 
 
 def parse_approved_structure(markdown: str) -> list[ChapterSpec]:
-    headings = list(re.finditer(r"^##\s+(ch\d+)\s+(.+?)\s*$", markdown, flags=re.MULTILINE))
+    headings = [
+        (match, parsed)
+        for match in re.finditer(r"^##\s+(.+?)\s*$", markdown, flags=re.MULTILINE)
+        if (parsed := _parse_chapter_heading(match.group(1)))
+    ]
     chapters: list[ChapterSpec] = []
-    for index, match in enumerate(headings):
+    for index, (match, (chapter_id, title)) in enumerate(headings):
         start = match.end()
-        end = headings[index + 1].start() if index + 1 < len(headings) else len(markdown)
+        end = headings[index + 1][0].start() if index + 1 < len(headings) else len(markdown)
         block = markdown[start:end]
         chapters.append(
             ChapterSpec(
-                chapter_id=match.group(1),
-                title=match.group(2).strip(),
+                chapter_id=chapter_id,
+                title=title,
                 goal=_extract_field(block, "目标", "goal"),
                 scope=_extract_field(block, "范围", "scope"),
                 source_refs=_extract_source_refs(block),
@@ -53,6 +57,23 @@ def parse_approved_structure(markdown: str) -> list[ChapterSpec]:
         ChapterSpec("ch01", "Foundations", source_refs=[]),
         ChapterSpec("ch02", "Practice", source_refs=[]),
     ]
+
+
+def _parse_chapter_heading(heading: str) -> tuple[str, str] | None:
+    heading = heading.strip()
+    legacy = re.match(r"^(ch\d+)\s+(.+?)\s*$", heading, flags=re.IGNORECASE)
+    if legacy:
+        return legacy.group(1).lower(), legacy.group(2).strip()
+    chapter = re.match(
+        r"^chapter\s+(\d+)\b\s*(?::|-)?\s*(.*?)\s*$",
+        heading,
+        flags=re.IGNORECASE,
+    )
+    if chapter:
+        number = int(chapter.group(1))
+        title = chapter.group(2).strip() or f"Chapter {number}"
+        return f"chapter-{number}", title
+    return None
 
 
 def extract_source_fragments(path: str | Path) -> list[SourceFragment]:
@@ -220,7 +241,7 @@ def _keywords(text: str) -> set[str]:
 def _render_chapter_source(
     chapter_id: str, title: str, fragments: list[SourceFragment]
 ) -> str:
-    blocks = [f"# {chapter_id} {title}"]
+    blocks = [f"# {_display_chapter_heading(chapter_id, title)}"]
     for fragment in fragments:
         blocks.append(
             f"<!-- source_ref: {fragment.source_ref} -->\n\n"
@@ -228,6 +249,13 @@ def _render_chapter_source(
             f"<!-- source_path: {fragment.source_path} -->"
         )
     return "\n\n".join(blocks).strip() + "\n"
+
+
+def _display_chapter_heading(chapter_id: str, title: str) -> str:
+    chapter = re.match(r"^chapter-(\d+)$", chapter_id)
+    if chapter:
+        return f"Chapter {int(chapter.group(1))} {title}"
+    return f"{chapter_id} {title}"
 
 
 def _render_report(

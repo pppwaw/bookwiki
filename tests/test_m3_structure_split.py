@@ -42,6 +42,24 @@ def test_parse_approved_structure_extracts_chapters_and_sources() -> None:
     assert chapters[1].source_refs == ["textbook-p002"]
 
 
+def test_parse_approved_structure_accepts_chapter_style_headings() -> None:
+    chapters = parse_approved_structure(
+        "# Mini Book\n\n"
+        "## Chapter 6 Point Estimation\n\n"
+        "- 目标: Explain estimators.\n"
+        "- 范围: Week 9 and Week 10.\n"
+        "- 来源:\n"
+        "  - Week-9-p001\n"
+    )
+
+    assert len(chapters) == 1
+    assert chapters[0].chapter_id == "chapter-6"
+    assert chapters[0].title == "Point Estimation"
+    assert chapters[0].goal == "Explain estimators."
+    assert chapters[0].scope == "Week 9 and Week 10."
+    assert chapters[0].source_refs == ["Week-9-p001"]
+
+
 def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_path: Path) -> None:
     source = tmp_path / "Week-10.md"
     source.write_text(
@@ -59,7 +77,8 @@ def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_pa
 
     assert summary.detected_chapter_id == "ch06"
     assert summary.detected_title == "Point Estimation"
-    assert "## ch06 Point Estimation" in result.proposed_structure_md
+    assert "## Chapter 6 Point Estimation" in result.proposed_structure_md
+    assert "## ch06 Point Estimation" not in result.proposed_structure_md
     assert "## ch02 Week 10" not in result.proposed_structure_md
 
 
@@ -85,6 +104,7 @@ def test_structure_agent_reflects_source_content_in_chapter_plan(tmp_path: Path)
     assert "method of moments" in result.proposed_structure_md
     assert "maximum likelihood estimation" in result.proposed_structure_md
     assert "More general case" in result.proposed_structure_md
+    assert "## Chapter 2 Practice" not in result.proposed_structure_md
     assert "Cover the source material assigned" not in result.proposed_structure_md
     assert "Automatically grouped source set" not in result.proposed_structure_md
 
@@ -112,8 +132,9 @@ def test_structure_agent_merges_sources_with_same_detected_chapter() -> None:
         )
     )
 
-    assert result.proposed_structure_md.count("## ch06 Point Estimation") == 1
-    assert "## ch02 Point Estimation" not in result.proposed_structure_md
+    assert result.proposed_structure_md.count("## Chapter 6 Point Estimation") == 1
+    assert "## ch06 Point Estimation" not in result.proposed_structure_md
+    assert "## Chapter 2 Practice" not in result.proposed_structure_md
     assert "  - Week-9-p001" in result.proposed_structure_md
     assert "  - Week-10-p001" in result.proposed_structure_md
 

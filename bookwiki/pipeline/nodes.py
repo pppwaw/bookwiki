@@ -187,7 +187,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
 
 def _clear_chapter_source_dirs(out_dir: Path) -> None:
     for child in out_dir.iterdir():
-        if child.is_dir() and re.fullmatch(r"(ch\d+|appendix)", child.name):
+        if child.is_dir() and re.fullmatch(r"(ch\d+|chapter-\d+|appendix)", child.name):
             shutil.rmtree(child)
 
 

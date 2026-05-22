@@ -8,7 +8,7 @@ from bookwiki.schemas.source import StructureResult
 
 
 class StructureAgent:
-    kind: ClassVar[str] = "structure_v4"
+    kind: ClassVar[str] = "structure_v5"
     output_model: ClassVar[type[StructureResult]] = StructureResult
     model_key: ClassVar[str] = "structure"
 
@@ -20,11 +20,12 @@ class StructureAgent:
         lines = ["# Proposed Structure", ""]
         chapter_names: list[str] = []
         for index, plan in enumerate(chapters, start=1):
-            chapter_names.append(f"{plan.chapter_id} {plan.title}")
+            heading = _display_heading(plan)
+            chapter_names.append(heading)
             topics = _topic_terms(plan)
             lines.extend(
                 [
-                    f"## {plan.chapter_id} {plan.title}",
+                    f"## {heading}",
                     "",
                     f"- 目标: {_render_goal(plan, topics)}",
                     f"- 范围: {_render_scope(plan, topics, index)}",
@@ -49,6 +50,7 @@ class StructureAgent:
 class _ChapterPlan:
     chapter_id: str
     title: str
+    detected: bool = False
     source_refs: list[str] = field(default_factory=list)
     source_ids: list[str] = field(default_factory=list)
     summaries: list[str] = field(default_factory=list)
@@ -94,7 +96,7 @@ def _chapter_specs_from_sources(
             chapter_order.append(chapter_id)
             chapters_by_id[chapter_id] = _plan_from_item(chapter_id, title, refs, source_id, item)
     chapters = [chapters_by_id[chapter_id] for chapter_id in chapter_order]
-    if len(chapters) == 1:
+    if len(chapters) == 1 and not chapters[0].detected:
         chapters.append(_fallback_plan("ch02", "Practice"))
     return chapters
 
@@ -113,6 +115,7 @@ def _plan_from_item(
     return _ChapterPlan(
         chapter_id=chapter_id,
         title=title,
+        detected=bool(item.get("detected_chapter_id")),
         source_refs=list(dict.fromkeys(refs)),
         source_ids=[source_id],
         summaries=_string_list(item.get("summary_md")),
@@ -123,6 +126,13 @@ def _plan_from_item(
 
 def _fallback_plan(chapter_id: str, title: str) -> _ChapterPlan:
     return _ChapterPlan(chapter_id=chapter_id, title=title)
+
+
+def _display_heading(plan: _ChapterPlan) -> str:
+    chapter = re.match(r"^ch0*(\d+)$", plan.chapter_id)
+    if chapter:
+        return f"Chapter {int(chapter.group(1))} {plan.title}"
+    return f"{plan.chapter_id} {plan.title}"
 
 
 def _render_goal(plan: _ChapterPlan, topics: list[str]) -> str:
