@@ -325,6 +325,14 @@ books/
 
 ### 6.2 Source Markdown
 
+> 后续优化目标: `work/sources_md/*.md` 尽量保持为普通 Markdown,不再要求写入
+> `<!-- source_ref: ... -->` 注释。系统读取 source Markdown 时,按 Markdown heading
+> 层级自动派生引用 ID,格式为 `{source_id}.{Heading1}.{Heading2}`。每个 heading 段做
+> 安全化处理:空白和标点转 `-`,同级重复标题加 `-2`、`-3`。例如
+> `Week-10.Chapter-6-The-point-estimation.Maximum-Likelihood-Estimation`。下游
+> `chapter_sources`、agent `<chunk ref="...">`、citation 校验和网站来源展示继续使用
+> 这个机器可校验的 ref_id。
+
 每份资料先转成 Markdown,并写入 `source_ref`。
 
 PDF 和 PPTX 统一交给 MinerU 解析,且只使用 VLM 异步任务。转换模块接收 MinerU 产物,再做三件事:
