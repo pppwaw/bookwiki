@@ -12,7 +12,7 @@ from bookwiki.agents._helpers import (
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
-from bookwiki.schemas.quiz import QuizItem, QuizResult
+from bookwiki.schemas.quiz import QuizItem, QuizPlacement, QuizResult
 
 
 class QuizAgent:
@@ -25,11 +25,15 @@ class QuizAgent:
         body="""You are the quiz-generation agent.
 
 Create multiple-choice questions that test understanding, not trivia.
-Create exactly the requested quiz_per_chapter number of questions when provided.
+Create an appropriate number of questions, using quiz_per_chapter as an upper bound
+or target when provided.
 Each question must have at least two plausible choices and exactly one answer matching
 one of the choices.
 Explanations should teach why the answer is correct.
 Use citations from the chapter source for each item.
+Choose how many QuizBlock placements the chapter needs and where they belong.
+Use placements.after_block to insert after a 0-based chapter_body_blocks entry
+and placements.item_indexes as 1-based references into the items list.
 Avoid trick questions, ambiguous wording, and answers that require outside knowledge.""",
     )
 
@@ -48,7 +52,18 @@ Avoid trick questions, ambiguous wording, and answers that require outside knowl
             )
             for index in range(count)
         ]
-        draft = QuizResult(chapter_id=ch_id, items=items, owner_task_id=f"{ch_id}:quiz")
+        draft = QuizResult(
+            chapter_id=ch_id,
+            items=items,
+            placements=[
+                QuizPlacement(
+                    after_block=0,
+                    item_indexes=list(range(1, len(items) + 1)),
+                    title="Quiz",
+                )
+            ],
+            owner_task_id=f"{ch_id}:quiz",
+        )
         llm_input = _content_input(inp, refs)
         result = await generate_with_llm(
             runtime=runtime,
@@ -68,6 +83,11 @@ def _content_input(inp: dict[str, Any], refs: set[str]) -> dict[str, Any]:
     payload = {key: value for key, value in inp.items() if key != "source_md"}
     payload["document_xml"] = chapter_document(inp)
     payload["allowed_source_refs"] = sorted(refs)
+    body = str(inp.get("chapter_body_md", ""))
+    if body:
+        payload["chapter_body_blocks"] = [
+            block.strip() for block in body.split("\n\n") if block.strip()
+        ]
     return payload
 
 

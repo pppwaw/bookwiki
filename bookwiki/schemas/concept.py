@@ -12,6 +12,10 @@ class ConceptCandidate(VersionedModel):
     owner_task_id: str
 
 
+class ConceptExtractResult(VersionedModel):
+    concepts: list[ConceptCandidate] = Field(default_factory=list)
+
+
 class ConceptReconciledItem(VersionedModel):
     canonical: str
     aliases: list[str] = Field(default_factory=list)

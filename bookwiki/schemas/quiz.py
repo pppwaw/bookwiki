@@ -13,7 +13,14 @@ class QuizItem(VersionedModel):
     citations: list[Citation] = Field(default_factory=list)
 
 
+class QuizPlacement(VersionedModel):
+    after_block: int = Field(ge=0)
+    item_indexes: list[int] = Field(default_factory=list)
+    title: str = "Quiz"
+
+
 class QuizResult(VersionedModel):
     chapter_id: str
     items: list[QuizItem] = Field(default_factory=list)
+    placements: list[QuizPlacement] = Field(default_factory=list)
     owner_task_id: str

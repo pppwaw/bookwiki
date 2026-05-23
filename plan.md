@@ -137,6 +137,14 @@ flowchart LR
 - [x] MinerU API 失败/关闭/任务失败时重跑 → 报错退出,不做降级
 - [x] 跑出来的 sources_md 能被 M3 的 ChapterSplit 接收
 
+### 后续优化
+- [ ] **Heading-path source refs**: 不再要求 `work/sources_md/*.md` 写入
+  `<!-- source_ref: ... -->` 注释;改为由 Markdown heading 层级自动生成引用 ID。
+  格式采用 `{source_id}.{Heading1}.{Heading2}`,每个 heading 段做安全化
+  (空白/标点转 `-`,同级重复标题加 `-2`)。例如:
+  `Week-10.Chapter-6-The-point-estimation.Maximum-Likelihood-Estimation`。
+  `chapter_sources` 和 agent `<chunk ref="...">` 仍保留机器可校验的 ref_id。
+
 ---
 
 ## M3 · 结构 + 切分(2 - 3 天)
@@ -214,25 +222,25 @@ flowchart LR
 
 ### 任务
 
-- [ ] **`bookwiki/agents/concept_extract.py`**:rule-only,从 `ChapterResult.concepts` 直接抽,默认不调 LLM
-- [ ] **`bookwiki/agents/concept_reconcile.py`**:
+- [x] **`bookwiki/agents/concept_extract.py`**:rule-only,从 `ChapterResult.concepts` 直接抽,默认不调 LLM
+- [x] **`bookwiki/agents/concept_reconcile.py`**:
   - 规则去重:归一化 + 别名匹配
   - 一次 LLM 做模糊合并(`models.concept` = `deepseek-v4-pro`)
   - 产 `concepts.reconciled.json` 含 `alias_map`
-- [ ] **`bookwiki/agents/concept_agent.py`**:每唯一概念一份 ConceptResult,上下文聚合所有引用章节
-- [ ] **`bookwiki/integrator/`**:
+- [x] **`bookwiki/agents/concept_agent.py`**:每唯一概念一份 ConceptResult,上下文聚合所有引用章节
+- [x] **`bookwiki/integrator/`**:
   - `chapter_integrator.py`:agent_results JSON → chapter MDX(BOOKWIKI:BODY/SUMMARY/QUIZ/ANKI 区块,Quiz/Anki 渲染为 MDX 组件)
   - `concept_integrator.py`:concept JSON → `content/docs/concepts/*.mdx`
   - `mdx_renderers.normalize_concept_links(text, alias_map)`:把概念引用统一到 Fumadocs canonical 页面
   - `source_ref_validator.py`:cite tool 兜底,白名单外的 ref 报 issue
   - **不调用 LLM**
-- [ ] **`integrate_node` 实现**:顶层图独立 node,在 concept_pages 之后,渲染整个 `content/docs/`
-- [ ] **`bookwiki/checkers/`**:
+- [x] **`integrate_node` 实现**:顶层图独立 node,在 concept_pages 之后,渲染整个 `content/docs/`
+- [x] **`bookwiki/checkers/`**:
   - `frontmatter_checker.py`, `quiz_checker.py`, `card_checker.py`, `link_checker.py`, `source_ref_checker.py`, `injection_checker.py`(可疑指令字符串,warning 不阻塞)
   - 每个 issue 必须带 `owner_task_id` + `severity`
-- [ ] **`bookwiki/agents/review_agent.py`**:self-refine 输入三元组(原输入 + 上一轮失败输出 + issue),强制 `models.review` = `deepseek-v4-pro`
-- [ ] **`repair_node` 实现**:按 `owner_task_id` 分组,fan-out 跑 ReviewAgent,结果回写 agent_results;`maxRepairRounds` 按单元计数
-- [ ] **条件边**:`check → repair if repair_targets else index`,`repair → integrate`(重整合受影响章节)
+- [x] **`bookwiki/agents/review_agent.py`**:self-refine 输入三元组(原输入 + 上一轮失败输出 + issue),强制 `models.review` = `deepseek-v4-pro`
+- [x] **`repair_node` 实现**:按 `owner_task_id` 分组,fan-out 跑 ReviewAgent,结果回写 agent_results;`maxRepairRounds` 按单元计数
+- [x] **条件边**:`check → repair if repair_targets else index`,`repair → integrate`(重整合受影响章节)
 
 ### 产物
 - `work/agent_results/concepts.reconciled.json` + `concept.<name>.json`

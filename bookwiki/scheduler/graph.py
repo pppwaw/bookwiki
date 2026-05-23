@@ -161,6 +161,12 @@ class BookGraph:
                 resumed_next_node = None
 
         stop_index = NODE_ORDER.index(self.stop_after) if self.stop_after in NODE_ORDER else None
+        pending_repair_loop = (
+            start_index == NODE_ORDER.index("repair") and bool(state.get("repair_targets"))
+        )
+        if stop_index is not None and start_index > stop_index and not pending_repair_loop:
+            self._write_checkpoint(state, nodes_log, status="paused", next_index=start_index)
+            return state
 
         index = start_index
         while index < len(NODE_ORDER):
@@ -206,6 +212,14 @@ class BookGraph:
                     "cache_hit": cache_hit,
                 }
             )
+
+            if node_name == "repair" and state.get("repairs"):
+                integrate_index = NODE_ORDER.index("integrate")
+                self._write_checkpoint(
+                    state, nodes_log, status="running", next_index=integrate_index
+                )
+                index = integrate_index
+                continue
 
             if node_name in self.pause_after or (stop_index is not None and index >= stop_index):
                 self._write_checkpoint(state, nodes_log, status="paused", next_index=index + 1)

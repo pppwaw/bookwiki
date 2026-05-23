@@ -134,7 +134,11 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                 "result": {
                     "chapter_id": "chapter-6",
                     "title": "Point Estimation",
-                    "body_md": "Main explanation.",
+                    "body_md": (
+                        "Opening explanation.\n\n"
+                        "Middle derivation.\n\n"
+                        "Closing application."
+                    ),
                     "concepts": ["Point Estimation"],
                     "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
                 }
@@ -159,7 +163,18 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                             "answer": "Estimate a parameter",
                             "explanation": "It returns a single estimate.",
                             "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
+                        },
+                        {
+                            "question": "Where should the second quiz appear?",
+                            "choices": ["Near the application", "Only at the end"],
+                            "answer": "Near the application",
+                            "explanation": "The model chooses this placement.",
+                            "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
                         }
+                    ],
+                    "placements": [
+                        {"after_block": 0, "item_indexes": [1], "title": "Checkpoint"},
+                        {"after_block": 1, "item_indexes": [2], "title": "Practice"},
                     ],
                 }
             }
@@ -217,6 +232,11 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "## Concepts" not in body
     assert "<QuizBlock" in chapter_text
     assert "<AnkiDeck" in chapter_text
+    assert body.count("<QuizBlock") == 2
+    assert body.find("Opening explanation.") < body.find("## Checkpoint")
+    assert body.find("## Checkpoint") < body.find("Middle derivation.")
+    assert body.find("Middle derivation.") < body.find("## Practice")
+    assert body.find("## Practice") < body.find("Closing application.")
     assert body.rfind("<AnkiDeck") > body.rfind("<QuizBlock")
     assert body.rstrip().endswith("/>")
     assert "```quiz" not in chapter_text

@@ -15,7 +15,7 @@ DEFAULT_MODELS = {
     "summary": "deepseek-v4-flash",
     "quiz": "deepseek-v4-pro",
     "card": "deepseek-v4-flash",
-    "concept": "deepseek-v4-flash",
+    "concept": "deepseek-v4-pro",
     "review": "deepseek-v4-pro",
 }
 

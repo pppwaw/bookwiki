@@ -162,3 +162,61 @@ def test_force_from_generate_reconstructs_split_state_from_files(
         "chapter-1": "work/chapter_sources/chapter-1/source.md"
     }
     assert seen["chapter_titles"] == {"chapter-1": "Intro"}
+
+
+def test_repair_resume_reintegrates_before_honoring_stop_after_check(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    graph = BookGraph(cfg=cfg)
+    graph._write_checkpoint(
+        {"book_id": cfg.book_id, "repair_targets": ["chapter-1:quiz"]},
+        [],
+        status="paused",
+        next_index=8,
+    )
+    calls: list[str] = []
+
+    def fake_repair(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        calls.append("repair")
+        return {"repairs": ["work/repairs/chapter-1-quiz.json"], "repair_targets": []}
+
+    def fake_integrate(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        calls.append("integrate")
+        return {"content_ready": True}
+
+    def fake_check(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        calls.append("check")
+        return {"check_report": "work/logs/check-report.json", "repair_targets": []}
+
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "repair", fake_repair)
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "integrate", fake_integrate)
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "check", fake_check)
+
+    state = BookGraph(cfg=cfg, stop_after="check").invoke(resume=True)
+
+    assert calls == ["repair", "integrate", "check"]
+    assert state["content_ready"] is True
+    assert state["repair_targets"] == []
+
+
+def test_resume_does_not_run_nodes_after_stop_after_target(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    graph = BookGraph(cfg=cfg)
+    graph._write_checkpoint(
+        {"book_id": cfg.book_id, "check_report": "work/logs/check-report.json"},
+        [],
+        status="paused",
+        next_index=9,
+    )
+
+    def fail_index(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        raise AssertionError("index must not run when --to check is already behind us")
+
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "index", fail_index)
+
+    state = BookGraph(cfg=cfg, stop_after="check").invoke(resume=True)
+
+    assert state["check_report"] == "work/logs/check-report.json"

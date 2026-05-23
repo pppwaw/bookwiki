@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents._helpers import chapter_id, chapter_title
-from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents._helpers import chapter_id
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
-from bookwiki.schemas.concept import ConceptCandidate
+from bookwiki.schemas.concept import ConceptCandidate, ConceptExtractResult
 
 
 class ConceptExtractAgent:
     kind: ClassVar[str] = "concept_extract_llm_v1"
-    output_model: ClassVar[type[ConceptCandidate]] = ConceptCandidate
+    output_model: ClassVar[type[ConceptExtractResult]] = ConceptExtractResult
     model_key: ClassVar[str] = "concept"
     prompt_name: ClassVar[str] = "concept_extract"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
@@ -27,23 +26,18 @@ The selected concept must be central to the chapter, not an incidental example."
 
     async def run(
         self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime
-    ) -> ConceptCandidate:
+    ) -> ConceptExtractResult:
         ch_id = chapter_id(inp)
-        name = f"{chapter_title(inp)} concept"
-        draft = ConceptCandidate(
-            name=name,
-            aliases=[name.lower()],
-            source_chapter_id=ch_id,
-            owner_task_id=f"{ch_id}:concept_extract",
+        concepts = inp.get("concepts", [])
+        return ConceptExtractResult(
+            concepts=[
+                ConceptCandidate(
+                    name=str(name),
+                    aliases=[],
+                    source_chapter_id=ch_id,
+                    owner_task_id=f"{ch_id}:concept_extract",
+                )
+                for name in concepts
+                if str(name).strip()
+            ]
         )
-        result = await generate_with_llm(
-            runtime=runtime,
-            model=model,
-            output_model=ConceptCandidate,
-            agent_name=self.__class__.__name__,
-            prompt_name=self.prompt_name,
-            prompt_template=self.prompt_template,
-            inp=inp,
-            draft=draft,
-        )
-        return ConceptCandidate.model_validate(result)

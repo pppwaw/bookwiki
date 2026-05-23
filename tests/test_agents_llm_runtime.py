@@ -97,12 +97,6 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
                 "owner_task_id": "chapter-6:card",
             },
             {
-                "name": "point estimation",
-                "aliases": ["estimator"],
-                "source_chapter_id": "chapter-6",
-                "owner_task_id": "chapter-6:concept_extract",
-            },
-            {
                 "concepts": [
                     {
                         "canonical": "point estimation",
@@ -171,7 +165,7 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         runtime=runtime,
     )
 
-    assert len(runtime.calls) == 11
+    assert len(runtime.calls) == 10
     assert all("Return valid JSON" in call["system"] for call in runtime.calls)
 
 
