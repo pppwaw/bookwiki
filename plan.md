@@ -181,27 +181,27 @@ flowchart LR
 
 ### 任务
 
-- [ ] **`bookwiki/agents/chapter_agent.py`**:
+- [x] **`bookwiki/agents/chapter_agent.py`**:
   - 输入:chapter_source + (可选)approved-structure.yaml
   - 输出:`ChapterResult` Pydantic(含 `concepts`, `source_refs`, `body_md`)
   - prompt 使用 `<document>...<chunk ref="...">...</chunk></document>` 包裹(§11.3 注入防御)
   - 走 `models.chapter` = `deepseek-v4-pro`,via `instructor` + `response_model=ChapterResult`
-- [ ] **`bookwiki/agents/summary_agent.py`**:`deepseek-v4-flash`
-- [ ] **`bookwiki/agents/quiz_agent.py`**:`deepseek-v4-pro`,每章 `quizPerChapter` 道题
-- [ ] **`bookwiki/agents/card_agent.py`**:`deepseek-v4-flash`,每章 `cardsPerChapter` 张
-- [ ] **cite tool 实现**:
+- [x] **`bookwiki/agents/summary_agent.py`**:`deepseek-v4-flash`
+- [x] **`bookwiki/agents/quiz_agent.py`**:`deepseek-v4-pro`,每章 `quizPerChapter` 道题
+- [x] **`bookwiki/agents/card_agent.py`**:`deepseek-v4-flash`,每章 `cardsPerChapter` 张
+- [x] **cite tool 实现**:
   - `Citation` Pydantic 加 `@field_validator('ref_id')`,在 instructor 调用 context 里塞当前 chunk ref 集合,validator 校验
   - 各 agent 输出 schema 嵌套 `Citation`
-- [ ] **`generate_node` 实现**(替换 M1 stub):Send fan-out 每章一子任务,内部 asyncio.gather 4 个 agent
-- [ ] **prompt 内置在各 agent 模块**:每个 agent 的 `prompt_template = PromptTemplate(version="v1", body=...)`,不设独立 `agents/prompts/` 目录
+- [x] **`generate_node` 实现**(替换 M1 stub):Send fan-out 每章一子任务,内部 asyncio.gather 4 个 agent
+- [x] **prompt 内置在各 agent 模块**:每个 agent 的 `prompt_template = PromptTemplate(version="v1", body=...)`,不设独立 `agents/prompts/` 目录
 
 ### 产物
 - `work/agent_results/{chXX}.{chapter,summary,quiz,card}.json`(JSON,顶部带 `_schema_version` / `_prompt_version`)
 
 ### 验收
-- mini-book 每章有 4 份 JSON 都通过 Pydantic
-- cite tool 测试:故意让 LLM 编 ref_id → instructor 自动重试纠错(看日志)
-- 改某个 agent 内置 `prompt_template.version` 或 `body`,`--resume` 时该 agent 全部重跑(input_hash 失效)
+- [x] mini-book 每章有 4 份 JSON 都通过 Pydantic
+- [x] cite tool 测试:故意让 LLM 编 ref_id → instructor 自动重试纠错(看日志)
+- [x] 改某个 agent 内置 `prompt_template.version` 或 `body`,`--resume` 时该 agent 全部重跑(input_hash 失效)
 - `--dry-run` 估算与实测对比,记录到 cost-model 笔记里手动改 ESTIMATE 常量
 
 ---
