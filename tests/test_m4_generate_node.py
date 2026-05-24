@@ -37,7 +37,7 @@ async def test_generate_node_writes_only_m4_content_agent_outputs(tmp_path) -> N
     for kind, rel_path in outputs.items():
         payload = json.loads((book_dir / rel_path).read_text(encoding="utf-8"))
         assert payload["_schema_version"] == "llm.v1"
-        assert payload["_prompt_version"].startswith("v1+")
+        assert "_prompt_version" not in payload
         assert payload["_agent"].endswith("Agent")
         assert payload["result"]["owner_task_id"].endswith(f":{kind}")
 
@@ -122,7 +122,10 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
         json.dumps(
             {
                 "name": "Point Estimation",
-                "body_md": "Point estimation may use formulas like $\\hat\\theta$.",
+                "body_md": (
+                    "Point estimation may use formulas like \\(\\hat\\theta\\). "
+                    "Display math may be written as \\[E(X)=\\theta\\]."
+                ),
             },
             ensure_ascii=False,
         ),
@@ -136,7 +139,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                     "title": "Point Estimation",
                     "body_md": (
                         "Opening explanation.\n\n"
-                        "Middle derivation.\n\n"
+                        "Middle derivation with \\(\\frac{x}{\\theta}\\).\n\n"
                         "Closing application."
                     ),
                     "concepts": ["Point Estimation"],
@@ -217,6 +220,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
 
     assert result["content_ready"] is True
     assert result["content_index"] == "content/docs/index.mdx"
+    index_text = (book_dir / "content" / "docs" / "index.mdx").read_text(encoding="utf-8")
+    assert index_text.startswith("---\ntitle: Book\n---\n\n# Book")
     assert not (book_dir / "content" / "docs" / "chapters" / "stale.mdx").exists()
     assert not (book_dir / "content" / "docs" / "concepts" / "stale.mdx").exists()
 
@@ -234,17 +239,23 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "<AnkiDeck" in chapter_text
     assert body.count("<QuizBlock") == 2
     assert body.find("Opening explanation.") < body.find("## Checkpoint")
-    assert body.find("## Checkpoint") < body.find("Middle derivation.")
-    assert body.find("Middle derivation.") < body.find("## Practice")
+    assert body.find("## Checkpoint") < body.find("Middle derivation")
+    assert body.find("Middle derivation") < body.find("## Practice")
     assert body.find("## Practice") < body.find("Closing application.")
     assert body.rfind("<AnkiDeck") > body.rfind("<QuizBlock")
     assert body.rstrip().endswith("/>")
     assert "```quiz" not in chapter_text
     assert "```card" not in chapter_text
+    assert "\\(" not in chapter_text
+    assert "$\\frac{x}{\\theta}$" in chapter_text
 
     concept_page = book_dir / "content" / "docs" / "concepts" / "Point-Estimation.mdx"
     assert concept_page.exists()
     concept_text = concept_page.read_text(encoding="utf-8")
+    assert "\\(" not in concept_text
+    assert "\\[" not in concept_text
+    assert "$\\hat\\theta$" in concept_text
+    assert "\n\n$$\nE(X)=\\theta\n$$\n\n" in concept_text
     assert "$\\hat\\theta$" in concept_text
     assert "## Referenced By" in concept_text
     assert "[Point Estimation](../chapters/chapter-6)" in concept_text

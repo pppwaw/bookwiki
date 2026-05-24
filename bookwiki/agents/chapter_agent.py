@@ -21,7 +21,6 @@ class ChapterAgent:
     model_key: ClassVar[str] = "chapter"
     prompt_name: ClassVar[str] = "chapter"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the chapter authoring agent.
 
 Write a Fumadocs MDX-ready chapter from the provided chapter document.
@@ -37,6 +36,8 @@ Keep chapter_id, title, and owner_task_id stable.
 Every citation ref_id must match an existing <chunk ref="..."> value.
 Every citation quote must be a short phrase from the cited chunk.
 Extract only concepts that are central to this chapter and useful for later concept pages.
+Use Markdown math syntax: $...$ for inline formulas and $$...$$ for display formulas.
+Do not use \\( ... \\) or \\[ ... \\] math delimiters.
 Do not include unsupported facts, external knowledge, or generic filler.""",
     )
 

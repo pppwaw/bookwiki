@@ -15,7 +15,6 @@ class ChapterSplitAgent:
     model_key: ClassVar[str] = "split"
     prompt_name: ClassVar[str] = "chapter_split"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the chapter-split audit agent.
 
 Review the deterministic source split for coverage and obvious assignment mistakes.

@@ -23,7 +23,6 @@ class StructureAgent:
     model_key: ClassVar[str] = "structure"
     prompt_name: ClassVar[str] = "structure"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v2",
         body="""You are the book-structure agent.
 
 Create a proposed learning structure from the source summaries.

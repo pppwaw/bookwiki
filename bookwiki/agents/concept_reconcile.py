@@ -18,7 +18,6 @@ class ConceptReconcileAgent:
     model_key: ClassVar[str] = "concept"
     prompt_name: ClassVar[str] = "concept_reconcile"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the concept-reconciliation agent.
 
 Merge concept candidates that refer to the same idea.

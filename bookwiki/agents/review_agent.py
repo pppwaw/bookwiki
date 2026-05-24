@@ -14,7 +14,6 @@ class ReviewAgent:
     model_key: ClassVar[str] = "review"
     prompt_name: ClassVar[str] = "review"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the repair-review agent.
 
 Given an owner task and issue context, propose a focused repair action.

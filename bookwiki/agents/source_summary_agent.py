@@ -17,7 +17,6 @@ class SourceSummaryAgent:
     model_key: ClassVar[str] = "summary"
     prompt_name: ClassVar[str] = "source_summary"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the source-summary agent.
 
 Read the source markdown and produce a compact planning summary for downstream structure design.

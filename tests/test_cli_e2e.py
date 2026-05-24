@@ -67,7 +67,7 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
     assert chapter_results
     chapter_payload = json.loads(chapter_results[0].read_text(encoding="utf-8"))
     assert chapter_payload["_schema_version"] == "llm.v1"
-    assert chapter_payload["_prompt_version"].startswith("v")
+    assert "_prompt_version" not in chapter_payload
     assert chapter_payload["_agent"] == "ChapterAgent"
     assert chapter_payload["result"]["owner_task_id"].endswith(":chapter")
 

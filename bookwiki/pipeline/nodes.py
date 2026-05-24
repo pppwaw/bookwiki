@@ -4,7 +4,6 @@ import asyncio
 import json
 import re
 import shutil
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +22,11 @@ from bookwiki.agents import (
     StructureAgent,
     SummaryAgent,
 )
-from bookwiki.agents.prompting import prompt_version_for
 from bookwiki.convert.common import source_id_from_stem
 from bookwiki.convert.mineru_client import convert_document_to_md
 from bookwiki.convert.text_to_md import convert_text_to_md
+from bookwiki.indexer.sqlite_builder import build_sqlite_index
+from bookwiki.integrator.markdown_renderers import normalize_mdx_math
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
@@ -50,7 +50,6 @@ def _agent_result_payload(agent_cls: type[Any], model: str, result: Any) -> dict
     payload = _json_model(result)
     return {
         "_schema_version": payload.get("schema_version", SCHEMA_VERSION),
-        "_prompt_version": prompt_version_for(agent_cls.prompt_template),
         "_agent": agent_cls.__name__,
         "_model": model,
         "result": payload,
@@ -787,8 +786,10 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                     }
                 )
                 + _insert_quiz_blocks(
-                    _normalize_concept_links(
-                        str(chapter["body_md"]), alias_map, concept_stems
+                    normalize_mdx_math(
+                        _normalize_concept_links(
+                            str(chapter["body_md"]), alias_map, concept_stems
+                        )
                     ),
                     quiz,
                 )
@@ -812,12 +813,15 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         write_text(
             concepts_dir / f"{safe_name}.mdx",
             _frontmatter({"title": concept["name"], "type": "concept"})
-            + f"# {concept['name']}\n\n{concept['body_md']}{referenced_by}",
+            + f"# {concept['name']}\n\n"
+            + normalize_mdx_math(str(concept["body_md"]))
+            + referenced_by,
         )
 
     index_path = write_text(
         content_dir / "index.mdx",
-        f"# {cfg.title}\n\n"
+        _frontmatter({"title": cfg.title})
+        + f"# {cfg.title}\n\n"
         + "\n".join(
             f"- [chapters/{Path(path).stem}](./chapters/{Path(path).stem})"
             for path in chapter_outputs
@@ -1002,61 +1006,7 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
 
 def index_node(state: State, cfg: BookConfig) -> State:
     db_path = cfg.site_dir / ".bookwiki" / "bookwiki.sqlite"
-    ensure_dir(db_path.parent)
-    if db_path.exists():
-        db_path.unlink()
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "create table documents "
-            "(id integer primary key, path text unique, title text, body text)"
-        )
-        conn.execute("create table chunks (id integer primary key, document_id integer, body text)")
-        conn.execute(
-            "create table quiz_items "
-            "(id integer primary key, chapter_id text, question text, answer text)"
-        )
-        conn.execute(
-            "create table card_items "
-            "(id integer primary key, chapter_id text, front text, back text)"
-        )
-        try:
-            conn.execute(
-                "create virtual table fts_chunks "
-                "using fts5(body, content='chunks', content_rowid='id')"
-            )
-            has_fts = True
-        except sqlite3.OperationalError:
-            has_fts = False
-
-        for path in sorted(cfg.content_dir.rglob("*.mdx")):
-            body = path.read_text(encoding="utf-8")
-            title = _document_title(body, path.stem)
-            cur = conn.execute(
-                "insert into documents(path, title, body) values (?, ?, ?)",
-                (_rel(path, cfg.content_dir), title, body),
-            )
-            doc_id = int(cur.lastrowid)
-            conn.execute(
-                "insert into chunks(document_id, body) values (?, ?)", (doc_id, body[:2000])
-            )
-
-        for paths in state.get("agent_results", {}).values():
-            quiz = _agent_result(read_json(cfg.book_dir / paths["quiz"]))
-            card = _agent_result(read_json(cfg.book_dir / paths["card"]))
-            for item in quiz.get("items", []):
-                conn.execute(
-                    "insert into quiz_items(chapter_id, question, answer) values (?, ?, ?)",
-                    (quiz["chapter_id"], item["question"], item["answer"]),
-                )
-            for item in card.get("items", []):
-                conn.execute(
-                    "insert into card_items(chapter_id, front, back) values (?, ?, ?)",
-                    (card["chapter_id"], item["front"], item["back"]),
-                )
-        if has_fts:
-            conn.execute("insert into fts_chunks(fts_chunks) values ('rebuild')")
-        conn.commit()
-
+    build_sqlite_index(cfg.content_dir, db_path)
     return {"sqlite": _rel(db_path, cfg.book_dir)}
 
 

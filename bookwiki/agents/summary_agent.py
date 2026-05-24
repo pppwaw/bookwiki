@@ -21,7 +21,6 @@ class SummaryAgent:
     model_key: ClassVar[str] = "summary"
     prompt_name: ClassVar[str] = "summary"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the chapter-summary agent.
 
 Summarize the chapter for fast review.

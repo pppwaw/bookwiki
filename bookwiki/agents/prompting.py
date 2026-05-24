@@ -12,22 +12,19 @@ from pydantic import BaseModel
 class RenderedPrompt:
     system: str
     user: str
-    version: str
     cache_key: str
 
 
 @dataclass(frozen=True)
 class PromptTemplate:
-    version: str
     body: str
 
     @property
     def cache_material(self) -> str:
-        return f"version: {self.version}\n---\n{self.body.strip()}\n"
+        return f"{self.body.strip()}\n"
 
 
 COMMON_SYSTEM_PROMPT: Final = PromptTemplate(
-    version="v1",
     body="""You are a BookWiki structured-output agent. Return valid JSON only.
 
 Non-negotiable rules:
@@ -43,9 +40,8 @@ Non-negotiable rules:
 )
 
 USER_PROMPT_TEMPLATE: Final = PromptTemplate(
-    version="v2",
     body="""Agent: {agent_name}
-Prompt: {prompt_name}@{prompt_version}
+Prompt: {prompt_name}
 Output schema: {output_model}
 
 Target language: {target_language}
@@ -84,13 +80,11 @@ def render_prompt(
     common = COMMON_SYSTEM_PROMPT
     user_template = USER_PROMPT_TEMPLATE
     agent = prompt_template
-    prompt_version = f"{common.version}+{user_template.version}+{agent.version}"
     output_name = output_model.__name__ if output_model is not None else "PydanticModel"
     user = user_template.body.format_map(
         {
             "agent_name": agent_name,
             "prompt_name": prompt_name,
-            "prompt_version": prompt_version,
             "output_model": output_name,
             "target_language": _target_language(inp),
             "agent_instructions": agent.body,
@@ -103,7 +97,6 @@ def render_prompt(
     return RenderedPrompt(
         system=common.body,
         user=user,
-        version=prompt_version,
         cache_key=cache_key,
     )
 
@@ -112,14 +105,6 @@ def prompt_cache_key(prompt_template: PromptTemplate | None) -> str:
     if prompt_template is None:
         return ""
     return _hash_template_set(prompt_template)
-
-
-def prompt_version_for(prompt_template: PromptTemplate) -> str:
-    return (
-        f"{COMMON_SYSTEM_PROMPT.version}+"
-        f"{USER_PROMPT_TEMPLATE.version}+"
-        f"{prompt_template.version}"
-    )
 
 
 def _json(value: Any) -> str:

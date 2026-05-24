@@ -21,7 +21,6 @@ class CardAgent:
     model_key: ClassVar[str] = "card"
     prompt_name: ClassVar[str] = "card"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the flashcard-generation agent.
 
 Create concise recall cards for the chapter.

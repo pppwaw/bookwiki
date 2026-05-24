@@ -14,7 +14,6 @@ class ConceptExtractAgent:
     model_key: ClassVar[str] = "concept"
     prompt_name: ClassVar[str] = "concept_extract"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the concept-extraction agent.
 
 Identify the most important canonical concept in the chapter source.

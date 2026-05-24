@@ -15,13 +15,14 @@ class ConceptAgent:
     model_key: ClassVar[str] = "concept"
     prompt_name: ClassVar[str] = "concept"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the concept-page agent.
 
 Write a concise concept page suitable for a Fumadocs MDX learning site.
 Explain the concept, why it matters, and how it relates to linked chapters.
 Use related only for closely connected concepts that are supported by input.
 Keep citations grounded in available chapter/source context.
+Use Markdown math syntax: $...$ for inline formulas and $$...$$ for display formulas.
+Do not use \\( ... \\) or \\[ ... \\] math delimiters.
 Do not invent cross-links or facts.""",
     )
 

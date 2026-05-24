@@ -21,7 +21,6 @@ class QuizAgent:
     model_key: ClassVar[str] = "quiz"
     prompt_name: ClassVar[str] = "quiz"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        version="v1",
         body="""You are the quiz-generation agent.
 
 Create multiple-choice questions that test understanding, not trivia.
