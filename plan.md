@@ -7,7 +7,7 @@
 
 ## 0. 总览
 
-8 个 milestone,关键路径串行,内容 agent 可并行。**M1 一旦上线,其他成员可以同时替换 mock**;在那之前所有人等同一份。
+9 个 milestone,关键路径串行,内容 agent 可并行。**M1 一旦上线,其他成员可以同时替换 mock**;在那之前所有人等同一份。
 
 ```mermaid
 flowchart LR
@@ -21,9 +21,10 @@ flowchart LR
     M5 --> M6B[M6b indexer + 真数据网站]
     M6P --> M6B
     M6B --> M7[M7 测试 + skill + 收尾]
+    M7 --> M8[M8 网站体验优化]
 ```
 
-**关键路径**: M0 → M1 → M3 → M4 → M5 → M6b → M7,约 14-18 工作日(单人估算)。
+**核心交付关键路径**: M0 → M1 → M3 → M4 → M5 → M6b → M7,约 14-18 工作日(单人估算);M8 为后续网站体验优化。
 **人力假设**: 按 §21 五人分工,但实际操作中 **A 扛核心(M0/M1/M5/M6b/M7),其他四人能交付到 prompt + 样例数据级别**。Plan 中"责任人"按理想分工标注,带 `*` 的实际可能落到 A。
 
 ---
@@ -87,7 +88,7 @@ flowchart LR
 - [x] **`scripts/run.py`**:CLI 参数解析 + `build_graph` + `resume_or_start`,接 §17.4 全部开关
 - [x] **`scripts/{convert,structure,split,generate,check,repair,index}.py`**:每个 4 行(§17.1)
 - [x] **`scripts/init_book.py`**:创建 `books/<id>/` 目录树
-- [x] **`scripts/site.py`**:`subprocess.run(["pnpm", "dev"], cwd=site_dir)` 即可
+- [x] **`scripts/site.py`**:物化 `site-template/` 到 `<book_dir>/site/`,复制 `<book_dir>/content/docs` 到站点本地 `content/docs`,保留 `.bookwiki/bookwiki.sqlite`,再 `pnpm dev`
 - [ ] **mini-book 用 stub 跑通**:`init_book → convert → structure → split → generate → check → index`,产 `bookwiki.sqlite`,site 能起来
   - [x] `init_book → convert → structure → split → generate → check → index`
   - [x] 产 `bookwiki.sqlite`
@@ -262,13 +263,14 @@ flowchart LR
 **目标**: 用手写样例 `content/docs` 验证 Next.js + Fumadocs MDX 渲染、Quiz/Anki 组件、SQLite 搜索接口。
 **责任人**: E\*。
 
-- [ ] `site-template/` 全套(app router、Fumadocs 接入、theme)
-- [ ] 组件:`ConceptLink`、`QuizBlock`、`AnkiDeck`、`SourceRef`、`SearchBox`、`ChatBox`
-- [ ] `lib/sqlite.ts`:better-sqlite3 包装,只读
-- [ ] `lib/mdx.ts`:从 `content/docs` 读 Fumadocs MDX source + 渲染
-- [ ] `lib/rag.ts`:`/api/chat` 接 `models.chat`(gemma-4)
-- [ ] 手写 2 个样例 `chapter.mdx` + 2 个 `concept.mdx` 当 fixture,章节内直接调用 `<QuizBlock />` 和 `<AnkiDeck />`
-- [ ] 用 fixture 跑 `pnpm dev`,所有功能在浏览器里点一遍
+- [x] `site-template/` 全套(app router、Fumadocs 官方模板接入、theme)
+- [x] 组件:`ConceptLink`、`QuizBlock`、`AnkiDeck`、`SourceRef`、`SearchBox`、`ChatBox`
+- [x] `lib/sqlite.ts`:better-sqlite3 包装,只读
+- [x] `lib/source.ts`:官方 Fumadocs loader 从站点本地 `content/docs` 读 MDX source + 渲染
+- [x] `lib/rag.ts`:`/api/chat` 接 `models.chat`(gemma-4),官方 `Ask AI` 面板改接 BookWiki RAG
+- [x] 手写 2 个样例 `chapter.mdx` + 2 个 `concept.mdx` 当 fixture,章节内直接调用 `<QuizBlock />` 和 `<AnkiDeck />`
+- [x] Fumadocs MDX 接入 LaTeX math 渲染(`remark-math` + `rehype-katex` + KaTeX CSS),`books/mini/site` 的 `chapter-6.mdx` 已通过 typecheck
+- [x] 用 fixture 跑 `pnpm dev`,所有功能在浏览器里点一遍(Chrome DevTools 已验证官方模板 `/docs`、章节、Quiz、Anki、Search、官方 Ask AI 面板;Chat 无 key 时按预期失败)
 
 ### M6b · indexer + 真数据接通(2 - 3 天)
 
@@ -276,16 +278,16 @@ flowchart LR
 **责任人**: E\*,A 协助 schema。
 **依赖**: M5 产出 `content/docs/` + M6a 网站骨架。
 
-- [ ] **`bookwiki/indexer/mdx_parser.py`**:解析 `content/docs` MDX 的 frontmatter、标题、正文文本和组件 props
-- [ ] **`bookwiki/indexer/rag_chunker.py`**:按 heading 切 chunks,记 source_refs
-- [ ] **`bookwiki/indexer/sqlite_builder.py`**:
-  - 按 §14 schema 全量建表
-  - chunks 用显式 `rowid INTEGER PRIMARY KEY AUTOINCREMENT`
-  - 灌完 chunks 跑 `INSERT INTO fts_chunks(fts_chunks) VALUES('rebuild')`
-  - 写到 `.tmp` → `os.replace` 原子换
-- [ ] **`index_node` 实现**:替换 M1 stub
-- [ ] 网站搜索/Quiz/Anki 从 mini-book 真数据走通
-- [ ] `/api/chat` 用 gemma-4 真回答 mini-book 问题,显示 source_refs
+- [x] **`bookwiki/indexer/mdx_parser.py`**:解析 `content/docs` MDX 的 frontmatter、标题、正文文本和组件 props
+- [x] **`bookwiki/indexer/rag_chunker.py`**:按 heading 切 chunks,记 source_refs
+- [x] **`bookwiki/indexer/sqlite_builder.py`**:
+  - [x] 按 §14 schema 全量建表
+  - [x] chunks 用显式 `rowid INTEGER PRIMARY KEY AUTOINCREMENT`
+  - [x] 灌完 chunks 跑 `INSERT INTO fts_chunks(fts_chunks) VALUES('rebuild')`
+  - [x] 写到 `.tmp` → `os.replace` 原子换
+- [x] **`index_node` 实现**:替换 M1 stub
+- [x] 网站搜索/Quiz/Anki 从 mini-book 真数据走通
+- [ ] `/api/chat` 用 gemma-4 真回答 mini-book 问题,显示 source_refs(代码已接入;需要配置服务端 `BOOKWIKI_CHAT_API_KEY` 实测)
 
 ### 产物
 - `site/.bookwiki/bookwiki.sqlite` 真数据
@@ -326,6 +328,27 @@ flowchart LR
 ### 验收
 - `pytest` 全绿
 - AI agent 按 skill 完成 mini-book 跑通
+
+---
+
+## M8 · 网站体验优化(2 - 3 天)
+
+**目标**: 在真数据网站可用的基础上,打磨信息架构、学习组件交互和章节摘要展示。
+**责任人**: A/E\*。
+**依赖**: M6b 真数据网站可用。
+
+### 任务
+
+- [ ] 将章节正文和 concepts 拆成两个 Fumadocs page tree / sidebar tabs(例如 `content/docs/chapters` 与 `content/docs/concepts` 各自作为 root folder),让主内容和概念库在侧边栏里独立切换
+- [ ] 优化 `QuizBlock` 组件:提交/重置状态、正确/错误反馈、题目进度、解释与 citation/source_ref 展示、移动端布局和键盘可访问性
+- [ ] 优化 `AnkiDeck` 组件:翻卡动效、上一张/下一张、进度、重置、citation/source_ref 展示、移动端布局和键盘可访问性
+- [ ] 增加 `Summary` 展示组件/区块:章节页顶部展示 `summary_md` 摘要,样例 MDX 覆盖 summary 渲染
+- [ ] 将真实 `summary_md` 接到最终网站:integrator 输出可见 summary 区块,indexer 将 summary 纳入 pages/chunks,搜索结果能命中章节摘要
+
+### 验收
+- 章节和 concepts 在 Fumadocs sidebar tabs / page tree 中可独立切换
+- mini-book 章节页顶部能看到 summary,搜索 summary 关键词能命中对应章节
+- Quiz/Anki 在桌面和移动端可完成完整交互,并展示 citation/source_ref
 
 ---
 
@@ -375,10 +398,12 @@ flowchart LR
 | M3 | 2 - 3     | 7   | ✓ |
 | M4 | 3 - 4     | 11  | ✓ |
 | M5 | 3 - 4     | 15  | ✓ |
-| M6a | 2        | 13(并行) |  |
+| M6a | 2        | 13(并行) | ✓ |
 | M6b | 2 - 3    | 18  | ✓ |
 | M7 | 2 - 3     | 21  | ✓ |
+| M8 | 2 - 3     | 24  |  |
 
 **单人关键路径**: ~18 - 21 工作日。
+**M8 网站体验优化另计**: +2 - 3 工作日。
 **理想 5 人并行**: ~13 - 15 工作日。
 **现实(A 扛大头 + 偶尔协助)**: ~16 - 19 工作日。
