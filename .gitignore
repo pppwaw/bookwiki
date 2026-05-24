@@ -217,6 +217,11 @@ books/
 work/
 site-template/node_modules/
 site-template/.next/
+site-template/.source/
+site-template/.bookwiki/
+site-template/tsconfig.tsbuildinfo
+!site-template/lib/
+!site-template/lib/**
 
 # PyPI configuration file
 .pypirc

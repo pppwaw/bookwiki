@@ -10,3 +10,183 @@ html > body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
 }
+
+.source-ref {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--color-fd-primary) 35%, transparent);
+  background: color-mix(in oklab, var(--color-fd-primary) 8%, transparent);
+  padding: 0.05rem 0.45rem;
+  font-size: 0.78em;
+  font-weight: 600;
+  color: var(--color-fd-primary);
+}
+
+.quiz-block,
+.anki-deck,
+.tool-panel {
+  margin: 1.25rem 0;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.75rem;
+  background: var(--color-fd-card);
+  color: var(--color-fd-card-foreground);
+  padding: 1rem;
+}
+
+.quiz-item + .quiz-item {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-fd-border);
+}
+
+.quiz-title {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.quiz-title > span {
+  display: inline-flex;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--color-fd-secondary);
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8rem;
+}
+
+.quiz-title h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.quiz-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.quiz-option,
+.quiz-check,
+.anki-toolbar button,
+.chat-form button {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-fd-border);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.quiz-option.selected {
+  border-color: var(--color-fd-primary);
+  color: var(--color-fd-primary);
+}
+
+.quiz-check {
+  margin-top: 0.75rem;
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+}
+
+.quiz-check:disabled,
+.anki-toolbar button:disabled,
+.chat-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.quiz-feedback {
+  margin-top: 0.75rem;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.quiz-feedback.correct {
+  background: color-mix(in oklab, #16a34a 12%, transparent);
+}
+
+.quiz-feedback.wrong {
+  background: color-mix(in oklab, #dc2626 12%, transparent);
+}
+
+.anki-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.anki-toolbar div {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.anki-card {
+  min-height: 7rem;
+  width: 100%;
+  border-radius: 0.65rem;
+  border: 1px solid var(--color-fd-border);
+  background: var(--color-fd-secondary);
+  padding: 1rem;
+  text-align: start;
+  font-size: 1rem;
+}
+
+.chat-form {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.chat-form textarea {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-fd-border);
+  background: var(--color-fd-background);
+  padding: 0.6rem 0.75rem;
+  color: inherit;
+}
+
+.chat-form textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.chat-form button {
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+}
+
+.chat-answer {
+  display: block;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-fd-border);
+  padding: 0.8rem;
+  text-decoration: none;
+}
+
+.chat-answer p,
+.tool-error {
+  margin: 0.4rem 0 0;
+}
+
+.tool-error {
+  color: var(--color-fd-error);
+}
+
+@media (max-width: 640px) {
+  .chat-form {
+    flex-direction: column;
+  }
+}

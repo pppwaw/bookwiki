@@ -1,114 +1,47 @@
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { convertToModelMessages, stepCountIs, streamText, tool, type UIMessage } from 'ai';
-import { z } from 'zod';
-import { source } from '@/lib/source';
-import { Document, type DocumentData } from 'flexsearch';
+import { answerWithChatModel } from '@/lib/llm';
+import { searchChunks } from '@/lib/rag';
 
-interface CustomDocument extends DocumentData {
-  url: string;
-  title: string;
-  description: string;
-  content: string;
-}
+export const runtime = 'nodejs';
 
-export type ChatUIMessage = UIMessage<
-  never,
-  {
-    client: {
-      location: string;
-    };
+export async function POST(request: Request) {
+  const body = (await request.json()) as {
+    question?: unknown;
+    chapterId?: unknown;
+  };
+  const question = typeof body.question === 'string' ? body.question.trim() : '';
+  const chapterId = typeof body.chapterId === 'string' ? body.chapterId : undefined;
+
+  if (!question) {
+    return Response.json({ error: 'question is required' }, { status: 400 });
   }
->;
 
-const searchServer = createSearchServer();
-
-async function createSearchServer() {
-  const search = new Document<CustomDocument>({
-    document: {
-      id: 'url',
-      index: ['title', 'description', 'content'],
-      store: true,
-    },
-  });
-
-  const docs = await chunkedAll(
-    source.getPages().map(async (page) => {
-      if (!('getText' in page.data)) return null;
-
-      return {
-        title: page.data.title,
-        description: page.data.description,
-        url: page.url,
-        content: await page.data.getText('processed'),
-      } as CustomDocument;
-    }),
+  const chunks = searchChunks(question, 6, chapterId);
+  const sources = chunks.flatMap((chunk) =>
+    chunk.sourceRefs.map((refId) => ({
+      ref_id: refId,
+      page: chunk.slug,
+      heading: chunk.headingPath,
+    })),
   );
 
-  for (const doc of docs) {
-    if (doc) search.add(doc);
+  if (chunks.length === 0) {
+    return Response.json({
+      answer: 'No matching BookWiki chunks were found for this question.',
+      sources,
+    });
   }
 
-  return search;
-}
-
-async function chunkedAll<O>(promises: Promise<O>[]): Promise<O[]> {
-  const SIZE = 50;
-  const out: O[] = [];
-  for (let i = 0; i < promises.length; i += SIZE) {
-    out.push(...(await Promise.all(promises.slice(i, i + SIZE))));
+  try {
+    const model = process.env.BOOKWIKI_CHAT_MODEL ?? 'gemma-4';
+    const answer = await answerWithChatModel({ question, chunks, model });
+    return Response.json({ answer, sources });
+  } catch (error) {
+    return Response.json(
+      {
+        error: error instanceof Error ? error.message : 'chat request failed',
+        sources,
+      },
+      { status: 503 },
+    );
   }
-  return out;
 }
-
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
-
-/** System prompt, you can update it to provide more specific information */
-const systemPrompt = [
-  'You are an AI assistant for a documentation site.',
-  'Use the `search` tool to retrieve relevant docs context before answering when needed.',
-  'The `search` tool returns raw JSON results from documentation. Use those results to ground your answer and cite sources as markdown links using the document `url` field when available.',
-  'If you cannot find the answer in search results, say you do not know and suggest a better search query.',
-].join('\n');
-
-export async function POST(req: Request, ctx: RouteContext<"/api/chat">) {
-  const reqJson = await req.json();
-
-  const result = streamText({
-    model: openrouter.chat(process.env.OPENROUTER_MODEL ?? 'anthropic/claude-3.5-sonnet'),
-    stopWhen: stepCountIs(5),
-    tools: {
-      search: searchTool,
-    },
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...(await convertToModelMessages<ChatUIMessage>(reqJson.messages ?? [], {
-        convertDataPart(part) {
-          if (part.type === 'data-client')
-            return {
-              type: 'text',
-              text: `[Client Context: ${JSON.stringify(part.data)}]`,
-            };
-        },
-      })),
-    ],
-    toolChoice: 'auto',
-  });
-
-  return result.toUIMessageStreamResponse();
-}
-
-export type SearchTool = typeof searchTool;
-
-const searchTool = tool({
-  description: 'Search the docs content and return raw JSON results.',
-  inputSchema: z.object({
-    query: z.string(),
-    limit: z.number().int().min(1).max(100).default(10),
-  }),
-  async execute({ query, limit }) {
-    const search = await searchServer;
-    return await search.searchAsync(query, { limit, merge: true, enrich: true });
-  },
-});

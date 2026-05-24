@@ -1,0 +1,22 @@
+---
+title: Search Basics
+description: A small chapter fixture for BookWiki search and learning components.
+type: chapter
+chapter_id: ch01
+order_index: 1
+concepts:
+  - Frontier
+  - Admissible Heuristic
+---
+
+# Search Basics
+
+Graph search keeps a <ConceptLink slug="frontier">frontier</ConceptLink> of generated nodes that are waiting to be expanded. The exact data structure depends on the search strategy. <SourceRef id="demo-textbook-p001" quote="The frontier stores generated but unexpanded nodes." />
+
+## Practice
+
+<QuizBlock items={[{"id":"q1","question":"What does the frontier store?","choices":["Expanded nodes only","Generated nodes waiting for expansion","The final path cost"],"answer":"Generated nodes waiting for expansion","explanation":"The frontier contains generated nodes that have not been expanded yet.","citations":[{"ref_id":"demo-textbook-p001"}]},{"id":"q2","question":"Which part changes across search strategies?","choices":["The source parser","The frontier ordering rule","The MDX renderer"],"answer":"The frontier ordering rule","explanation":"Breadth-first, depth-first, and heuristic search differ mainly in how they order the frontier.","citations":[{"ref_id":"demo-lecture-slide02"}]}]} />
+
+## Cards
+
+<AnkiDeck cards={[{"id":"c1","front":"Frontier","back":"Generated but unexpanded nodes waiting for selection.","citations":[{"ref_id":"demo-textbook-p001"}]},{"id":"c2","front":"Search strategy","back":"A rule for choosing the next node from the frontier.","citations":[{"ref_id":"demo-lecture-slide02"}]}]} />

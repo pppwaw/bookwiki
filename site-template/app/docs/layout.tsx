@@ -24,8 +24,6 @@ export default function Layout({ children }: LayoutProps<'/docs'>) {
           Ask AI
         </AISearchTrigger>
       </AISearch>
-
-
       {children}
     </DocsLayout>
   );

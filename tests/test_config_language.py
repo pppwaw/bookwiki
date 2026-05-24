@@ -40,6 +40,20 @@ def test_site_main_sets_site_language_from_book_config(
 ) -> None:
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text(
+        "---\ntitle: Mini\n---\n\n# Mini Book\n",
+        encoding="utf-8",
+    )
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    sqlite_dir = book_dir / "site" / ".bookwiki"
+    sqlite_dir.mkdir(parents=True)
+    sqlite_path = sqlite_dir / "bookwiki.sqlite"
+    sqlite_path.write_bytes(b"sqlite fixture")
+    next_cache = book_dir / "site" / ".next" / "dev" / "logs"
+    next_cache.mkdir(parents=True)
+    (next_cache / "next-development.log").write_text("cache", encoding="utf-8")
     (book_dir / "book.config.json").write_text(
         json.dumps({"book_id": "mini", "title": "Mini", "language": "en-US"}),
         encoding="utf-8",
@@ -55,4 +69,40 @@ def test_site_main_sets_site_language_from_book_config(
     site.main()
 
     assert calls
-    assert calls[0]["env"]["BOOKWIKI_SITE_LANGUAGE"] == "en-US"
+    assert calls[0]["cmd"] == ["pnpm", "install"]
+    assert calls[-1]["cmd"] == ["pnpm", "dev"]
+    assert calls[-1]["cwd"] == book_dir / "site"
+    assert calls[-1]["env"]["BOOKWIKI_SITE_LANGUAGE"] == "en-US"
+    assert "BOOKWIKI_CONTENT_DIR" not in calls[-1]["env"]
+    assert "BOOKWIKI_SQLITE_PATH" not in calls[-1]["env"]
+    assert "BOOKWIKI_BOOK_DIR" not in calls[-1]["env"]
+    assert (book_dir / "site" / "package.json").exists()
+    assert (book_dir / "site" / "content" / "docs" / "index.mdx").read_text(
+        encoding="utf-8"
+    ).endswith("# Mini Book\n")
+    assert sqlite_path.read_bytes() == b"sqlite fixture"
+    assert (next_cache / "next-development.log").read_text(encoding="utf-8") == "cache"
+
+
+def test_site_main_fails_loudly_when_content_docs_is_missing(
+    tmp_path, monkeypatch
+) -> None:
+    book_dir = tmp_path / "mini"
+    book_dir.mkdir()
+    (book_dir / "book.config.json").write_text(
+        json.dumps({"book_id": "mini", "title": "Mini"}),
+        encoding="utf-8",
+    )
+    alternate = site.ROOT / "books" / "mini"
+    monkeypatch.setattr(sys, "argv", ["site.py", str(book_dir)])
+
+    try:
+        site.main()
+    except FileNotFoundError as exc:
+        message = str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("site.main should fail when content/docs is missing")
+
+    assert "content" in message
+    if (alternate / "content" / "docs").exists():
+        assert "Did you mean" in message

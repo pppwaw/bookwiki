@@ -1,0 +1,22 @@
+---
+title: Heuristics
+description: A second chapter fixture with source references and study blocks.
+type: chapter
+chapter_id: ch02
+order_index: 2
+concepts:
+  - Admissible Heuristic
+  - Frontier
+---
+
+# Heuristics
+
+A heuristic estimates remaining cost from a state to a goal. An <ConceptLink slug="admissible-heuristic">admissible heuristic</ConceptLink> never overestimates that remaining cost. <SourceRef id="demo-textbook-p010" quote="An admissible heuristic is optimistic." />
+
+## A Star
+
+A star search orders the <ConceptLink slug="frontier">frontier</ConceptLink> by combining path cost so far with estimated remaining cost. <SourceRef id="demo-lecture-slide05" quote="A star uses g plus h to rank candidates." />
+
+<QuizBlock items={[{"id":"q1","question":"What does an admissible heuristic avoid?","choices":["Overestimating remaining cost","Using path cost","Ranking frontier nodes"],"answer":"Overestimating remaining cost","explanation":"Admissibility means the estimate is never above the true remaining cost.","citations":[{"ref_id":"demo-textbook-p010"}]}]} />
+
+<AnkiDeck cards={[{"id":"c1","front":"Admissible heuristic","back":"A heuristic that never overestimates the remaining cost.","citations":[{"ref_id":"demo-textbook-p010"}]},{"id":"c2","front":"A star ranking","back":"Orders candidates using path cost so far plus estimated remaining cost.","citations":[{"ref_id":"demo-lecture-slide05"}]}]} />
