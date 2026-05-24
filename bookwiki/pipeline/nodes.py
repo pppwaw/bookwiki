@@ -823,7 +823,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         _frontmatter({"title": cfg.title})
         + f"# {cfg.title}\n\n"
         + "\n".join(
-            f"- [chapters/{Path(path).stem}](./chapters/{Path(path).stem})"
+            f"- [chapters/{Path(path).stem}](/docs/chapters/{Path(path).stem})"
             for path in chapter_outputs
         )
         + "\n",
