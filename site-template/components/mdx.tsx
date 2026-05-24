@@ -1,18 +1,15 @@
-import defaultMdxComponents from "fumadocs-ui/mdx";
-import { AnkiDeck } from "./AnkiDeck";
-import { QuizBlock } from "./QuizBlock";
-import { SourceRef } from "./SourceRef";
+import defaultMdxComponents from 'fumadocs-ui/mdx';
+import type { MDXComponents } from 'mdx/types';
 
-type Components = Record<string, unknown>;
-
-export function getMDXComponents(components?: Components) {
+export function getMDXComponents(components?: MDXComponents) {
   return {
     ...defaultMdxComponents,
-    QuizBlock,
-    AnkiDeck,
-    SourceRef,
     ...components,
-  };
+  } satisfies MDXComponents;
 }
 
 export const useMDXComponents = getMDXComponents;
+
+declare global {
+  type MDXProvidedComponents = ReturnType<typeof getMDXComponents>;
+}
