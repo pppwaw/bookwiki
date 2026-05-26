@@ -10,6 +10,57 @@ export const source = loader({
   plugins: [lucideIconsPlugin()],
 });
 
+type SourcePage = (typeof source)['$inferPage'];
+
+export function getSourcePage(slug: string[] | undefined): SourcePage | undefined {
+  const direct = source.getPage(slug);
+  if (direct) return direct;
+
+  const requested = slug ?? [];
+  const decoded = requested.map(safeDecodeURIComponent);
+  const decodedPage = source.getPage(decoded);
+  if (decodedPage) return decodedPage;
+
+  return source.getPages().find((page) => {
+    if (page.slugs.length !== decoded.length) return false;
+
+    return page.slugs.every((segment, index) =>
+      slugSegmentMatches(segment, requested[index], decoded[index]),
+    );
+  });
+}
+
+function slugSegmentMatches(segment: string, raw: string, decoded: string): boolean {
+  const decodedSegment = safeDecodeURIComponent(segment);
+
+  return (
+    segment === raw ||
+    segment === decoded ||
+    decodedSegment === raw ||
+    decodedSegment === decoded ||
+    encodeURIComponent(segment) === raw ||
+    encodeURIComponent(decodedSegment) === raw ||
+    encodeUtf8AsGbk(decodedSegment) === raw ||
+    encodeUtf8AsGbk(decodedSegment) === decoded
+  );
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function encodeUtf8AsGbk(value: string): string {
+  try {
+    return new TextDecoder('gbk').decode(new TextEncoder().encode(value));
+  } catch {
+    return value;
+  }
+}
+
 export function getPageImage(page: (typeof source)['$inferPage']) {
   const segments = [...page.slugs, 'image.png'];
 

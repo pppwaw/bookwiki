@@ -40,6 +40,10 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "collections/server" in source
     assert "loader" in source
     assert "baseUrl: docsRoute" in source
+    assert "getSourcePage" in source
+    assert "TextDecoder('gbk')" in source
+    assert "safeDecodeURIComponent(segment)" in source
+    assert "encodeUtf8AsGbk(decodedSegment)" in source
     assert "docsRoute = '/docs'" in shared
     assert "DocsLayout" in docs_layout
     assert "source.getPageTree()" in docs_layout
@@ -47,7 +51,7 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "AISearchPanel" in docs_layout
     assert "AISearchTrigger" in docs_layout
     assert "generateStaticParams" in docs_page
-    assert "source.getPage" in docs_page
+    assert "getSourcePage(params.slug)" in docs_page
     assert "DocsPage" in docs_page
     assert "notFound()" in docs_page
 

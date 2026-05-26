@@ -249,9 +249,10 @@ def _quiz_item_mdx(item: dict[str, Any], index: int) -> str:
     )
 
 
-def _quiz_items_mdx(items: list[dict[str, Any]]) -> str:
+def _quiz_items_mdx(items: list[dict[str, Any]], item_indexes: list[int] | None = None) -> str:
     rendered: list[str] = []
-    for index, item in enumerate(items, start=1):
+    indexes = item_indexes if item_indexes is not None else list(range(1, len(items) + 1))
+    for item, index in zip(items, indexes, strict=False):
         rendered.append(_quiz_item_mdx(item, index))
     return "\n\n".join(rendered)
 
@@ -285,8 +286,13 @@ def _frontmatter(data: dict[str, Any]) -> str:
     return f"---\n{body}\n---\n\n"
 
 
-def _quiz_block_mdx(title: str, items: list[dict[str, Any]]) -> str:
-    return f"## {title or 'Quiz'}\n\n<QuizBlock>\n{_quiz_items_mdx(items)}\n</QuizBlock>"
+def _quiz_block_mdx(
+    title: str, items: list[dict[str, Any]], item_indexes: list[int] | None = None
+) -> str:
+    return (
+        f"## {title or 'Quiz'}\n\n<QuizBlock>\n"
+        f"{_quiz_items_mdx(items, item_indexes)}\n</QuizBlock>"
+    )
 
 
 def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
@@ -317,15 +323,18 @@ def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
         selected = [items[index - 1] for index in indexes]
         after = min(max(int(placement["after_block"]), 0), max(len(blocks) - 1, 0))
         chunks_by_after.setdefault(after, []).append(
-            _quiz_block_mdx(str(placement.get("title") or "Quiz"), selected)
+            _quiz_block_mdx(str(placement.get("title") or "Quiz"), selected, indexes)
         )
 
-    unassigned = [
-        items[index - 1] for index in range(1, len(items) + 1) if index not in used_indexes
+    unassigned_indexes = [
+        index for index in range(1, len(items) + 1) if index not in used_indexes
     ]
+    unassigned = [items[index - 1] for index in unassigned_indexes]
     if unassigned:
         after = max(chunks_by_after, default=max(0, (len(blocks) - 1) // 2))
-        chunks_by_after.setdefault(after, []).append(_quiz_block_mdx("Quiz", unassigned))
+        chunks_by_after.setdefault(after, []).append(
+            _quiz_block_mdx("Quiz", unassigned, unassigned_indexes)
+        )
 
     merged: list[str] = []
     for index, block in enumerate(blocks):

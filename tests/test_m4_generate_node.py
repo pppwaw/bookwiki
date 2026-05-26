@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -247,6 +248,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "## Concepts" not in body
     assert "<QuizBlock" in chapter_text
     assert "<QuizItem id=" in chapter_text
+    quiz_item_ids = re.findall(r"<QuizItem id=\{\"([^\"]+)\"\}", chapter_text)
+    assert quiz_item_ids == ["quiz-001", "quiz-002"]
     assert "<QuizQuestion>" in chapter_text
     assert "<QuizChoices>" in chapter_text
     assert "<QuizChoice id=" in chapter_text
