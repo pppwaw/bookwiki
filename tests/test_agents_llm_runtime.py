@@ -3,13 +3,11 @@ from __future__ import annotations
 import pytest
 
 from bookwiki.agents import (
-    CardAgent,
-    ChapterAgent,
     ChapterSplitAgent,
     ConceptAgent,
     ConceptExtractAgent,
     ConceptReconcileAgent,
-    QuizAgent,
+    LessonAgent,
     ReviewAgent,
     SourceSummaryAgent,
     StructureAgent,
@@ -59,11 +57,40 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
             },
             {
                 "chapter_id": "chapter-6",
-                "title": "Point Estimation",
-                "body_md": "# Point Estimation\n\nGenerated chapter.",
-                "concepts": ["point estimation"],
-                "citations": [{"ref_id": "Week-10-p001", "quote": "method of moments"}],
-                "owner_task_id": "chapter-6:chapter",
+                "chapter": {
+                    "chapter_id": "chapter-6",
+                    "title": "Point Estimation",
+                    "body_md": "# Point Estimation\n\nGenerated chapter.",
+                    "concepts": ["point estimation"],
+                    "citations": [{"ref_id": "Week-10-p001", "quote": "method of moments"}],
+                    "owner_task_id": "chapter-6:chapter",
+                },
+                "quiz": {
+                    "chapter_id": "chapter-6",
+                    "items": [
+                        {
+                            "question": "What is estimated?",
+                            "choices": ["parameter", "path"],
+                            "answer": "parameter",
+                            "explanation": "Point estimation estimates parameters.",
+                            "citations": [{"ref_id": "Week-10-p001", "quote": "unknown parameters"}],
+                        }
+                    ],
+                    "placements": [{"after_block": 0, "item_indexes": [1], "title": "Quiz"}],
+                    "owner_task_id": "chapter-6:quiz",
+                },
+                "card": {
+                    "chapter_id": "chapter-6",
+                    "items": [
+                        {
+                            "front": "Point estimation",
+                            "back": "Estimate unknown parameters.",
+                            "citations": [{"ref_id": "Week-10-p001", "quote": "unknown parameters"}],
+                        }
+                    ],
+                    "owner_task_id": "chapter-6:card",
+                },
+                "owner_task_id": "chapter-6:lesson",
             },
             {
                 "chapter_id": "chapter-6",
@@ -71,30 +98,6 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
                 "key_points": ["Point estimation"],
                 "citations": [{"ref_id": "Week-10-p001", "quote": "method of moments"}],
                 "owner_task_id": "chapter-6:summary",
-            },
-            {
-                "chapter_id": "chapter-6",
-                "items": [
-                    {
-                        "question": "What is estimated?",
-                        "choices": ["parameter", "path"],
-                        "answer": "parameter",
-                        "explanation": "Point estimation estimates parameters.",
-                        "citations": [{"ref_id": "Week-10-p001", "quote": "unknown parameters"}],
-                    }
-                ],
-                "owner_task_id": "chapter-6:quiz",
-            },
-            {
-                "chapter_id": "chapter-6",
-                "items": [
-                    {
-                        "front": "Point estimation",
-                        "back": "Estimate unknown parameters.",
-                        "citations": [{"ref_id": "Week-10-p001", "quote": "unknown parameters"}],
-                    }
-                ],
-                "owner_task_id": "chapter-6:card",
             },
             {
                 "concepts": [
@@ -144,10 +147,8 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         model="deepseek-v4-flash",
         runtime=runtime,
     )
-    await ChapterAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
+    await LessonAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
     await SummaryAgent().run(chapter_payload, model="deepseek-v4-flash", runtime=runtime)
-    await QuizAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
-    await CardAgent().run(chapter_payload, model="deepseek-v4-flash", runtime=runtime)
     await ConceptExtractAgent().run(chapter_payload, model="deepseek-v4-flash", runtime=runtime)
     await ConceptReconcileAgent().run(
         [{"name": "point estimation", "source_chapter_id": "chapter-6"}],
@@ -165,12 +166,12 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         runtime=runtime,
     )
 
-    assert len(runtime.calls) == 10
+    assert len(runtime.calls) == 8
     assert all("Return valid JSON" in call["system"] for call in runtime.calls)
 
 
 @pytest.mark.asyncio
-async def test_quiz_and_card_agents_seed_requested_counts_from_config() -> None:
+async def test_lesson_agent_seeds_requested_counts_from_config() -> None:
     payload = {
         "chapter_id": "chapter-1",
         "title": "Search",
@@ -181,11 +182,10 @@ async def test_quiz_and_card_agents_seed_requested_counts_from_config() -> None:
         "cards_per_chapter": 4,
     }
 
-    quiz = await QuizAgent().run(payload, model="deepseek-v4-pro", runtime=TestLLMRuntime())
-    cards = await CardAgent().run(payload, model="deepseek-v4-flash", runtime=TestLLMRuntime())
+    lesson = await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=TestLLMRuntime())
 
-    assert len(quiz.items) == 3
-    assert len(cards.items) == 4
+    assert len(lesson.quiz.items) == 3
+    assert len(lesson.card.items) == 4
 
 
 @pytest.mark.asyncio
@@ -201,16 +201,31 @@ async def test_content_agents_pass_allowed_refs_in_validation_context() -> None:
         [
             {
                 "chapter_id": "chapter-1",
-                "title": "Search",
-                "body_md": "# Search\n\nBody.",
-                "concepts": ["state space"],
-                "citations": [{"ref_id": "source-p001", "quote": "State"}],
-                "owner_task_id": "chapter-1:chapter",
+                "chapter": {
+                    "chapter_id": "chapter-1",
+                    "title": "Search",
+                    "body_md": "# Search\n\nBody.",
+                    "concepts": ["state space"],
+                    "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                    "owner_task_id": "chapter-1:chapter",
+                },
+                "quiz": {
+                    "chapter_id": "chapter-1",
+                    "items": [],
+                    "placements": [],
+                    "owner_task_id": "chapter-1:quiz",
+                },
+                "card": {
+                    "chapter_id": "chapter-1",
+                    "items": [],
+                    "owner_task_id": "chapter-1:card",
+                },
+                "owner_task_id": "chapter-1:lesson",
             }
         ]
     )
 
-    await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+    await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
     assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"source-p001"}}
     assert runtime.calls[0]["max_retries"] == 2
@@ -269,7 +284,7 @@ async def test_concept_agent_allows_all_context_source_refs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chapter_agent_wraps_source_as_document_chunks() -> None:
+async def test_lesson_agent_wraps_source_as_document_chunks() -> None:
     payload = {
         "chapter_id": "chapter-1",
         "title": "Search",
@@ -287,16 +302,31 @@ async def test_chapter_agent_wraps_source_as_document_chunks() -> None:
         [
             {
                 "chapter_id": "chapter-1",
-                "title": "Search",
-                "body_md": "# Search\n\nBody.",
-                "concepts": ["state space"],
-                "citations": [{"ref_id": "source-p001", "quote": "State"}],
-                "owner_task_id": "chapter-1:chapter",
+                "chapter": {
+                    "chapter_id": "chapter-1",
+                    "title": "Search",
+                    "body_md": "# Search\n\nBody.",
+                    "concepts": ["state space"],
+                    "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                    "owner_task_id": "chapter-1:chapter",
+                },
+                "quiz": {
+                    "chapter_id": "chapter-1",
+                    "items": [],
+                    "placements": [],
+                    "owner_task_id": "chapter-1:quiz",
+                },
+                "card": {
+                    "chapter_id": "chapter-1",
+                    "items": [],
+                    "owner_task_id": "chapter-1:card",
+                },
+                "owner_task_id": "chapter-1:lesson",
             }
         ]
     )
 
-    await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+    await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
     user_prompt = runtime.calls[0]["user"]
     assert "<document>" in user_prompt
@@ -318,26 +348,56 @@ async def test_agent_retries_when_llm_invents_citation_ref_id() -> None:
         [
             {
                 "chapter_id": "chapter-1",
-                "title": "Search",
-                "body_md": "# Search\n\nBody.",
-                "concepts": ["state space"],
-                "citations": [{"ref_id": "invented-p999", "quote": "State"}],
-                "owner_task_id": "chapter-1:chapter",
+                "chapter": {
+                    "chapter_id": "chapter-1",
+                    "title": "Search",
+                    "body_md": "# Search\n\nBody.",
+                    "concepts": ["state space"],
+                    "citations": [{"ref_id": "invented-p999", "quote": "State"}],
+                    "owner_task_id": "chapter-1:chapter",
+                },
+                "quiz": {
+                    "chapter_id": "chapter-1",
+                    "items": [],
+                    "placements": [],
+                    "owner_task_id": "chapter-1:quiz",
+                },
+                "card": {
+                    "chapter_id": "chapter-1",
+                    "items": [],
+                    "owner_task_id": "chapter-1:card",
+                },
+                "owner_task_id": "chapter-1:lesson",
             },
             {
                 "chapter_id": "chapter-1",
-                "title": "Search",
-                "body_md": "# Search\n\nBody.",
-                "concepts": ["state space"],
-                "citations": [{"ref_id": "source-p001", "quote": "State"}],
-                "owner_task_id": "chapter-1:chapter",
+                "chapter": {
+                    "chapter_id": "chapter-1",
+                    "title": "Search",
+                    "body_md": "# Search\n\nBody.",
+                    "concepts": ["state space"],
+                    "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                    "owner_task_id": "chapter-1:chapter",
+                },
+                "quiz": {
+                    "chapter_id": "chapter-1",
+                    "items": [],
+                    "placements": [],
+                    "owner_task_id": "chapter-1:quiz",
+                },
+                "card": {
+                    "chapter_id": "chapter-1",
+                    "items": [],
+                    "owner_task_id": "chapter-1:card",
+                },
+                "owner_task_id": "chapter-1:lesson",
             },
         ]
     )
 
-    result = await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+    result = await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
-    assert result.citations[0].ref_id == "source-p001"
+    assert result.chapter.citations[0].ref_id == "source-p001"
     assert len(runtime.calls) == 2
     assert all(
         call["context"] == {"allowed_citation_refs": {"source-p001"}}
@@ -356,15 +416,30 @@ async def test_agent_raises_after_repeated_invalid_citation_ref_ids() -> None:
     }
     bad_response = {
         "chapter_id": "chapter-1",
-        "title": "Search",
-        "body_md": "# Search\n\nBody.",
-        "concepts": ["state space"],
-        "citations": [{"ref_id": "invented-p999", "quote": "State"}],
-        "owner_task_id": "chapter-1:chapter",
+        "chapter": {
+            "chapter_id": "chapter-1",
+            "title": "Search",
+            "body_md": "# Search\n\nBody.",
+            "concepts": ["state space"],
+            "citations": [{"ref_id": "invented-p999", "quote": "State"}],
+            "owner_task_id": "chapter-1:chapter",
+        },
+        "quiz": {
+            "chapter_id": "chapter-1",
+            "items": [],
+            "placements": [],
+            "owner_task_id": "chapter-1:quiz",
+        },
+        "card": {
+            "chapter_id": "chapter-1",
+            "items": [],
+            "owner_task_id": "chapter-1:card",
+        },
+        "owner_task_id": "chapter-1:lesson",
     }
     runtime = RecordingRuntime([bad_response, bad_response])
 
     with pytest.raises(ValueError, match="invented-p999"):
-        await ChapterAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+        await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
     assert len(runtime.calls) == 2

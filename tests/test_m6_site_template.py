@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +96,30 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "remarkMath" in markdown
     assert "rehypeKatex" in markdown
     assert "NEXT_PUBLIC_OPENAI_API_KEY" not in (sqlite + rag + chat_route + search_route)
+
+
+def test_quiz_block_item_effects_are_stable_against_context_state_updates() -> None:
+    quiz_block = (SITE / "components" / "QuizBlock.tsx").read_text(encoding="utf-8")
+
+    effect_deps = re.findall(
+        r"useEffect\(\(\) => \s*\{(?P<body>.*?)\}\s*,\s*\[(?P<deps>[^\]]*)\]\s*\);",
+        quiz_block,
+        flags=re.DOTALL,
+    )
+    state_sync_deps = [
+        deps
+        for body, deps in effect_deps
+        if "registerItem" in body or "setRecord" in body
+    ]
+
+    assert state_sync_deps
+    assert all("deck" not in deps for deps in state_sync_deps)
+    assert re.search(
+        r"const existing = current\.get\(id\);.*?existing\?\.correct === value\.correct"
+        r".*?return current;",
+        quiz_block,
+        flags=re.DOTALL,
+    )
 
 
 def test_official_ai_panel_is_backed_by_bookwiki_chat_api() -> None:

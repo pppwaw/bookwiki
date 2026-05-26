@@ -53,6 +53,9 @@ export function QuizBlock({ children }: { children: ReactNode }) {
 
   const setRecord = useCallback((id: string, value: ItemRecord) => {
     setRecords((current) => {
+      const existing = current.get(id);
+      if (existing?.correct === value.correct) return current;
+
       const next = new Map(current);
       next.set(id, value);
       return next;
@@ -73,21 +76,22 @@ export function QuizBlock({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const total = registered.size;
+
   const value = useMemo<DeckState>(
     () => ({
       records,
       setRecord,
       reset,
       resetToken,
-      total: registered.size,
+      total,
       registerItem,
     }),
-    [records, setRecord, reset, resetToken, registered, registerItem],
+    [records, setRecord, reset, resetToken, total, registerItem],
   );
 
   const answered = Array.from(records.values()).filter((rec) => rec.correct !== null);
   const correctCount = answered.filter((rec) => rec.correct).length;
-  const total = registered.size;
   const percent = total === 0 ? 0 : Math.round((answered.length / total) * 100);
 
   return (
@@ -129,25 +133,28 @@ export function QuizItem({
   id: string;
 }) {
   const deck = useContext(DeckContext);
+  const registerItem = deck?.registerItem;
+  const setRecord = deck?.setRecord;
+  const resetToken = deck?.resetToken;
   const [selected, setSelected] = useState<string>();
   const [checked, setChecked] = useState(false);
   const [choiceContent, setChoiceContent] = useState<Record<string, ReactNode>>({});
 
   useEffect(() => {
-    deck?.registerItem(id);
-  }, [deck, id]);
+    registerItem?.(id);
+  }, [registerItem, id]);
 
   useEffect(() => {
-    if (!deck) return;
+    if (resetToken === undefined) return;
     setSelected(undefined);
     setChecked(false);
-  }, [deck?.resetToken]);
+  }, [resetToken]);
 
   const correct = checked && selected !== undefined ? selected === answer : null;
 
   useEffect(() => {
-    deck?.setRecord(id, { id, correct });
-  }, [deck, id, correct]);
+    setRecord?.(id, { id, correct });
+  }, [setRecord, id, correct]);
 
   const value = useMemo<ItemContextValue>(
     () => ({

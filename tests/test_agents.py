@@ -9,13 +9,11 @@ import pytest
 from pydantic import BaseModel
 
 from bookwiki.agents import (
-    CardAgent,
-    ChapterAgent,
     ChapterSplitAgent,
     ConceptAgent,
     ConceptExtractAgent,
     ConceptReconcileAgent,
-    QuizAgent,
+    LessonAgent,
     ReviewAgent,
     SourceLayoutRepairAgent,
     SourceSummaryAgent,
@@ -102,11 +100,40 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
             },
             {
                 "chapter_id": "chapter-1",
-                "title": "Search",
-                "body_md": "# Search\n\nState space search explains reachable states.",
-                "concepts": ["state space"],
-                "citations": [{"ref_id": "source-p001", "quote": "State space search"}],
-                "owner_task_id": "chapter-1:chapter",
+                "chapter": {
+                    "chapter_id": "chapter-1",
+                    "title": "Search",
+                    "body_md": "# Search\n\nState space search explains reachable states.",
+                    "concepts": ["state space"],
+                    "citations": [{"ref_id": "source-p001", "quote": "State space search"}],
+                    "owner_task_id": "chapter-1:chapter",
+                },
+                "quiz": {
+                    "chapter_id": "chapter-1",
+                    "items": [
+                        {
+                            "question": "What does search expand?",
+                            "choices": ["states", "colors"],
+                            "answer": "states",
+                            "explanation": "The source says search expands states.",
+                            "citations": [{"ref_id": "source-p001", "quote": "expands states"}],
+                        }
+                    ],
+                    "placements": [{"after_block": 0, "item_indexes": [1], "title": "Quiz"}],
+                    "owner_task_id": "chapter-1:quiz",
+                },
+                "card": {
+                    "chapter_id": "chapter-1",
+                    "items": [
+                        {
+                            "front": "State space search",
+                            "back": "Search over reachable states toward a goal.",
+                            "citations": [{"ref_id": "source-p001", "quote": "toward a goal"}],
+                        }
+                    ],
+                    "owner_task_id": "chapter-1:card",
+                },
+                "owner_task_id": "chapter-1:lesson",
             },
             {
                 "chapter_id": "chapter-1",
@@ -114,31 +141,6 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
                 "key_points": ["States", "Goals"],
                 "citations": [{"ref_id": "source-p001", "quote": "toward a goal"}],
                 "owner_task_id": "chapter-1:summary",
-            },
-            {
-                "chapter_id": "chapter-1",
-                "items": [
-                    {
-                        "question": "What does search expand?",
-                        "choices": ["states", "colors"],
-                        "answer": "states",
-                        "explanation": "The source says search expands states.",
-                        "citations": [{"ref_id": "source-p001", "quote": "expands states"}],
-                    }
-                ],
-                "placements": [{"after_block": 0, "item_indexes": [1], "title": "Quiz"}],
-                "owner_task_id": "chapter-1:quiz",
-            },
-            {
-                "chapter_id": "chapter-1",
-                "items": [
-                    {
-                        "front": "State space search",
-                        "back": "Search over reachable states toward a goal.",
-                        "citations": [{"ref_id": "source-p001", "quote": "toward a goal"}],
-                    }
-                ],
-                "owner_task_id": "chapter-1:card",
             },
             {
                 "concepts": [
@@ -200,14 +202,10 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
         model="deepseek-v4-flash",
         runtime=runtime,
     )
-    chapter = await ChapterAgent().run(
+    chapter = await LessonAgent().run(
         chapter_payload, model="deepseek-v4-pro", runtime=runtime
     )
     summary = await SummaryAgent().run(
-        chapter_payload, model="deepseek-v4-flash", runtime=runtime
-    )
-    quiz = await QuizAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
-    cards = await CardAgent().run(
         chapter_payload, model="deepseek-v4-flash", runtime=runtime
     )
     extracted = await ConceptExtractAgent().run(
@@ -228,7 +226,8 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
                         "title": "Search",
                         "source_md": chapter_payload["source_md"],
                         "citations": [
-                            item.model_dump(mode="json") for item in chapter.citations
+                            item.model_dump(mode="json")
+                            for item in chapter.chapter.citations
                         ],
                     }
                 ],
@@ -255,19 +254,18 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert source_summary.source_refs == ["source-p001"]
     assert structure.chapters == ["Chapter 1 Search"]
     assert split.report_md == "# Split Audit\n\nMock audit."
-    assert chapter.owner_task_id == "chapter-1:chapter"
+    assert chapter.chapter.owner_task_id == "chapter-1:chapter"
+    assert chapter.quiz.items[0].answer == "states"
+    assert chapter.card.items[0].front == "State space search"
     assert summary.key_points == ["States", "Goals"]
-    assert quiz.items[0].answer == "states"
-    assert cards.items[0].front == "State space search"
     assert extracted.concepts[0].name == "state space"
     assert reconciled.alias_map["states"] == "state space"
     assert concept.owner_task_id == "concept:state space"
     assert repair.action == "regenerate"
     assert layout.patches[0].action == "attach_caption"
-    assert len(runtime.calls) == 11
+    assert len(runtime.calls) == 9
     assert runtime.responses == []
     assert {call["output_model"] for call in runtime.calls} >= {
-        "ChapterResult",
-        "QuizResult",
+        "LessonResult",
         "SourceLayoutRepairResult",
     }

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import shutil
@@ -10,13 +9,11 @@ from typing import Any
 import yaml
 
 from bookwiki.agents import (
-    CardAgent,
-    ChapterAgent,
     ChapterSplitAgent,
     ConceptAgent,
     ConceptExtractAgent,
     ConceptReconcileAgent,
-    QuizAgent,
+    LessonAgent,
     ReviewAgent,
     SourceLayoutRepairAgent,
     SourceSummaryAgent,
@@ -169,10 +166,13 @@ def _wrap_bare_latex_commands(markdown: str) -> str:
 
 def _wrap_latex_segment(segment: str) -> str:
     brace_arg = r"\{[^{}\n]*(?:\{[^{}\n]*\}[^{}\n]*)*\}"
-    command = re.compile(
-        rf"\\[A-Za-z]+(?:{brace_arg})*(?:[_^](?:{brace_arg}|[A-Za-z0-9]+))*"
-    )
-    return command.sub(lambda match: f"${match.group(0)}$", segment)
+    sub_sup_target = rf"(?:{brace_arg}|[A-Za-z0-9]+)"
+    sub_sup = rf"\s*[_^]\s*{sub_sup_target}"
+    command = rf"\\[A-Za-z]+\*?(?:\s*{brace_arg})*(?:{sub_sup})*"
+    subscripted_ident = rf"[A-Za-z0-9]+(?:{sub_sup})+"
+    delim_sup = rf"[)\]](?:{sub_sup})+"
+    pattern = re.compile(rf"(?:{command}|{subscripted_ident}|{delim_sup})")
+    return pattern.sub(lambda match: f"${match.group(0)}$", segment)
 
 
 def _escape_mdx_text_outside_math(markdown: str) -> str:
@@ -818,46 +818,34 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
         summary_model = cfg.model_for("summary")
         quiz_model = cfg.model_for("quiz")
         card_model = cfg.model_for("card")
-        chapter = await run_with_cache(
-            ChapterAgent,
+        lesson_model = cfg.model_for("lesson")
+        lesson = await run_with_cache(
+            LessonAgent,
             payload,
-            model=chapter_model,
+            model=lesson_model,
             cache_dir=_cache_dir(cfg),
             runtime=cfg.llm_runtime,
         )
+        chapter_result = lesson.result.chapter
+        quiz_result = lesson.result.quiz
+        card_result = lesson.result.card
         chapter_payload = {
             **payload,
-            "chapter_result": _json_model(chapter.result),
-            "chapter_body_md": chapter.result.body_md,
+            "chapter_result": _json_model(chapter_result),
+            "chapter_body_md": chapter_result.body_md,
         }
-        summary, quiz, card = await asyncio.gather(
-            run_with_cache(
-                SummaryAgent,
-                chapter_payload,
-                model=summary_model,
-                cache_dir=_cache_dir(cfg),
-                runtime=cfg.llm_runtime,
-            ),
-            run_with_cache(
-                QuizAgent,
-                chapter_payload,
-                model=quiz_model,
-                cache_dir=_cache_dir(cfg),
-                runtime=cfg.llm_runtime,
-            ),
-            run_with_cache(
-                CardAgent,
-                chapter_payload,
-                model=card_model,
-                cache_dir=_cache_dir(cfg),
-                runtime=cfg.llm_runtime,
-            ),
+        summary = await run_with_cache(
+            SummaryAgent,
+            chapter_payload,
+            model=summary_model,
+            cache_dir=_cache_dir(cfg),
+            runtime=cfg.llm_runtime,
         )
-        cache_results.extend([chapter, summary, quiz, card])
+        cache_results.extend([lesson, summary])
         paths = {
             "chapter": write_json(
                 result_dir / f"{ch_id}.chapter.json",
-                _agent_result_payload(ChapterAgent, chapter_model, chapter.result),
+                _agent_result_payload(LessonAgent, chapter_model, chapter_result),
             ),
             "summary": write_json(
                 result_dir / f"{ch_id}.summary.json",
@@ -865,11 +853,11 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             ),
             "quiz": write_json(
                 result_dir / f"{ch_id}.quiz.json",
-                _agent_result_payload(QuizAgent, quiz_model, quiz.result),
+                _agent_result_payload(LessonAgent, quiz_model, quiz_result),
             ),
             "card": write_json(
                 result_dir / f"{ch_id}.card.json",
-                _agent_result_payload(CardAgent, card_model, card.result),
+                _agent_result_payload(LessonAgent, card_model, card_result),
             ),
         }
         chapter_results[ch_id] = {name: _rel(path, cfg.book_dir) for name, path in paths.items()}

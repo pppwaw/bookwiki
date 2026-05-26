@@ -50,7 +50,7 @@ Wrapper shape:
 ```json
 {
   "_schema_version": "llm.v1",
-  "_agent": "ChapterAgent",
+  "_agent": "LessonAgent",
   "_model": "deepseek-v4-pro",
   "result": {}
 }
