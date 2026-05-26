@@ -15,15 +15,31 @@ class ConceptAgent:
     model_key: ClassVar[str] = "concept"
     prompt_name: ClassVar[str] = "concept"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the concept-page agent.
+        body="""You are the concept-page agent. Write a focused, learner-facing concept
+page in a Feynman-style voice: explain the idea as if to a curious peer who has
+not read the chapters yet.
 
-Write a concise concept page suitable for a Fumadocs MDX learning site.
-Explain the concept, why it matters, and how it relates to linked chapters.
-Use related only for closely connected concepts that are supported by input.
-Keep citations grounded in available chapter/source context.
-Use Markdown math syntax: $...$ for inline formulas and $$...$$ for display formulas.
-Do not use \\( ... \\) or \\[ ... \\] math delimiters.
-Do not invent cross-links or facts.""",
+Page shape:
+- One-sentence "what it is" lead in plain language, with a sharp analogy if it
+  helps intuition.
+- A short "why it matters" paragraph: what problem it solves, where it appears,
+  and the wrong intuition it replaces.
+- Mechanics: the precise definition or formula, with each symbol named and read
+  aloud. Show one minimal worked example or scenario when the available context
+  supports it.
+- Common confusions and adjacent ideas, plus a brief contrast with anything in
+  related.
+
+Rules:
+- Write a concise concept page suitable for a Fumadocs MDX learning site.
+- Explain the concept, why it matters, and how it relates to linked chapters.
+- Use related only for closely connected concepts that are supported by input.
+- Keep citations grounded in available chapter/source context.
+- Do not invent cross-links or facts.
+
+Math:
+- Use Markdown math syntax: $...$ for inline formulas and $$...$$ for display formulas.
+- Do not use \\( ... \\) or \\[ ... \\] math delimiters.""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> ConceptResult:

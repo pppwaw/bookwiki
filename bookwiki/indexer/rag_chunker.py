@@ -22,6 +22,21 @@ class RagChunk:
 def chunk_page(page: MdxPage, max_chars: int = 1200) -> list[RagChunk]:
     sections = _heading_sections(page.body)
     chunks: list[RagChunk] = []
+    summary = str(page.frontmatter.get("summary") or "").strip()
+    if summary:
+        chunks.append(
+            RagChunk(
+                chunk_id=f"{page.id}#chunk-001",
+                page_id=page.id,
+                chapter_id=page.chapter_id,
+                section_id="summary",
+                chunk_index=0,
+                heading_path=f"{page.title} > Summary",
+                text=summary,
+                source_refs=list(page.source_refs),
+                token_count=max(1, len(summary) // 4),
+            )
+        )
     for heading_path, section_id, raw in sections:
         text = _plain_text(raw)
         if not text:

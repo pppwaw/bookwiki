@@ -1,0 +1,9 @@
+{
+  "title": "Concepts",
+  "root": true,
+  "icon": "Library",
+  "pages": [
+    "frontier",
+    "admissible-heuristic"
+  ]
+}

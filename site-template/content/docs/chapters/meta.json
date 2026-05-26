@@ -1,0 +1,9 @@
+{
+  "title": "Chapters",
+  "root": true,
+  "icon": "BookOpen",
+  "pages": [
+    "ch01-search-basics",
+    "ch02-heuristics"
+  ]
+}

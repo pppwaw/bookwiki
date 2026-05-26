@@ -3,9 +3,7 @@
   "pages": [
     "index",
     "test",
-    "chapters/ch01-search-basics",
-    "chapters/ch02-heuristics",
-    "concepts/frontier",
-    "concepts/admissible-heuristic"
+    "chapters",
+    "concepts"
   ]
 }

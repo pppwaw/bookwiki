@@ -339,12 +339,12 @@ flowchart LR
 
 ### 任务
 
-- [ ] 将章节正文和 concepts 拆成两个 Fumadocs page tree / sidebar tabs(例如 `content/docs/chapters` 与 `content/docs/concepts` 各自作为 root folder),让主内容和概念库在侧边栏里独立切换
-- [ ] 优化 `QuizBlock` 组件:提交/重置状态、正确/错误反馈、题目进度、解释与 citation/source_ref 展示、移动端布局和键盘可访问性
-- [ ] 优化 `AnkiDeck` 组件:翻卡动效、上一张/下一张、进度、重置、citation/source_ref 展示、移动端布局和键盘可访问性
-- [ ] 增加 `Summary` 展示组件/区块:章节页顶部展示 `summary_md` 摘要,样例 MDX 覆盖 summary 渲染
-- [ ] 将真实 `summary_md` 接到最终网站:integrator 输出可见 summary 区块,indexer 将 summary 纳入 pages/chunks,搜索结果能命中章节摘要
-- [ ] 修复sidebar 无内容
+- [x] 将章节正文和 concepts 拆成两个 Fumadocs page tree / sidebar tabs(例如 `content/docs/chapters` 与 `content/docs/concepts` 各自作为 root folder),让主内容和概念库在侧边栏里独立切换
+- [x] 优化 `QuizBlock` 组件:提交/重置状态、正确/错误反馈、题目进度、解释与 citation/source_ref 展示、移动端布局和键盘可访问性
+- [x] 优化 `AnkiDeck` 组件:翻卡动效、上一张/下一张、进度、重置、citation/source_ref 展示、移动端布局和键盘可访问性
+- [x] 增加 `Summary` 展示组件/区块:章节页顶部展示 `summary_md` 摘要,样例 MDX 覆盖 summary 渲染
+- [x] 将真实 `summary_md` 接到最终网站:integrator 输出可见 summary 区块,indexer 将 summary 纳入 pages/chunks,搜索结果能命中章节摘要
+- [x] 修复sidebar 无内容
 
 ### 验收
 - 章节和 concepts 在 Fumadocs sidebar tabs / page tree 中可独立切换

@@ -1054,11 +1054,33 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         )
         + "\n",
     )
+    chapter_stems = [Path(path).stem for path in chapter_outputs]
+    concept_stem_list = sorted(
+        {Path(rel_path).stem for rel_path in state.get("concept_pages", {}).values()}
+    )
     write_json(
         content_dir / "meta.json",
         {
             "title": cfg.title,
-            "pages": [Path(path).with_suffix("").as_posix() for path in chapter_outputs],
+            "pages": ["index", "chapters", "concepts"],
+        },
+    )
+    write_json(
+        chapters_dir / "meta.json",
+        {
+            "title": "Chapters",
+            "root": True,
+            "icon": "BookOpen",
+            "pages": chapter_stems,
+        },
+    )
+    write_json(
+        concepts_dir / "meta.json",
+        {
+            "title": "Concepts",
+            "root": True,
+            "icon": "Library",
+            "pages": concept_stem_list,
         },
     )
     return {"content_ready": True, "content_index": _rel(index_path, cfg.book_dir)}

@@ -21,17 +21,33 @@ class CardAgent:
     model_key: ClassVar[str] = "card"
     prompt_name: ClassVar[str] = "card"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the flashcard-generation agent.
+        body="""You are the flashcard-generation agent. Design Anki-style cards that
+work for active recall and spaced repetition. Think like a Feynman-style tutor:
+each card forces the learner to retrieve one specific, atomic idea, not vaguely
+"review chapter 6".
 
-Create concise recall cards for the chapter.
-Create exactly the requested cards_per_chapter number of cards when provided.
-The front should be a question, term, or prompt that is easy to review.
-The back should be short, precise, and source-grounded.
-Prefer high-value concepts, definitions, formula meanings, and common confusions.
-Use Markdown math syntax on card fronts and backs: $...$ for inline formulas
-and $$...$$ for display formulas.
-Do not use \\( ... \\) or \\[ ... \\] math delimiters.
-Avoid cards that merely repeat a chapter title or ask vague questions.""",
+What good cards look like:
+- Front is one focused prompt: a question, a term to define, a formula to recall,
+  or a fill-in-the-blank. It must be answerable in one or two sentences.
+- Back is short, precise, and source-grounded. Include the why or intuition in a
+  brief tail clause when it helps recall ("...because <reason>.").
+- Cover the high-value content: core definitions, formula structures and what
+  each symbol means, key distinctions between similar ideas, and the most
+  common pitfalls the chapter warns about.
+- Avoid two-sided "explain everything" cards. If a back grows long, split it.
+
+Rules:
+- Create concise recall cards for the chapter.
+- Create exactly the requested cards_per_chapter number of cards when provided.
+- The front should be a question, term, or prompt that is easy to review.
+- The back should be short, precise, and source-grounded.
+- Prefer high-value concepts, definitions, formula meanings, and common confusions.
+- Avoid cards that merely repeat a chapter title or ask vague questions.
+
+Math:
+- Use Markdown math syntax on card fronts and backs: $...$ for inline formulas
+  and $$...$$ for display formulas.
+- Do not use \\( ... \\) or \\[ ... \\] math delimiters.""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> CardResult:

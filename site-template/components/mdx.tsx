@@ -1,6 +1,7 @@
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import type { MDXComponents } from 'mdx/types';
 import { AnkiBack, AnkiCard, AnkiDeck, AnkiFront } from './AnkiDeck';
+import { ChapterSummary } from './ChapterSummary';
 import { ChatBox } from './ChatBox';
 import { ConceptLink } from './ConceptLink';
 import {
@@ -17,6 +18,7 @@ import { SourceRef } from './SourceRef';
 export function getMDXComponents(components?: MDXComponents) {
   return {
     ...defaultMdxComponents,
+    ChapterSummary,
     ConceptLink,
     QuizBlock,
     QuizItem,
