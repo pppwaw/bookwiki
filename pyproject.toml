@@ -28,6 +28,9 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "smoke: fast end-to-end checks required by CI",
+]
 
 [tool.ruff]
 line-length = 100

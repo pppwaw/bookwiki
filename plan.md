@@ -309,16 +309,16 @@ flowchart LR
 
 ### 任务
 
-- [ ] **`tests/test_schemas.py`**:每个 Pydantic 模型对照 fixture JSON snapshot;改 schema 必须改 fixture
-- [ ] **`tests/test_agents.py`**:每个 agent 用 `litellm.completion(..., mock_response=...)` 跑通
-- [ ] **`tests/test_scheduler.py`**:LangGraph DAG 拓扑、Send fan-out、`run_with_cache` cache hit/miss、`resume_or_start` 路径分支
-- [ ] **`tests/test_integrator.py`**:固定输入 → diff 输出 MDX
-- [ ] **`tests/test_e2e_smoke.py`**:mini-book 全流程,LLM 全 mock,跑通到 SQLite + 启 HTTP server 一秒 smoke
-- [ ] **GitHub Actions** (或等价 CI):`pytest -k smoke` 必过才能 merge
-- [ ] **`skills/bookwiki/SKILL.md`**:按 §20 写;含触发条件、标准流程、失败时看哪些文件
-- [ ] **`skills/bookwiki/references/runbook.md`**:每个阶段脚本怎么跑、`--force-from` 怎么用、interrupt 怎么处理
-- [ ] **`skills/bookwiki/references/contracts.md`**:`approved-structure.yaml` / `*.reconciled.json` / `check-report.json` / `bookwiki.sqlite` schema 摘要
-- [ ] **Skill 自验**:让一个没读 design.md 的 AI agent 只加载 skill,完成一次 mini-book 从 `init_book` 到访问网站的流程,根据 check-report 决定 repair / 人工
+- [x] **`tests/test_schemas.py`**:每个 Pydantic 模型对照 fixture JSON snapshot;改 schema 必须改 fixture
+- [x] **`tests/test_agents.py`**:每个 agent 用 `litellm.completion(..., mock_response=...)` 跑通
+- [x] **`tests/test_scheduler.py`**:LangGraph DAG 拓扑、Send fan-out、`run_with_cache` cache hit/miss、`resume_or_start` 路径分支
+- [x] **`tests/test_integrator.py`**:固定输入 → diff 输出 MDX
+- [x] **`tests/test_e2e_smoke.py`**:mini-book 全流程,LLM 全 mock,跑通到 SQLite + 启 HTTP server 一秒 smoke
+- [x] **GitHub Actions** (或等价 CI):`pytest -k smoke` 必过才能 merge
+- [x] **`skills/bookwiki/SKILL.md`**:按 §20 写;含触发条件、标准流程、失败时看哪些文件
+- [x] **`skills/bookwiki/references/runbook.md`**:每个阶段脚本怎么跑、`--force-from` 怎么用、interrupt 怎么处理
+- [x] **`skills/bookwiki/references/contracts.md`**:`approved-structure.yaml` / `*.reconciled.json` / `check-report.json` / `bookwiki.sqlite` schema 摘要
+- [x] **Skill 自验**:让一个没读 design.md 的 AI agent 只加载 skill,完成一次 mini-book 从 `init_book` 到访问网站的流程,根据 check-report 决定 repair / 人工
 
 ### 产物
 - `tests/` 完整
