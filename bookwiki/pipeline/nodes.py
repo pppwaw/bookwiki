@@ -239,7 +239,10 @@ def _quiz_item_mdx(item: dict[str, Any], index: int) -> str:
         [
             f"<QuizItem {props}>",
             _mdx_child("QuizQuestion", item.get("question", "")),
+            "<QuizChoices>",
             choice_mdx,
+            "</QuizChoices>",
+            "<QuizCheck />",
             _mdx_child("QuizExplanation", item.get("explanation", "")),
             "</QuizItem>",
         ]
@@ -981,7 +984,16 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         card = _agent_result(read_json(cfg.book_dir / paths["card"]))
         citations = chapter.get("citations", [])
         citation_md = _source_citation_md(citations)
-        card_mdx = f"<AnkiDeck>\n{_card_items_mdx(card.get('items', []))}\n</AnkiDeck>"
+        card_items = [item for item in card.get("items", []) if isinstance(item, dict)]
+        card_ids = [
+            str(item.get("id") or f"card-{index:03d}")
+            for index, item in enumerate(card_items, start=1)
+        ]
+        card_mdx = (
+            f"<AnkiDeck {_jsx_prop('cardIds', card_ids)}>\n"
+            f"{_card_items_mdx(card_items)}\n"
+            "</AnkiDeck>"
+        )
         concept_names = [str(name) for name in chapter.get("concepts", [])]
         for name in concept_names:
             concept_backlinks.setdefault(name, []).append(

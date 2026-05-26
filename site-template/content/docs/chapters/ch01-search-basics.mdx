@@ -15,8 +15,68 @@ Graph search keeps a <ConceptLink slug="frontier">frontier</ConceptLink> of gene
 
 ## Practice
 
-<QuizBlock items={[{"id":"q1","question":"What does the frontier store?","choices":["Expanded nodes only","Generated nodes waiting for expansion","The final path cost"],"answer":"Generated nodes waiting for expansion","explanation":"The frontier contains generated nodes that have not been expanded yet.","citations":[{"ref_id":"demo-textbook-p001"}]},{"id":"q2","question":"Which part changes across search strategies?","choices":["The source parser","The frontier ordering rule","The MDX renderer"],"answer":"The frontier ordering rule","explanation":"Breadth-first, depth-first, and heuristic search differ mainly in how they order the frontier.","citations":[{"ref_id":"demo-lecture-slide02"}]}]} />
+<QuizBlock>
+<QuizItem id="q1" answer="choice-2" citations={[{"ref_id":"demo-textbook-p001"}]}>
+<QuizQuestion>
+What does the frontier store?
+</QuizQuestion>
+<QuizChoices>
+<QuizChoice id="choice-1">
+Expanded nodes only
+</QuizChoice>
+<QuizChoice id="choice-2">
+Generated nodes waiting for expansion
+</QuizChoice>
+<QuizChoice id="choice-3">
+The final path cost
+</QuizChoice>
+</QuizChoices>
+<QuizCheck />
+<QuizExplanation>
+The frontier contains generated nodes that have not been expanded yet.
+</QuizExplanation>
+</QuizItem>
+
+<QuizItem id="q2" answer="choice-2" citations={[{"ref_id":"demo-lecture-slide02"}]}>
+<QuizQuestion>
+Which part changes across search strategies?
+</QuizQuestion>
+<QuizChoices>
+<QuizChoice id="choice-1">
+The source parser
+</QuizChoice>
+<QuizChoice id="choice-2">
+The frontier ordering rule
+</QuizChoice>
+<QuizChoice id="choice-3">
+The MDX renderer
+</QuizChoice>
+</QuizChoices>
+<QuizCheck />
+<QuizExplanation>
+Breadth-first, depth-first, and heuristic search differ mainly in how they order the frontier.
+</QuizExplanation>
+</QuizItem>
+</QuizBlock>
 
 ## Cards
 
-<AnkiDeck cards={[{"id":"c1","front":"Frontier","back":"Generated but unexpanded nodes waiting for selection.","citations":[{"ref_id":"demo-textbook-p001"}]},{"id":"c2","front":"Search strategy","back":"A rule for choosing the next node from the frontier.","citations":[{"ref_id":"demo-lecture-slide02"}]}]} />
+<AnkiDeck cardIds={["c1","c2"]}>
+<AnkiCard id="c1" citations={[{"ref_id":"demo-textbook-p001"}]}>
+<AnkiFront>
+Frontier
+</AnkiFront>
+<AnkiBack>
+Generated but unexpanded nodes waiting for selection.
+</AnkiBack>
+</AnkiCard>
+
+<AnkiCard id="c2" citations={[{"ref_id":"demo-lecture-slide02"}]}>
+<AnkiFront>
+Search strategy
+</AnkiFront>
+<AnkiBack>
+A rule for choosing the next node from the frontier.
+</AnkiBack>
+</AnkiCard>
+</AnkiDeck>

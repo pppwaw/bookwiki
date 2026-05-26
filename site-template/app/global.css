@@ -34,6 +34,14 @@ html > body[data-scroll-locked] {
   padding: 1rem;
 }
 
+.quiz-block {
+  counter-reset: quiz-item;
+}
+
+.quiz-item {
+  counter-increment: quiz-item;
+}
+
 .quiz-item + .quiz-item {
   margin-top: 1rem;
   padding-top: 1rem;
@@ -57,6 +65,10 @@ html > body[data-scroll-locked] {
   background: var(--color-fd-secondary);
   color: var(--color-fd-muted-foreground);
   font-size: 0.8rem;
+}
+
+.quiz-title > span::before {
+  content: counter(quiz-item);
 }
 
 .quiz-title h3 {

@@ -16,8 +16,8 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "fumadocs-ui" in deps
     assert "better-sqlite3" in deps
     assert "remark-math" in deps
+    assert "rehype-katex" in deps
     assert "katex" in deps
-    assert "rehype-katex" not in deps
 
     source_config = (SITE / "source.config.ts").read_text(encoding="utf-8")
     root_layout = (SITE / "app" / "layout.tsx").read_text(encoding="utf-8")
@@ -33,8 +33,8 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "BOOKWIKI_CONTENT_DIR" not in source_config
     assert "providerImportSource" in source_config
     assert "remarkMath" in source_config
-    assert "rehypeKatex" not in source_config
-    assert "rehypePlugins" not in source_config
+    assert "rehypeKatex" in source_config
+    assert "rehypePlugins: (v) => [rehypeKatex, ...v]" in source_config
     assert "katex/dist/katex.css" in root_layout
     assert "collections/server" in source
     assert "loader" in source
@@ -72,8 +72,9 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
         assert component in mdx_components
 
     assert "SearchBox" not in mdx_components
-    assert "MathCode" in mdx_components
-    assert "MathPre" in mdx_components
+    assert "MathCode" not in mdx_components
+    assert "MathPre" not in mdx_components
+    assert "./math" not in mdx_components
     assert not (SITE / "components" / "SearchBox.tsx").exists()
     assert not (SITE / "app" / "api" / "bookwiki" / "search" / "route.ts").exists()
     assert "readonly: true" in sqlite
@@ -91,9 +92,8 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "Markdown" not in anki_deck
     assert "children" in quiz_block
     assert "children" in anki_deck
-    assert "splitMathSegments" in markdown
-    assert "remarkMath" not in markdown
-    assert "rehypeKatex" not in markdown
+    assert "remarkMath" in markdown
+    assert "rehypeKatex" in markdown
     assert "NEXT_PUBLIC_OPENAI_API_KEY" not in (sqlite + rag + chat_route + search_route)
 
 
@@ -124,8 +124,11 @@ def test_site_template_contains_sample_mdx_content_for_m6a() -> None:
     assert "<QuizBlock" in joined_chapters
     assert "<QuizItem" in joined_chapters
     assert "<QuizQuestion>" in joined_chapters
+    assert "<QuizChoices>" in joined_chapters
     assert "<QuizChoice" in joined_chapters
+    assert "<QuizCheck />" in joined_chapters
     assert "<AnkiDeck" in joined_chapters
+    assert "cardIds={" in joined_chapters
     assert "<AnkiCard" in joined_chapters
     assert "<AnkiFront>" in joined_chapters
     assert "<AnkiBack>" in joined_chapters

@@ -1,60 +1,118 @@
 'use client';
 
-import { useState } from 'react';
+import { createContext, type ReactNode, useContext, useMemo, useState } from 'react';
 
 type Citation = {
   ref_id: string;
   quote?: string;
 };
 
-type AnkiCard = {
-  id: string;
-  front: string;
-  back: string;
-  citations?: Citation[];
+type AnkiContextValue = {
+  activeId?: string;
+  cardIds: string[];
+  currentIndex: number;
+  showBack: boolean;
+  setCurrentIndex: (index: number) => void;
+  setShowBack: (value: boolean | ((current: boolean) => boolean)) => void;
 };
 
-export function AnkiDeck({ cards }: { cards: AnkiCard[] }) {
+const AnkiContext = createContext<AnkiContextValue | null>(null);
+
+export function AnkiDeck({
+  cardIds = [],
+  children,
+}: {
+  cardIds?: string[];
+  children: ReactNode;
+}) {
   const [index, setIndex] = useState(0);
   const [showBack, setShowBack] = useState(false);
-  const card = cards[index];
+  const activeId = cardIds[index];
+  const value = useMemo<AnkiContextValue>(
+    () => ({
+      activeId,
+      cardIds,
+      currentIndex: index,
+      showBack,
+      setCurrentIndex(nextIndex) {
+        setIndex(Math.min(Math.max(nextIndex, 0), Math.max(cardIds.length - 1, 0)));
+        setShowBack(false);
+      },
+      setShowBack,
+    }),
+    [activeId, cardIds, index, showBack],
+  );
 
-  if (!card) {
+  if (cardIds.length === 0) {
     return null;
   }
 
   return (
-    <section className="anki-deck">
-      <div className="anki-toolbar">
-        <span>
-          {index + 1} / {cards.length}
-        </span>
-        <div>
-          <button
-            disabled={index === 0}
-            onClick={() => {
-              setIndex((current) => Math.max(current - 1, 0));
-              setShowBack(false);
-            }}
-            type="button"
-          >
-            Previous
-          </button>
-          <button
-            disabled={index === cards.length - 1}
-            onClick={() => {
-              setIndex((current) => Math.min(current + 1, cards.length - 1));
-              setShowBack(false);
-            }}
-            type="button"
-          >
-            Next
-          </button>
+    <AnkiContext.Provider value={value}>
+      <section className="anki-deck">
+        <div className="anki-toolbar">
+          <span>
+            {index + 1} / {cardIds.length}
+          </span>
+          <div>
+            <button
+              disabled={index === 0}
+              onClick={() => value.setCurrentIndex(index - 1)}
+              type="button"
+            >
+              Previous
+            </button>
+            <button
+              disabled={index === cardIds.length - 1}
+              onClick={() => value.setCurrentIndex(index + 1)}
+              type="button"
+            >
+              Next
+            </button>
+          </div>
         </div>
-      </div>
-      <button className="anki-card" onClick={() => setShowBack((value) => !value)} type="button">
-        <span>{showBack ? card.back : card.front}</span>
-      </button>
-    </section>
+        {children}
+      </section>
+    </AnkiContext.Provider>
   );
+}
+
+export function AnkiCard({
+  children,
+  id,
+}: {
+  children: ReactNode;
+  citations?: Citation[];
+  id: string;
+}) {
+  const deck = useAnkiContext();
+  if (deck.activeId !== id) return null;
+
+  return (
+    <button
+      className="anki-card"
+      onClick={() => deck.setShowBack((current) => !current)}
+      type="button"
+    >
+      <span>{children}</span>
+    </button>
+  );
+}
+
+export function AnkiFront({ children }: { children: ReactNode }) {
+  const deck = useAnkiContext();
+  return deck.showBack ? null : <>{children}</>;
+}
+
+export function AnkiBack({ children }: { children: ReactNode }) {
+  const deck = useAnkiContext();
+  return deck.showBack ? <>{children}</> : null;
+}
+
+function useAnkiContext(): AnkiContextValue {
+  const value = useContext(AnkiContext);
+  if (!value) {
+    throw new Error('Anki subcomponents must be rendered inside AnkiDeck');
+  }
+  return value;
 }

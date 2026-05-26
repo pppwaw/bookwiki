@@ -248,9 +248,12 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "<QuizBlock" in chapter_text
     assert "<QuizItem id=" in chapter_text
     assert "<QuizQuestion>" in chapter_text
+    assert "<QuizChoices>" in chapter_text
     assert "<QuizChoice id=" in chapter_text
+    assert "<QuizCheck />" in chapter_text
     assert "<QuizExplanation>" in chapter_text
     assert "<AnkiDeck" in chapter_text
+    assert "cardIds={" in chapter_text
     assert "<AnkiCard id=" in chapter_text
     assert "<AnkiFront>" in chapter_text
     assert "<AnkiBack>" in chapter_text

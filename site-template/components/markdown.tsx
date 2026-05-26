@@ -1,6 +1,10 @@
+'use client';
+
 import { remark } from 'remark';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import remarkRehype from 'remark-rehype';
+import rehypeKatex from 'rehype-katex';
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime';
 import {
   Children,
@@ -18,18 +22,16 @@ import { visit } from 'unist-util-visit';
 import type { ElementContent, Root, RootContent } from 'hast';
 
 export interface Processor {
-  process: (content: string) => Promise<ReactNode>;
+  process: (content: string, options?: { inline?: boolean }) => Promise<ReactNode>;
 }
 
 export function rehypeWrapWords() {
   return (tree: Root) => {
     visit(tree, ['text', 'element'], (node, index, parent) => {
-      if (node.type === 'element' && node.tagName === 'pre') return 'skip';
+      if (node.type === 'element' && shouldSkipWrap(node)) return 'skip';
       if (node.type !== 'text' || !parent || index === undefined) return;
 
       const words = node.value.split(/(?=\s)/);
-
-      // Create new span nodes for each word and whitespace
       const newNodes: ElementContent[] = words.flatMap((word) => {
         if (word.length === 0) return [];
 
@@ -54,11 +56,23 @@ export function rehypeWrapWords() {
   };
 }
 
+function shouldSkipWrap(node: Extract<RootContent, { type: 'element' }>): boolean {
+  if (node.tagName === 'pre' || node.tagName === 'code') return true;
+  const className = node.properties?.className;
+  const classes = Array.isArray(className) ? className : [className];
+  return classes.some((value) => String(value).includes('katex'));
+}
+
 function createProcessor(): Processor {
-  const processor = remark().use(remarkGfm).use(remarkRehype).use(rehypeWrapWords);
+  const processor = remark()
+    .use(remarkGfm)
+    .use(remarkMath)
+    .use(remarkRehype)
+    .use(rehypeKatex)
+    .use(rehypeWrapWords);
 
   return {
-    async process(content) {
+    async process(content, options) {
       const nodes = processor.parse({ value: content });
       const hast = await processor.run(nodes);
 
@@ -70,7 +84,8 @@ function createProcessor(): Processor {
         components: {
           ...defaultMdxComponents,
           pre: Pre,
-          img: undefined, // use JSX
+          p: options?.inline ? InlineParagraph : undefined,
+          img: undefined,
         },
       });
     },
@@ -86,7 +101,7 @@ function Pre(props: ComponentProps<'pre'>) {
   let lang =
     codeProps.className
       ?.split(' ')
-      .find((v) => v.startsWith('language-'))
+      .find((value) => value.startsWith('language-'))
       ?.slice('language-'.length) ?? 'text';
 
   if (lang === 'mdx') lang = 'md';
@@ -94,23 +109,27 @@ function Pre(props: ComponentProps<'pre'>) {
   return <DynamicCodeBlock lang={lang} code={content.trimEnd()} />;
 }
 
-const processor = createProcessor();
+function InlineParagraph(props: ComponentProps<'span'>) {
+  return <span {...props} />;
+}
 
-export function Markdown({ text }: { text: string }) {
+const processor = createProcessor();
+const cache = new Map<string, Promise<ReactNode>>();
+
+export function Markdown({ text, inline = false }: { text: string; inline?: boolean }) {
   const deferredText = useDeferredValue(text);
 
   return (
-    <Suspense fallback={<p className="invisible">{text}</p>}>
-      <Renderer text={deferredText} />
+    <Suspense fallback={<span className="invisible">{text}</span>}>
+      <Renderer inline={inline} text={deferredText} />
     </Suspense>
   );
 }
 
-const cache = new Map<string, Promise<ReactNode>>();
-
-function Renderer({ text }: { text: string }) {
-  const result = cache.get(text) ?? processor.process(text);
-  cache.set(text, result);
+function Renderer({ text, inline }: { text: string; inline: boolean }) {
+  const key = `${inline ? 'inline' : 'block'}:${text}`;
+  const result = cache.get(key) ?? processor.process(text, { inline });
+  cache.set(key, result);
 
   return use(result);
 }
