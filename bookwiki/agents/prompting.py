@@ -48,6 +48,8 @@ Target language: {target_language}
 Write learner-facing content in the target language. Keep identifiers, file paths,
 chapter_id, owner_task_id, and source_ref values exactly as provided.
 
+{book_notes_block}
+
 Agent instructions:
 {agent_instructions}
 
@@ -87,6 +89,7 @@ def render_prompt(
             "prompt_name": prompt_name,
             "output_model": output_name,
             "target_language": _target_language(inp),
+            "book_notes_block": _book_notes_block(inp),
             "agent_instructions": agent.body,
             "input_json": _json(inp),
             "draft_json": _json(draft),
@@ -126,6 +129,14 @@ def _document_xml_block(value: Any) -> str:
         document_xml = value.get("document_xml")
         if isinstance(document_xml, str) and document_xml.strip():
             return f"Chapter document:\n{document_xml.strip()}"
+    return ""
+
+
+def _book_notes_block(value: Any) -> str:
+    if isinstance(value, dict):
+        book_notes = value.get("book_notes")
+        if isinstance(book_notes, str) and book_notes.strip():
+            return f"Book notes:\n{book_notes.strip()}"
     return ""
 
 

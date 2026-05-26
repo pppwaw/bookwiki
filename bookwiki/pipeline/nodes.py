@@ -157,6 +157,28 @@ def _source_quote_markdown(quote: str) -> str:
     return _wrap_bare_latex_commands(normalize_mdx_math(quote))
 
 
+def _display_chapter_title(chapter_id: str, title: str) -> str:
+    clean = str(title).strip()
+    if re.match(r"^(chapter\s+\d+\b|第\s*\d+\s*章)", clean, flags=re.IGNORECASE):
+        return clean
+    match = re.fullmatch(r"chapter-(\d+)", str(chapter_id)) or re.fullmatch(
+        r"ch0*(\d+)", str(chapter_id)
+    )
+    if match:
+        prefix = f"Chapter {int(match.group(1))}"
+        return f"{prefix} {clean}".strip()
+    return clean or str(chapter_id)
+
+
+def _normalize_chapter_body_heading(body_md: str, display_title: str) -> str:
+    body = str(body_md).strip()
+    if not display_title:
+        return body
+    if re.match(r"^#\s+.+$", body, flags=re.MULTILINE):
+        return re.sub(r"^#\s+.+$", f"# {display_title}", body, count=1, flags=re.MULTILINE)
+    return f"# {display_title}\n\n{body}" if body else f"# {display_title}"
+
+
 def _wrap_bare_latex_commands(markdown: str) -> str:
     parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|```[\s\S]*?```|`[^`\n]*`)", markdown)
     return "".join(
@@ -296,18 +318,19 @@ def _quiz_block_mdx(
 
 
 def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
-    blocks = [block.strip() for block in re.split(r"\n{2,}", body_md.strip()) if block.strip()]
+    heading, content_md = _split_leading_h1(body_md)
+    blocks = [block.strip() for block in re.split(r"\n{2,}", content_md.strip()) if block.strip()]
     items = [item for item in quiz.get("items", []) if isinstance(item, dict)]
     placements = _quiz_placements_for_render(quiz, len(items))
     if not items:
-        return body_md.strip()
+        return _join_leading_h1(heading, content_md.strip())
     if not placements:
         quiz_block = _quiz_block_mdx("Quiz", items)
         if len(blocks) < 2:
-            return f"{body_md.strip()}\n\n{quiz_block}"
+            return _join_leading_h1(heading, f"{content_md.strip()}\n\n{quiz_block}".strip())
         insert_after = max(1, (len(blocks) + 1) // 2)
         merged = [*blocks[:insert_after], quiz_block, *blocks[insert_after:]]
-        return "\n\n".join(merged)
+        return _join_leading_h1(heading, "\n\n".join(merged))
 
     chunks_by_after: dict[int, list[str]] = {}
     used_indexes: set[int] = set()
@@ -343,7 +366,21 @@ def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
             merged.extend(chunks_by_after[index])
     if not blocks:
         merged.extend(chunks_by_after.get(0, []))
-    return "\n\n".join(merged)
+    return _join_leading_h1(heading, "\n\n".join(merged))
+
+
+def _split_leading_h1(markdown: str) -> tuple[str, str]:
+    lines = str(markdown).strip().splitlines()
+    if lines and re.match(r"^#\s+.+$", lines[0]):
+        return lines[0].strip(), "\n".join(lines[1:]).strip()
+    return "", str(markdown).strip()
+
+
+def _join_leading_h1(heading: str, markdown: str) -> str:
+    body = str(markdown).strip()
+    if heading and body:
+        return f"{heading}\n\n{body}"
+    return heading or body
 
 
 def _quiz_placements_for_render(quiz: dict[str, Any], item_count: int) -> list[dict[str, Any]]:
@@ -406,15 +443,123 @@ def _load_alias_map(state: State, cfg: BookConfig) -> dict[str, str]:
 def _normalize_concept_links(
     markdown: str, alias_map: dict[str, str], concept_stems: dict[str, str]
 ) -> str:
+    linked_canonicals: set[str] = set()
+
     def replace(match: re.Match[str]) -> str:
         label = match.group(1).strip()
         canonical = alias_map.get(label) or alias_map.get(_concept_key(label)) or label
         stem = concept_stems.get(canonical)
         if stem:
+            linked_canonicals.add(canonical)
             return f"[{canonical}](../concepts/{stem})"
         return f"[[{canonical}]]"
 
-    return re.sub(r"\[\[([^\]]+)\]\]", replace, markdown)
+    normalized = re.sub(r"\[\[([^\]]+)\]\]", replace, markdown)
+    return _auto_link_concept_terms(
+        normalized, _concept_link_terms(alias_map, concept_stems), linked_canonicals
+    )
+
+
+def _concept_link_terms(
+    alias_map: dict[str, str], concept_stems: dict[str, str]
+) -> list[tuple[str, str, str]]:
+    terms: dict[str, tuple[str, str, str]] = {}
+    for canonical, stem in concept_stems.items():
+        clean = str(canonical).strip()
+        if clean:
+            terms[_concept_key(clean)] = (clean, clean, stem)
+    for alias, canonical in alias_map.items():
+        clean_alias = str(alias).strip()
+        clean_canonical = str(canonical).strip()
+        stem = concept_stems.get(clean_canonical)
+        if clean_alias and stem:
+            terms[_concept_key(clean_alias)] = (clean_alias, clean_canonical, stem)
+    return sorted(terms.values(), key=lambda item: len(item[0]), reverse=True)
+
+
+def _auto_link_concept_terms(
+    markdown: str,
+    terms: list[tuple[str, str, str]],
+    linked_canonicals: set[str],
+) -> str:
+    if not terms:
+        return markdown
+    lines: list[str] = []
+    for line in markdown.splitlines(keepends=True):
+        if line.lstrip().startswith("#"):
+            lines.append(line)
+        else:
+            lines.append(_auto_link_concept_terms_in_line(line, terms, linked_canonicals))
+    return "".join(lines)
+
+
+_CONCEPT_LINK_PROTECTED_RE = re.compile(
+    r"(```[\s\S]*?```|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$|\[[^\]\n]+\]\([^)]+\)|<[^>\n]+>)"
+)
+
+
+def _auto_link_concept_terms_in_line(
+    line: str,
+    terms: list[tuple[str, str, str]],
+    linked_canonicals: set[str],
+) -> str:
+    parts = _CONCEPT_LINK_PROTECTED_RE.split(line)
+    return "".join(
+        part
+        if _CONCEPT_LINK_PROTECTED_RE.fullmatch(part)
+        else _auto_link_concept_terms_in_text(part, terms, linked_canonicals)
+        for part in parts
+    )
+
+
+def _auto_link_concept_terms_in_text(
+    text: str,
+    terms: list[tuple[str, str, str]],
+    linked_canonicals: set[str],
+) -> str:
+    candidates: list[tuple[int, int, str, str]] = []
+    for term, canonical, stem in terms:
+        if canonical in linked_canonicals:
+            continue
+        pattern = _concept_term_pattern(term)
+        flags = re.IGNORECASE if re.search(r"[A-Za-z]", term) else 0
+        for match in re.finditer(pattern, text, flags=flags):
+            candidates.append((match.start(), match.end(), canonical, stem))
+    if not candidates:
+        return text
+
+    selected: list[tuple[int, int, str, str]] = []
+    local_linked: set[str] = set()
+    occupied_until = -1
+    for start, end, canonical, stem in sorted(
+        candidates, key=lambda item: (item[0], -(item[1] - item[0]))
+    ):
+        if canonical in linked_canonicals or canonical in local_linked:
+            continue
+        if start < occupied_until:
+            continue
+        selected.append((start, end, canonical, stem))
+        local_linked.add(canonical)
+        occupied_until = end
+    if not selected:
+        return text
+
+    chunks: list[str] = []
+    cursor = 0
+    for start, end, canonical, stem in selected:
+        chunks.append(text[cursor:start])
+        chunks.append(f"[{text[start:end]}](../concepts/{stem})")
+        cursor = end
+        linked_canonicals.add(canonical)
+    chunks.append(text[cursor:])
+    return "".join(chunks)
+
+
+def _concept_term_pattern(term: str) -> str:
+    escaped = re.escape(term)
+    if re.search(r"[A-Za-z0-9]", term):
+        return rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
+    return escaped
 
 
 def _concept_key(value: str) -> str:
@@ -530,7 +675,9 @@ def _concept_contexts(
         contexts.append(
             {
                 "chapter_id": chapter_id_text,
-                "title": chapter.get("title", chapter_id_text),
+                "title": _display_chapter_title(
+                    chapter_id_text, str(chapter.get("title", chapter_id_text))
+                ),
                 "body_md": chapter.get("body_md", ""),
                 "summary_md": summary.get("summary_md", ""),
                 "source_md": source_md,
@@ -695,11 +842,17 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
     source_paths = [cfg.book_dir / rel for rel in state.get("sources_md", [])]
     results: list[CacheResult] = []
     summaries = []
+    book_notes = cfg.book_notes
     for path in source_paths:
         text = path.read_text(encoding="utf-8", errors="ignore")
         result = await run_with_cache(
             SourceSummaryAgent,
-            {"path": str(path), "sha256": sha256_text(text), "language": cfg.language},
+            {
+                "path": str(path),
+                "sha256": sha256_text(text),
+                "language": cfg.language,
+                "book_notes": book_notes,
+            },
             model=cfg.model_for("source_summary"),
             cache_dir=_cache_dir(cfg),
             runtime=cfg.llm_runtime,
@@ -709,7 +862,12 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
 
     structure = await run_with_cache(
         StructureAgent,
-        {"summaries": summaries, "strategy": "pedagogical", "language": cfg.language},
+        {
+            "summaries": summaries,
+            "strategy": "pedagogical",
+            "language": cfg.language,
+            "book_notes": book_notes,
+        },
         model=cfg.model_for("structure"),
         cache_dir=_cache_dir(cfg),
         runtime=cfg.llm_runtime,
@@ -757,6 +915,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
                 for path in source_paths
             ],
             "approved_structure": approved_structure,
+            "book_notes": cfg.book_notes,
         },
         model=cfg.model_for("split"),
         cache_dir=_cache_dir(cfg),
@@ -814,18 +973,19 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
     for ch_id, rel_source in state.get("chapter_sources", {}).items():
         source_path = cfg.book_dir / rel_source
         source_md = source_path.read_text(encoding="utf-8")
+        title = _display_chapter_title(ch_id, str(titles.get(ch_id, ch_id)))
         payload = {
             "chapter_id": ch_id,
-            "title": titles.get(ch_id, ch_id),
+            "title": title,
             "source_md": source_md,
             "source_path": rel_source,
             "language": cfg.language,
+            "book_notes": cfg.book_notes,
             "quiz_per_chapter": cfg.quiz_per_chapter,
             "cards_per_chapter": cfg.cards_per_chapter,
         }
         chapter_model = cfg.model_for("chapter")
         summary_model = cfg.model_for("summary")
-        quiz_model = cfg.model_for("quiz")
         card_model = cfg.model_for("card")
         lesson_model = cfg.model_for("lesson")
         lesson = await run_with_cache(
@@ -862,7 +1022,7 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             ),
             "quiz": write_json(
                 result_dir / f"{ch_id}.quiz.json",
-                _agent_result_payload(LessonAgent, quiz_model, quiz_result),
+                _agent_result_payload(LessonAgent, lesson_model, quiz_result),
             ),
             "card": write_json(
                 result_dir / f"{ch_id}.card.json",
@@ -910,7 +1070,11 @@ async def reconcile_node(state: State, cfg: BookConfig) -> State:
         )
     result = await run_with_cache(
         ConceptReconcileAgent,
-        candidates,
+        {
+            "candidates": candidates,
+            "language": cfg.language,
+            "book_notes": cfg.book_notes,
+        },
         model=cfg.model_for("concept"),
         cache_dir=_cache_dir(cfg),
         runtime=cfg.llm_runtime,
@@ -943,6 +1107,7 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
             **item,
             "chapter_contexts": _concept_contexts(item, state, cfg),
             "language": cfg.language,
+            "book_notes": cfg.book_notes,
         }
         result = await run_with_cache(
             ConceptAgent,
@@ -986,6 +1151,10 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             str(item.get("id") or f"card-{index:03d}")
             for index, item in enumerate(card_items, start=1)
         ]
+        display_title = _display_chapter_title(ch_id, str(chapter["title"]))
+        body_md = _normalize_chapter_body_heading(
+            str(chapter["body_md"]), display_title
+        )
         card_mdx = (
             f"<AnkiDeck {_jsx_prop('cardIds', card_ids)}>\n"
             f"{_card_items_mdx(card_items)}\n"
@@ -994,7 +1163,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         concept_names = [str(name) for name in chapter.get("concepts", [])]
         for name in concept_names:
             concept_backlinks.setdefault(name, []).append(
-                {"title": str(chapter["title"]), "href": f"../chapters/{ch_id}"}
+                {"title": display_title, "href": f"../chapters/{ch_id}"}
             )
         path = write_text(
             chapters_dir / f"{ch_id}.mdx",
@@ -1002,7 +1171,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                 _frontmatter(
                     {
                         "chapter_id": ch_id,
-                        "title": chapter["title"],
+                        "title": display_title,
                         "type": "chapter",
                         "summary": summary["summary_md"],
                         "concepts": concept_names,
@@ -1011,7 +1180,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                 + _insert_quiz_blocks(
                     normalize_mdx_math(
                         _normalize_concept_links(
-                            str(chapter["body_md"]), alias_map, concept_stems
+                            body_md, alias_map, concept_stems
                         )
                     ),
                     quiz,
@@ -1105,12 +1274,12 @@ def check_node(state: State, cfg: BookConfig) -> State:
                     owner_task_id=f"{path.stem}:chapter",
                 )
             )
-        if "## Quiz" not in text:
+        if "<QuizBlock" not in text:
             issues.append(
                 Issue(
                     severity="error",
                     code="MISSING_QUIZ",
-                    message=f"{path.name} has no Quiz section",
+                    message=f"{path.name} has no QuizBlock",
                     owner_task_id=f"{path.stem}:quiz",
                 )
             )

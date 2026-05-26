@@ -107,6 +107,39 @@ def test_agent_prompt_includes_target_language_instruction() -> None:
     assert "Write learner-facing content in the target language" in rendered.user
 
 
+def test_agent_prompt_includes_book_notes_when_provided() -> None:
+    rendered = render_prompt(
+        prompt_name=LessonAgent.prompt_name,
+        prompt_template=LessonAgent.prompt_template,
+        agent_name="LessonAgent",
+        inp={
+            "chapter_id": "chapter-6",
+            "title": "Point Estimation",
+            "source_md": "method of moments",
+            "book_notes": (
+                "English teaching: include English terms for every concept.\n"
+                "Week-10.pdf is the primary textbook."
+            ),
+        },
+        draft={
+            "chapter_id": "chapter-6",
+            "chapter": {
+                "chapter_id": "chapter-6",
+                "title": "Point Estimation",
+                "body_md": "Draft.",
+                "concepts": [],
+                "citations": [],
+                "owner_task_id": "chapter-6:chapter",
+            },
+            "owner_task_id": "chapter-6:lesson",
+        },
+    )
+
+    assert "Book notes:" in rendered.user
+    assert "include English terms for every concept" in rendered.user
+    assert "Week-10.pdf is the primary textbook" in rendered.user
+
+
 def test_m4_content_prompts_are_embedded_in_agent_modules() -> None:
     assert importlib.util.find_spec("bookwiki.agents.prompts") is None
     assert "<document>" in LessonAgent.prompt_template.body

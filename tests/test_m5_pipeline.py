@@ -269,6 +269,96 @@ def test_check_accepts_hyphenated_source_refs_from_sources_md(tmp_path) -> None:
     assert result["repair_targets"] == []
 
 
+def test_check_accepts_custom_quiz_headings_when_quizblock_exists(tmp_path) -> None:
+    book_dir = tmp_path / "book"
+    result_dir = book_dir / "work" / "agent_results"
+    result_dir.mkdir(parents=True)
+    (result_dir / "chapter-6.chapter.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": "chapter-6",
+                    "title": "Point Estimation",
+                    "body_md": "Opening explanation.\n\nClosing explanation.",
+                    "concepts": [],
+                    "citations": [],
+                    "owner_task_id": "chapter-6:chapter",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (result_dir / "chapter-6.summary.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "summary_md": "Summary.",
+                    "citations": [],
+                    "owner_task_id": "chapter-6:summary",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (result_dir / "chapter-6.quiz.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": "chapter-6",
+                    "items": [
+                        {
+                            "question": "Q?",
+                            "choices": ["A", "B"],
+                            "answer": "A",
+                            "explanation": "E.",
+                            "citations": [],
+                        }
+                    ],
+                    "placements": [
+                        {"after_block": 0, "item_indexes": [1], "title": "Checkpoint"}
+                    ],
+                    "owner_task_id": "chapter-6:quiz",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (result_dir / "chapter-6.card.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": "chapter-6",
+                    "items": [{"front": "Front", "back": "Back", "citations": []}],
+                    "owner_task_id": "chapter-6:card",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+    state = {
+        "agent_results": {
+            "chapter-6": {
+                "chapter": "work/agent_results/chapter-6.chapter.json",
+                "summary": "work/agent_results/chapter-6.summary.json",
+                "quiz": "work/agent_results/chapter-6.quiz.json",
+                "card": "work/agent_results/chapter-6.card.json",
+            }
+        },
+        "concept_pages": {},
+    }
+
+    integrate_node(state, cfg)
+    result = check_node(state, cfg)
+
+    assert result["repair_targets"] == []
+
+
 @pytest.mark.asyncio
 async def test_reconcile_node_runs_concept_extract_and_records_extract_outputs(tmp_path) -> None:
     book_dir = tmp_path / "book"
@@ -373,6 +463,10 @@ async def test_concept_pages_node_passes_chapter_context_to_concept_agent(tmp_pa
         ]
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book", llm_runtime=runtime)
+    cfg.notes_file.write_text(
+        "English teaching: include English terms for every concept.",
+        encoding="utf-8",
+    )
     state = {
         "reconciled_concepts": "work/concepts/reconciled.json",
         "chapter_sources": {"chapter-1": "work/chapter_sources/chapter-1/source.md"},
@@ -390,6 +484,7 @@ async def test_concept_pages_node_passes_chapter_context_to_concept_agent(tmp_pa
     assert "Recursive search source" in user_prompt
     assert "source-p001" in user_prompt
     assert "Chapter mentions recursion" in user_prompt
+    assert "include English terms for every concept" in user_prompt
 
 
 def test_integrate_uses_alias_map_embedded_in_reconciled_concepts(tmp_path) -> None:

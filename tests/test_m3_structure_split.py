@@ -354,3 +354,32 @@ def test_structure_node_cache_key_changes_when_language_changes(tmp_path: Path) 
 
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
+
+
+def test_structure_node_cache_key_changes_when_book_notes_change(tmp_path: Path) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = TestLLMRuntime()
+    sources_dir = cfg.work_dir / "sources_md"
+    sources_dir.mkdir(parents=True)
+    source = sources_dir / "textbook.md"
+    source.write_text(
+        "# Textbook\n\n"
+        "<!-- source_ref: textbook-p001 -->\n\n"
+        "Introductory search material.\n",
+        encoding="utf-8",
+    )
+    cfg.notes_file.write_text(
+        "Use English concept names alongside Chinese translations.",
+        encoding="utf-8",
+    )
+    state = {"book_id": cfg.book_id, "sources_md": ["work/sources_md/textbook.md"]}
+
+    first = asyncio.run(structure_node(state, cfg))
+    cfg.notes_file.write_text(
+        "Use Chinese concept names only; keep English terms in parentheses.",
+        encoding="utf-8",
+    )
+    second = asyncio.run(structure_node(state, cfg))
+
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is False

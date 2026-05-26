@@ -16,7 +16,6 @@ DEFAULT_MODELS = {
     "lesson": "deepseek-v4-pro",
     "chapter": "deepseek-v4-pro",
     "summary": "deepseek-v4-flash",
-    "quiz": "deepseek-v4-pro",
     "card": "deepseek-v4-flash",
     "concept": "deepseek-v4-pro",
     "review": "deepseek-v4-pro",
@@ -39,6 +38,7 @@ class BookConfig:
     book_id: str
     title: str
     language: str = "zh-CN"
+    notes_path: str = "book.notes.md"
     models: dict[str, str] = field(default_factory=lambda: DEFAULT_MODELS.copy())
     budget: dict[str, Any] = field(default_factory=lambda: {"maxCostUsd": 2.0})
     generation: dict[str, Any] = field(default_factory=lambda: deepcopy(DEFAULT_GENERATION))
@@ -67,6 +67,16 @@ class BookConfig:
     def site_dir(self) -> Path:
         return self.book_dir / "site"
 
+    @property
+    def notes_file(self) -> Path:
+        return self.book_dir / self.notes_path
+
+    @property
+    def book_notes(self) -> str:
+        if not self.notes_file.exists():
+            return ""
+        return self.notes_file.read_text(encoding="utf-8").strip()
+
     def model_for(self, key: str) -> str:
         return self.models.get(key, "stub")
 
@@ -87,6 +97,7 @@ class BookConfig:
             "book_id": self.book_id,
             "title": self.title,
             "language": self.language,
+            "notesPath": self.notes_path,
             "models": self.models,
             "budget": self.budget,
             "generation": self.generation,
@@ -114,6 +125,7 @@ def load_config(book_dir: str | Path) -> BookConfig:
         book_id=str(raw.get("book_id") or path.name),
         title=str(raw.get("title") or path.name),
         language=str(raw.get("language") or "zh-CN"),
+        notes_path=str(raw.get("notesPath") or raw.get("notes_path") or "book.notes.md"),
         models={**DEFAULT_MODELS, **raw.get("models", {})},
         budget={**{"maxCostUsd": 2.0}, **raw.get("budget", {})},
         generation=_merge_generation(raw.get("generation", {})),

@@ -44,6 +44,7 @@ in the source.""",
             "source_text": body,
             "sha256": inp.get("sha256") if isinstance(inp, dict) else None,
             "language": inp.get("language") if isinstance(inp, dict) else None,
+            "book_notes": inp.get("book_notes") if isinstance(inp, dict) else None,
         }
         result = await generate_with_llm(
             runtime=runtime,

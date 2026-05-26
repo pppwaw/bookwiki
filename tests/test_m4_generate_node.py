@@ -57,6 +57,35 @@ async def test_generate_node_requires_chapter_sources(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_node_passes_display_chapter_title_to_agents(tmp_path) -> None:
+    book_dir = tmp_path / "book"
+    source_path = book_dir / "work" / "chapter_sources" / "chapter-6" / "source.md"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(
+        "# Chapter 6 Point Estimation\n\n"
+        "<!-- source_ref: Week-10-p001 -->\n\n"
+        "Point estimation source.",
+        encoding="utf-8",
+    )
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+    state = {
+        "chapter_sources": {"chapter-6": "work/chapter_sources/chapter-6/source.md"},
+        "chapter_titles": {"chapter-6": "Point Estimation"},
+    }
+
+    result = await generate_node(state, cfg)
+
+    chapter_path = book_dir / result["agent_results"]["chapter-6"]["chapter"]
+    payload = json.loads(chapter_path.read_text(encoding="utf-8"))
+    assert payload["result"]["title"] == "Chapter 6 Point Estimation"
+
+
+@pytest.mark.asyncio
 async def test_concept_pages_node_preserves_unicode_concept_file_names(tmp_path) -> None:
     book_dir = tmp_path / "book"
     point_estimation = "\u70b9\u4f30\u8ba1"
@@ -132,6 +161,16 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
         ),
         encoding="utf-8",
     )
+    (concept_dir / "似然函数.json").write_text(
+        json.dumps(
+            {
+                "name": "似然函数",
+                "body_md": "似然函数 measures parameter fit.",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (result_dir / "chapter-6.chapter.json").write_text(
         json.dumps(
             {
@@ -139,11 +178,11 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                     "chapter_id": "chapter-6",
                     "title": "Point Estimation",
                     "body_md": (
-                        "Opening explanation.\n\n"
+                        "Opening explanation introduces 似然函数 and point estimation.\n\n"
                         "Middle derivation with \\(\\frac{x}{\\theta}\\).\n\n"
                         "Closing application."
                     ),
-                    "concepts": ["Point Estimation"],
+                    "concepts": ["Point Estimation", "似然函数"],
                     "citations": [
                         {
                             "ref_id": "Week-9-p001",
@@ -221,7 +260,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
             }
         },
         "concept_pages": {
-            "Point Estimation": "work/agent_results/concepts/Point-Estimation.json"
+            "Point Estimation": "work/agent_results/concepts/Point-Estimation.json",
+            "似然函数": "work/agent_results/concepts/似然函数.json",
         },
     }
 
@@ -241,11 +281,17 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     chapter_text = chapter_page.read_text(encoding="utf-8")
     frontmatter = chapter_text.split("---", 2)[1]
     body = chapter_text.split("---", 2)[2]
+    assert "title: Chapter 6 Point Estimation" in frontmatter
     assert "summary: Point estimation summary." in frontmatter
     assert "concepts:" in frontmatter
     assert "- Point Estimation" in frontmatter
+    assert "- 似然函数" in frontmatter
+    assert body.lstrip().startswith("# Chapter 6 Point Estimation")
     assert "## Summary" not in body
     assert "## Concepts" not in body
+    assert "# [Point Estimation]" not in body
+    assert "[似然函数](../concepts/似然函数)" in body
+    assert "[point estimation](../concepts/Point-Estimation)" in body
     assert "<QuizBlock" in chapter_text
     assert "<QuizItem id=" in chapter_text
     quiz_item_ids = re.findall(r"<QuizItem id=\{\"([^\"]+)\"\}", chapter_text)
@@ -265,7 +311,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert '"question":' not in chapter_text
     assert '"front":' not in chapter_text
     assert body.count("<QuizBlock") == 2
-    assert body.find("Opening explanation.") < body.find("## Checkpoint")
+    assert body.find("Opening explanation") < body.find("## Checkpoint")
     assert body.find("## Checkpoint") < body.find("Middle derivation")
     assert body.find("Middle derivation") < body.find("## Practice")
     assert body.find("## Practice") < body.find("Closing application.")
@@ -292,4 +338,9 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "\n\n$$\nE(X)=\\theta\n$$\n\n" in concept_text
     assert "$\\hat\\theta$" in concept_text
     assert "## Referenced By" in concept_text
-    assert "[Point Estimation](../chapters/chapter-6)" in concept_text
+    assert "[Chapter 6 Point Estimation](../chapters/chapter-6)" in concept_text
+
+    zh_concept_page = book_dir / "content" / "docs" / "concepts" / "似然函数.mdx"
+    assert zh_concept_page.exists()
+    zh_concept_text = zh_concept_page.read_text(encoding="utf-8")
+    assert "[Chapter 6 Point Estimation](../chapters/chapter-6)" in zh_concept_text

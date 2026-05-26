@@ -29,11 +29,12 @@ Do not merge concepts that are merely related but distinct.""",
     )
 
     async def run(
-        self, inp: list[dict[str, Any]], *, model: str, runtime: LLMRuntime
+        self, inp: list[dict[str, Any]] | dict[str, Any], *, model: str, runtime: LLMRuntime
     ) -> ConceptReconcileResult:
+        candidates = inp.get("candidates", []) if isinstance(inp, dict) else inp
         by_key: dict[str, ConceptReconciledItem] = {}
         alias_to_key: dict[str, str] = {}
-        for item in inp:
+        for item in candidates:
             canonical = str(item["name"])
             aliases = [str(alias) for alias in item.get("aliases", [])]
             chapter_id = str(item.get("source_chapter_id", "ch01"))

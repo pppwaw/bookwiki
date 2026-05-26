@@ -11,6 +11,16 @@ if str(ROOT) not in sys.path:
 from bookwiki.scheduler.config import default_config, save_config  # noqa: E402
 from bookwiki.utils.files import copy_file, ensure_dir  # noqa: E402
 
+BOOK_NOTES_TEMPLATE = """# Book Notes
+
+## Teaching Notes
+- Example: We are teaching in English, so every key term should include its English name.
+
+## Source Notes
+- Example: xxx.pdf is the official textbook.
+- Example: yyy.pdf is a helpful supplemental textbook from another course.
+"""
+
 
 def default_source() -> Path | None:
     candidates = [
@@ -31,6 +41,8 @@ def init_book(book_dir: Path, source: Path | None = None, title: str | None = No
     ]:
         ensure_dir(path)
     save_config(cfg)
+    if not cfg.notes_file.exists():
+        cfg.notes_file.write_text(BOOK_NOTES_TEMPLATE, encoding="utf-8")
 
     selected = source or default_source()
     if selected is not None:

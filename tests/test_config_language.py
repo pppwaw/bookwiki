@@ -5,6 +5,7 @@ import sys
 
 from bookwiki.scheduler.config import default_config, load_config, save_config
 from scripts import site
+from scripts.init_book import init_book
 
 DEFAULT_GENERATION_EXPECTED = {
     "quizPerChapter": 5,
@@ -23,12 +24,18 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
 
     assert cfg.language == "zh-CN"
     assert cfg.generation == DEFAULT_GENERATION_EXPECTED
+    assert cfg.notes_path == "book.notes.md"
+    assert "lesson" in cfg.models
+    assert "quiz" not in cfg.models
 
     config_path = save_config(cfg)
     payload = json.loads(config_path.read_text(encoding="utf-8"))
 
     assert payload["language"] == "zh-CN"
     assert payload["generation"] == DEFAULT_GENERATION_EXPECTED
+    assert payload["notesPath"] == "book.notes.md"
+    assert "lesson" in payload["models"]
+    assert "quiz" not in payload["models"]
 
 
 def test_load_config_defaults_language_and_generation_for_existing_config(tmp_path) -> None:
@@ -43,6 +50,42 @@ def test_load_config_defaults_language_and_generation_for_existing_config(tmp_pa
 
     assert cfg.language == "zh-CN"
     assert cfg.generation == DEFAULT_GENERATION_EXPECTED
+    assert cfg.notes_path == "book.notes.md"
+    assert cfg.book_notes == ""
+
+
+def test_load_config_reads_user_book_notes(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    (book_dir / "book.config.json").write_text(
+        json.dumps(
+            {"book_id": "mini", "title": "Mini", "notesPath": "course-notes.md"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (book_dir / "course-notes.md").write_text(
+        "English teaching: include English terms for every concept.",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(book_dir)
+
+    assert cfg.notes_path == "course-notes.md"
+    assert cfg.book_notes == "English teaching: include English terms for every concept."
+
+
+def test_init_book_creates_editable_book_notes_template(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+
+    init_book(book_dir)
+
+    notes_path = book_dir / "book.notes.md"
+    assert notes_path.exists()
+    notes = notes_path.read_text(encoding="utf-8")
+    assert "Teaching Notes" in notes
+    assert "Source Notes" in notes
+    assert "xxx.pdf" in notes
 
 
 def test_load_config_merges_source_layout_repair_defaults(tmp_path) -> None:

@@ -276,9 +276,11 @@ class BookGraph:
         )
 
     def _config_hash(self) -> str:
-        payload = json.dumps(
-            self.cfg.to_json(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
+        config = self.cfg.to_json()
+        config["book_notes_hash"] = hashlib.sha256(
+            self.cfg.book_notes.encode("utf-8")
+        ).hexdigest()
+        payload = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def _state_after_config_change(

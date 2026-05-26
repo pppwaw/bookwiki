@@ -141,14 +141,16 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         """\
         ---
         chapter_id: chapter-1
-        title: Search
+        title: Chapter 1 Search
         type: chapter
         summary: Search summary.
         concepts:
         - state space
         ---
 
-        # Search
+        # Chapter 1 Search
+
+        Core idea [state space](../concepts/state-space).
 
         ## Quick Check
 
@@ -176,8 +178,6 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         </QuizExplanation>
         </QuizItem>
         </QuizBlock>
-
-        Core idea [state space](../concepts/state-space).
 
         Second paragraph.
 
@@ -219,7 +219,7 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
 
         ## Referenced By
 
-        - [Search](../chapters/chapter-1)
+        - [Chapter 1 Search](../chapters/chapter-1)
         """
     )
     assert index_mdx == dedent(
