@@ -66,7 +66,7 @@ flowchart LR
 
 - [ ] **`bookwiki/scheduler/graph.py`**:
   - [ ] LangGraph `StateGraph` 完整 10 个 node(§10.2)
-  - [ ] `interrupt_before=["split"]` 静态生效
+  - [x] `interrupt_before=["split"]` 静态生效
   - [x] `build_graph(cfg, stop_after=None, pause_after=[], dry_run=False)`,内部把 `stop_after` 转 `interrupt_after`
   - [x] `resume_or_start(graph, book_id)` 辅助函数(§17.6)
 - [x] **`bookwiki/scheduler/llm.py`**:
@@ -89,10 +89,10 @@ flowchart LR
 - [x] **`scripts/{convert,structure,split,generate,check,repair,index}.py`**:每个 4 行(§17.1)
 - [x] **`scripts/init_book.py`**:创建 `books/<id>/` 目录树
 - [x] **`scripts/site.py`**:物化 `site-template/` 到 `<book_dir>/site/`,复制 `<book_dir>/content/docs` 到站点本地 `content/docs`,保留 `.bookwiki/bookwiki.sqlite`,再 `pnpm dev`
-- [ ] **mini-book 用 stub 跑通**:`init_book → convert → structure → split → generate → check → index`,产 `bookwiki.sqlite`,site 能起来
+- [x] **mini-book 用 stub 跑通**:`init_book → convert → structure → split → generate → check → index`,产 `bookwiki.sqlite`,site 能起来
   - [x] `init_book → convert → structure → split → generate → check → index`
   - [x] 产 `bookwiki.sqlite`
-  - [ ] site 启动验证
+  - [x] site 启动验证
 
 ### 产物
 - `scripts/*.py` 9 个脚本可执行
