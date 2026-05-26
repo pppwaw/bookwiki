@@ -18,12 +18,14 @@ from bookwiki.agents import (
     ConceptReconcileAgent,
     QuizAgent,
     ReviewAgent,
+    SourceLayoutRepairAgent,
     SourceSummaryAgent,
     StructureAgent,
     SummaryAgent,
 )
 from bookwiki.convert.common import source_id_from_stem
-from bookwiki.convert.mineru_client import convert_document_to_md
+from bookwiki.convert.mineru_client import convert_document_to_source
+from bookwiki.convert.source_normalizer import NormalizedSource, normalize_structured_source
 from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
 from bookwiki.integrator.markdown_renderers import normalize_mdx_math
@@ -36,6 +38,9 @@ from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
 from bookwiki.utils.hashing import sha256_text
 
 State = dict[str, Any]
+
+APPROVED_STRUCTURE_MARKER = "# bookwiki: approved-structure"
+PENDING_STRUCTURE_MARKER = "# bookwiki: pending-structure-review"
 
 
 def _rel(path: Path, base: Path) -> str:
@@ -70,6 +75,26 @@ def _chapter_titles(approved_structure: str) -> list[tuple[str, str]]:
         (chapter.chapter_id, chapter.title)
         for chapter in parse_approved_structure(approved_structure)
     ]
+
+
+def _pending_approved_structure_text(proposed_structure: str) -> str:
+    return (
+        f"{PENDING_STRUCTURE_MARKER}\n"
+        "# Review this file, edit chapters/topics/source_refs as needed, then replace\n"
+        f"# the first marker with `{APPROVED_STRUCTURE_MARKER}` before running split.\n"
+        f"{proposed_structure.rstrip()}\n"
+    )
+
+
+def _assert_structure_approved(approved_structure: str) -> None:
+    if any(line.strip() == APPROVED_STRUCTURE_MARKER for line in approved_structure.splitlines()):
+        return
+    msg = (
+        "approved-structure.yaml is not marked as reviewed. Review "
+        "work/structure/proposed-structure.yaml, edit work/structure/approved-structure.yaml, "
+        f"then add a line exactly `{APPROVED_STRUCTURE_MARKER}` before running split."
+    )
+    raise ValueError(msg)
 
 
 def _cache_dir(cfg: BookConfig) -> Path:
@@ -119,34 +144,137 @@ def _citation_items(citations: list[dict[str, Any]]) -> list[dict[str, str]]:
     ]
 
 
-def _quiz_items_for_mdx(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rendered: list[dict[str, Any]] = []
-    for index, item in enumerate(items, start=1):
-        rendered.append(
-            {
-                "id": str(item.get("id") or f"quiz-{index:03d}"),
-                "question": str(item.get("question", "")),
-                "choices": [str(choice) for choice in item.get("choices", [])],
-                "answer": str(item.get("answer", "")),
-                "explanation": str(item.get("explanation", "")),
-                "citations": _citation_items(item.get("citations", [])),
-            }
-        )
-    return rendered
+def _source_citation_md(citations: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for item in citations:
+        ref_id = str(item.get("ref_id", "")).strip()
+        quote = str(item.get("quote", "")).strip()
+        if not ref_id:
+            continue
+        quote_md = _escape_mdx_text_outside_math(_source_quote_markdown(quote))
+        lines.append(f"- `{ref_id}`: {quote_md}")
+    return "\n".join(lines)
 
 
-def _card_items_for_mdx(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rendered: list[dict[str, Any]] = []
+def _source_quote_markdown(quote: str) -> str:
+    return _wrap_bare_latex_commands(normalize_mdx_math(quote))
+
+
+def _wrap_bare_latex_commands(markdown: str) -> str:
+    parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|```[\s\S]*?```|`[^`\n]*`)", markdown)
+    return "".join(
+        part if part.startswith(("`", "$")) else _wrap_latex_segment(part) for part in parts
+    )
+
+
+def _wrap_latex_segment(segment: str) -> str:
+    brace_arg = r"\{[^{}\n]*(?:\{[^{}\n]*\}[^{}\n]*)*\}"
+    command = re.compile(
+        rf"\\[A-Za-z]+(?:{brace_arg})*(?:[_^](?:{brace_arg}|[A-Za-z0-9]+))*"
+    )
+    return command.sub(lambda match: f"${match.group(0)}$", segment)
+
+
+def _escape_mdx_text_outside_math(markdown: str) -> str:
+    parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|```[\s\S]*?```|`[^`\n]*`)", markdown)
+    return "".join(
+        part if part.startswith(("`", "$")) else _escape_mdx_text_segment(part)
+        for part in parts
+    )
+
+
+def _escape_mdx_text_segment(segment: str) -> str:
+    return (
+        segment.replace("&", "&amp;")
+        .replace("\\{", "&#123;")
+        .replace("\\}", "&#125;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("{", "&#123;")
+        .replace("}", "&#125;")
+    )
+
+
+def _markdown_text(value: Any) -> str:
+    return _escape_mdx_text_outside_math(
+        _wrap_bare_latex_commands(normalize_mdx_math(str(value)))
+    )
+
+
+def _jsx_prop(name: str, value: Any) -> str:
+    return f"{name}={{{_mdx_prop(value)}}}"
+
+
+def _mdx_child(tag: str, value: Any) -> str:
+    return f"<{tag}>\n{_markdown_text(value).strip()}\n</{tag}>"
+
+
+def _choice_id(index: int) -> str:
+    return f"choice-{index}"
+
+
+def _quiz_item_mdx(item: dict[str, Any], index: int) -> str:
+    choices = [_markdown_text(choice) for choice in item.get("choices", [])]
+    answer = _markdown_text(item.get("answer", "")).strip()
+    answer_id = next(
+        (
+            _choice_id(choice_index)
+            for choice_index, choice in enumerate(choices, start=1)
+            if choice.strip() == answer
+        ),
+        _choice_id(1),
+    )
+    props = " ".join(
+        [
+            _jsx_prop("id", str(item.get("id") or f"quiz-{index:03d}")),
+            _jsx_prop("answer", answer_id),
+            _jsx_prop("citations", _citation_items(item.get("citations", []))),
+        ]
+    )
+    choice_mdx = "\n".join(
+        f"<QuizChoice {_jsx_prop('id', _choice_id(choice_index))}>\n{choice}\n</QuizChoice>"
+        for choice_index, choice in enumerate(choices, start=1)
+    )
+    return "\n".join(
+        [
+            f"<QuizItem {props}>",
+            _mdx_child("QuizQuestion", item.get("question", "")),
+            choice_mdx,
+            _mdx_child("QuizExplanation", item.get("explanation", "")),
+            "</QuizItem>",
+        ]
+    )
+
+
+def _quiz_items_mdx(items: list[dict[str, Any]]) -> str:
+    rendered: list[str] = []
     for index, item in enumerate(items, start=1):
-        rendered.append(
-            {
-                "id": str(item.get("id") or f"card-{index:03d}"),
-                "front": str(item.get("front", "")),
-                "back": str(item.get("back", "")),
-                "citations": _citation_items(item.get("citations", [])),
-            }
-        )
-    return rendered
+        rendered.append(_quiz_item_mdx(item, index))
+    return "\n\n".join(rendered)
+
+
+def _card_item_mdx(item: dict[str, Any], index: int) -> str:
+    props = " ".join(
+        [
+            _jsx_prop("id", str(item.get("id") or f"card-{index:03d}")),
+            _jsx_prop("citations", _citation_items(item.get("citations", []))),
+        ]
+    )
+    return "\n".join(
+        [
+            f"<AnkiCard {props}>",
+            _mdx_child("AnkiFront", item.get("front", "")),
+            _mdx_child("AnkiBack", item.get("back", "")),
+            "</AnkiCard>",
+        ]
+    )
+
+
+def _card_items_mdx(items: list[dict[str, Any]]) -> str:
+    rendered: list[str] = []
+    for index, item in enumerate(items, start=1):
+        rendered.append(_card_item_mdx(item, index))
+    return "\n\n".join(rendered)
 
 
 def _frontmatter(data: dict[str, Any]) -> str:
@@ -155,8 +283,7 @@ def _frontmatter(data: dict[str, Any]) -> str:
 
 
 def _quiz_block_mdx(title: str, items: list[dict[str, Any]]) -> str:
-    props = _mdx_prop(_quiz_items_for_mdx(items))
-    return f"## {title or 'Quiz'}\n\n<QuizBlock items={{{props}}} />"
+    return f"## {title or 'Quiz'}\n\n<QuizBlock>\n{_quiz_items_mdx(items)}\n</QuizBlock>"
 
 
 def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
@@ -444,29 +571,112 @@ def _replace_invalid_citation_refs(value: Any, allowed_refs: set[str], replaceme
             _replace_invalid_citation_refs(item, allowed_refs, replacement)
 
 
-def convert_node(state: State, cfg: BookConfig) -> State:
+async def convert_node(state: State, cfg: BookConfig) -> State:
     input_files = sorted(path for path in cfg.input_dir.iterdir() if path.is_file())
     if not input_files:
         msg = f"no input files found in {cfg.input_dir}"
         raise FileNotFoundError(msg)
 
     out_dir = ensure_dir(cfg.work_dir / "sources_md")
+    manifest_dir = ensure_dir(cfg.work_dir / "source_refs")
     outputs: list[str] = []
+    manifests: list[str] = []
     for path in input_files:
         source_id = source_id_from_stem(path.stem)
         out_path = out_dir / f"{source_id}.md"
+        manifest_path = manifest_dir / f"{source_id}.json"
         suffix = path.suffix.lower()
         if suffix in {".pdf", ".pptx"}:
-            body = convert_document_to_md(path, source_id=source_id)
+            parsed = convert_document_to_source(path, source_id=source_id)
+            normalized = await _normalize_with_layout_repair(parsed, source_id, cfg)
+            body = normalized.markdown
+            manifest = normalized.manifest
         elif suffix in {".txt", ".md"}:
             body = convert_text_to_md(path, source_id=source_id)
+            normalized = normalize_structured_source(raw_md=body, source_id=source_id)
+            manifest = normalized.manifest
         else:
             msg = f"unsupported source file type: {path.name}"
             raise ValueError(msg)
         write_text(out_path, body)
+        write_json(manifest_path, manifest)
         outputs.append(_rel(out_path, cfg.book_dir))
+        manifests.append(_rel(manifest_path, cfg.book_dir))
 
-    return {"sources_md": outputs}
+    return {"sources_md": outputs, "source_ref_manifests": manifests}
+
+
+async def _normalize_with_layout_repair(
+    parsed: dict[str, Any], source_id: str, cfg: BookConfig
+) -> NormalizedSource:
+    settings = _source_layout_repair_settings(cfg)
+    normalized = normalize_structured_source(
+        raw_md=str(parsed.get("markdown") or ""),
+        source_id=source_id,
+        content_list_v2=parsed.get("content_list_v2"),
+        content_list=parsed.get("content_list"),
+        min_confidence=settings["min_confidence"],
+        max_candidates=settings["max_candidates"],
+    )
+    if settings["mode"] == "off" or not normalized.repair_candidates:
+        return normalized
+
+    result = await run_with_cache(
+        SourceLayoutRepairAgent,
+        {
+            "source_id": source_id,
+            "candidates": normalized.repair_candidates,
+            "manifest": normalized.manifest,
+        },
+        model=cfg.model_for("source_layout_repair"),
+        cache_dir=_cache_dir(cfg),
+        runtime=cfg.llm_runtime,
+    )
+    patches = [
+        patch.model_dump(mode="json")
+        for patch in result.result.patches
+        if patch.confidence >= settings["min_confidence"]
+    ]
+    if not patches:
+        return normalized
+    return normalize_structured_source(
+        raw_md=str(parsed.get("markdown") or ""),
+        source_id=source_id,
+        content_list_v2=parsed.get("content_list_v2"),
+        content_list=parsed.get("content_list"),
+        repair_patches=patches,
+        min_confidence=settings["min_confidence"],
+        max_candidates=settings["max_candidates"],
+    )
+
+
+def _source_layout_repair_settings(cfg: BookConfig) -> dict[str, Any]:
+    raw = cfg.generation.get("sourceLayoutRepair")
+    settings = raw if isinstance(raw, dict) else {}
+    mode = str(settings.get("mode", "auto")).lower()
+    if mode not in {"auto", "off"}:
+        mode = "auto"
+    return {
+        "mode": mode,
+        "min_confidence": _float_setting(settings.get("minConfidence"), 0.85),
+        "max_candidates": _int_setting(settings.get("maxCandidatesPerSource"), 20),
+    }
+
+
+def _float_setting(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed
+
+
+def _int_setting(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 async def structure_node(state: State, cfg: BookConfig) -> State:
@@ -500,11 +710,15 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
     )
     approved_path = out_dir / "approved-structure.yaml"
     if not approved_path.exists():
-        write_text(approved_path, structure.result.proposed_structure_yaml)
+        write_text(
+            approved_path,
+            _pending_approved_structure_text(structure.result.proposed_structure_yaml),
+        )
     write_text(
         out_dir / "structure-review.md",
         "# Structure Review\n\n"
-        "Review `proposed-structure.yaml`, edit `approved-structure.yaml`, then run split.\n\n"
+        "Review `proposed-structure.yaml`, edit `approved-structure.yaml`, then replace "
+        f"`{PENDING_STRUCTURE_MARKER}` with `{APPROVED_STRUCTURE_MARKER}` before running split.\n\n"
         f"Source summaries: {len(summaries)}\n",
     )
 
@@ -520,6 +734,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
         "approved_structure", "work/structure/approved-structure.yaml"
     )
     approved_structure = approved_path.read_text(encoding="utf-8")
+    _assert_structure_approved(approved_structure)
     source_paths = [cfg.book_dir / rel for rel in state.get("sources_md", [])]
     split = await run_with_cache(
         ChapterSplitAgent,
@@ -765,9 +980,8 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         quiz = _agent_result(read_json(cfg.book_dir / paths["quiz"]))
         card = _agent_result(read_json(cfg.book_dir / paths["card"]))
         citations = chapter.get("citations", [])
-        citation_md = "\n".join(f"- `{c['ref_id']}`: {c['quote']}" for c in citations)
-        card_props = _mdx_prop(_card_items_for_mdx(card.get("items", [])))
-        card_mdx = f"<AnkiDeck cards={{{card_props}}} />"
+        citation_md = _source_citation_md(citations)
+        card_mdx = f"<AnkiDeck>\n{_card_items_mdx(card.get('items', []))}\n</AnkiDeck>"
         concept_names = [str(name) for name in chapter.get("concepts", [])]
         for name in concept_names:
             concept_backlinks.setdefault(name, []).append(

@@ -143,7 +143,15 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                         "Closing application."
                     ),
                     "concepts": ["Point Estimation"],
-                    "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
+                    "citations": [
+                        {
+                            "ref_id": "Week-9-p001",
+                            "quote": (
+                                "The moment estimator is \\hat{\\theta}_M = "
+                                "\\frac{1}{2n} \\sum X_i^2."
+                            ),
+                        }
+                    ],
                 }
             },
             ensure_ascii=False,
@@ -161,10 +169,10 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                     "chapter_id": "chapter-6",
                     "items": [
                         {
-                            "question": "What is point estimation?",
-                            "choices": ["Estimate a parameter", "Delete samples"],
-                            "answer": "Estimate a parameter",
-                            "explanation": "It returns a single estimate.",
+                            "question": "What does \\(\\hat\\theta\\) estimate?",
+                            "choices": ["Estimate \\(\\theta\\)", "Delete samples"],
+                            "answer": "Estimate \\(\\theta\\)",
+                            "explanation": "It returns a single estimate of \\(\\theta\\).",
                             "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
                         },
                         {
@@ -191,8 +199,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                     "chapter_id": "chapter-6",
                     "items": [
                         {
-                            "front": "Point estimation",
-                            "back": "Estimate an unknown parameter with one value.",
+                            "front": "Point estimation for \\(\\theta\\)",
+                            "back": "Estimate an unknown parameter with \\[\\hat\\theta\\].",
                             "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
                         }
                     ],
@@ -238,18 +246,36 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "## Summary" not in body
     assert "## Concepts" not in body
     assert "<QuizBlock" in chapter_text
+    assert "<QuizItem id=" in chapter_text
+    assert "<QuizQuestion>" in chapter_text
+    assert "<QuizChoice id=" in chapter_text
+    assert "<QuizExplanation>" in chapter_text
     assert "<AnkiDeck" in chapter_text
+    assert "<AnkiCard id=" in chapter_text
+    assert "<AnkiFront>" in chapter_text
+    assert "<AnkiBack>" in chapter_text
+    assert "items={" not in chapter_text
+    assert "cards={" not in chapter_text
+    assert '"question":' not in chapter_text
+    assert '"front":' not in chapter_text
     assert body.count("<QuizBlock") == 2
     assert body.find("Opening explanation.") < body.find("## Checkpoint")
     assert body.find("## Checkpoint") < body.find("Middle derivation")
     assert body.find("Middle derivation") < body.find("## Practice")
     assert body.find("## Practice") < body.find("Closing application.")
     assert body.rfind("<AnkiDeck") > body.rfind("<QuizBlock")
-    assert body.rstrip().endswith("/>")
+    assert body.rstrip().endswith("</AnkiDeck>")
     assert "```quiz" not in chapter_text
     assert "```card" not in chapter_text
     assert "\\(" not in chapter_text
+    assert "\\[" not in chapter_text
     assert "$\\frac{x}{\\theta}$" in chapter_text
+    assert "$\\hat\\theta$" in chapter_text
+    assert "$\\theta$" in chapter_text
+    assert "$$\n\\hat\\theta\n$$" in chapter_text
+    assert "The moment estimator is $\\hat{\\theta}_M$" in chapter_text
+    assert "$\\frac{1}{2n}$" in chapter_text
+    assert "<Markdown" not in chapter_text
 
     concept_page = book_dir / "content" / "docs" / "concepts" / "Point-Estimation.mdx"
     assert concept_page.exists()

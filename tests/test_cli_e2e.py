@@ -8,9 +8,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+APPROVED_STRUCTURE_MARKER = "# bookwiki: approved-structure"
+PENDING_STRUCTURE_MARKER = "# bookwiki: pending-structure-review"
 
 
-def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
+def run_script(
+    *args: str, cwd: Path = ROOT, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
     env["BOOKWIKI_TEST_LLM"] = "1"
@@ -20,8 +24,21 @@ def run_script(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]
         env=env,
         text=True,
         capture_output=True,
-        check=True,
+        check=check,
     )
+
+
+def approve_structure(book_dir: Path) -> None:
+    approved = book_dir / "work" / "structure" / "approved-structure.yaml"
+    text = approved.read_text(encoding="utf-8")
+    lines = [line.strip() for line in text.splitlines()]
+    if APPROVED_STRUCTURE_MARKER in lines:
+        return
+    if PENDING_STRUCTURE_MARKER in lines:
+        text = text.replace(PENDING_STRUCTURE_MARKER, APPROVED_STRUCTURE_MARKER, 1)
+    else:
+        text = f"{APPROVED_STRUCTURE_MARKER}\n{text}"
+    approved.write_text(text, encoding="utf-8")
 
 
 def test_init_book_and_run_fake_llm_pipeline_pauses_for_structure_review(tmp_path) -> None:
@@ -42,6 +59,13 @@ def test_init_book_and_run_fake_llm_pipeline_pauses_for_structure_review(tmp_pat
     assert manifest["status"] == "paused"
     assert manifest["next_node"] == "split"
     assert manifest["nodes"][-1]["name"] == "structure"
+    assert PENDING_STRUCTURE_MARKER in (
+        book_dir / "work" / "structure" / "approved-structure.yaml"
+    ).read_text(encoding="utf-8")
+
+    blocked = run_script("scripts/run.py", str(book_dir), "--resume", check=False)
+    assert blocked.returncode != 0
+    assert "approved-structure.yaml is not marked as reviewed" in blocked.stderr
 
 
 def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
@@ -51,6 +75,7 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
 
     run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
     run_script("scripts/run.py", str(book_dir))
+    approve_structure(book_dir)
     run_script("scripts/run.py", str(book_dir), "--resume")
     resumed = run_script("scripts/run.py", str(book_dir), "--resume")
 
@@ -140,6 +165,7 @@ def test_structure_then_split_allows_manual_approved_structure_edit(tmp_path) ->
 
     approved = book_dir / "work" / "structure" / "approved-structure.yaml"
     approved.write_text(
+        f"{APPROVED_STRUCTURE_MARKER}\n"
         "chapters:\n"
         "  - title: Chapter 1 Intro Search\n"
         "    topics:\n"

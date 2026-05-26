@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import Field
+from typing import Literal
+
+from pydantic import Field, field_validator
 
 from bookwiki.schemas.common import VersionedModel
 
@@ -32,3 +34,28 @@ class RepairResult(VersionedModel):
     owner_task_id: str
     action: str
     notes: str
+
+
+class SourceLayoutPatch(VersionedModel):
+    action: Literal[
+        "link_table_parts",
+        "attach_caption",
+        "promote_heading",
+        "demote_repeating_header_footer",
+    ]
+    source_block_id: str
+    target_block_id: str | None = None
+    confidence: float = 0.0
+    reason: str = ""
+
+    @field_validator("source_block_id", "target_block_id", "reason")
+    @classmethod
+    def strip_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
+class SourceLayoutRepairResult(VersionedModel):
+    patches: list[SourceLayoutPatch] = Field(default_factory=list)
+    notes: str = ""

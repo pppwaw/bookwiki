@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "site-template"
 
@@ -17,8 +16,8 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "fumadocs-ui" in deps
     assert "better-sqlite3" in deps
     assert "remark-math" in deps
-    assert "rehype-katex" in deps
     assert "katex" in deps
+    assert "rehype-katex" not in deps
 
     source_config = (SITE / "source.config.ts").read_text(encoding="utf-8")
     root_layout = (SITE / "app" / "layout.tsx").read_text(encoding="utf-8")
@@ -34,8 +33,8 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "BOOKWIKI_CONTENT_DIR" not in source_config
     assert "providerImportSource" in source_config
     assert "remarkMath" in source_config
-    assert "rehypeKatex" in source_config
-    assert "rehypePlugins: (v) => [rehypeKatex, ...v]" in source_config
+    assert "rehypeKatex" not in source_config
+    assert "rehypePlugins" not in source_config
     assert "katex/dist/katex.css" in root_layout
     assert "collections/server" in source
     assert "loader" in source
@@ -59,6 +58,9 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     chat_route = (SITE / "app" / "api" / "chat" / "route.ts").read_text(encoding="utf-8")
     search_route = (SITE / "app" / "api" / "search" / "route.ts").read_text(encoding="utf-8")
     chat_box = (SITE / "components" / "ChatBox.tsx").read_text(encoding="utf-8")
+    quiz_block = (SITE / "components" / "QuizBlock.tsx").read_text(encoding="utf-8")
+    anki_deck = (SITE / "components" / "AnkiDeck.tsx").read_text(encoding="utf-8")
+    markdown = (SITE / "components" / "markdown.tsx").read_text(encoding="utf-8")
 
     for component in [
         "ConceptLink",
@@ -70,6 +72,8 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
         assert component in mdx_components
 
     assert "SearchBox" not in mdx_components
+    assert "MathCode" in mdx_components
+    assert "MathPre" in mdx_components
     assert not (SITE / "components" / "SearchBox.tsx").exists()
     assert not (SITE / "app" / "api" / "bookwiki" / "search" / "route.ts").exists()
     assert "readonly: true" in sqlite
@@ -83,6 +87,13 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "searchChunks" not in search_route
     assert "searchChunks" in chat_route
     assert "fetch(\"/api/chat\"" in chat_box
+    assert "Markdown" not in quiz_block
+    assert "Markdown" not in anki_deck
+    assert "children" in quiz_block
+    assert "children" in anki_deck
+    assert "splitMathSegments" in markdown
+    assert "remarkMath" not in markdown
+    assert "rehypeKatex" not in markdown
     assert "NEXT_PUBLIC_OPENAI_API_KEY" not in (sqlite + rag + chat_route + search_route)
 
 
@@ -111,7 +122,15 @@ def test_site_template_contains_sample_mdx_content_for_m6a() -> None:
     joined_concepts = "\n".join(path.read_text(encoding="utf-8") for path in concepts)
 
     assert "<QuizBlock" in joined_chapters
+    assert "<QuizItem" in joined_chapters
+    assert "<QuizQuestion>" in joined_chapters
+    assert "<QuizChoice" in joined_chapters
     assert "<AnkiDeck" in joined_chapters
+    assert "<AnkiCard" in joined_chapters
+    assert "<AnkiFront>" in joined_chapters
+    assert "<AnkiBack>" in joined_chapters
+    assert "items={" not in joined_chapters
+    assert "cards={" not in joined_chapters
     assert "<SourceRef" in joined_chapters
     assert "<ConceptLink" in joined_chapters
     assert "<SourceRef" in joined_concepts

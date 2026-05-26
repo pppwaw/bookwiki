@@ -217,6 +217,58 @@ async def test_content_agents_pass_allowed_refs_in_validation_context() -> None:
 
 
 @pytest.mark.asyncio
+async def test_concept_agent_allows_all_context_source_refs() -> None:
+    payload = {
+        "canonical": "mean square error",
+        "source_chapter_ids": ["chapter-6"],
+        "chapter_contexts": [
+            {
+                "chapter_id": "chapter-6",
+                "title": "Point Estimation",
+                "source_md": (
+                    "<!-- source_ref: Week-10-p020 -->\n"
+                    "Mean square error definition.\n\n"
+                    "<!-- source_ref: Week-10-p021 -->\n"
+                    "Unbiased estimator context."
+                ),
+                "citations": [
+                    {"ref_id": "Week-10-p020", "quote": "Mean square error definition."}
+                ],
+            }
+        ],
+    }
+    runtime = RecordingRuntime(
+        [
+            {
+                "name": "mean square error",
+                "body_md": "MSE relates estimator error to variance.",
+                "related": [],
+                "citations": [
+                    {"ref_id": "Week-10-p021", "quote": "Unbiased estimator context."}
+                ],
+                "owner_task_id": "concept:mean square error",
+            },
+            {
+                "name": "mean square error",
+                "body_md": "MSE relates estimator error to variance.",
+                "related": [],
+                "citations": [
+                    {"ref_id": "Week-10-p021", "quote": "Unbiased estimator context."}
+                ],
+                "owner_task_id": "concept:mean square error",
+            },
+        ]
+    )
+
+    result = await ConceptAgent().run(payload, model="deepseek-v4-flash", runtime=runtime)
+
+    assert result.citations[0].ref_id == "Week-10-p021"
+    assert runtime.calls[0]["context"] == {
+        "allowed_citation_refs": {"Week-10-p020", "Week-10-p021"}
+    }
+
+
+@pytest.mark.asyncio
 async def test_chapter_agent_wraps_source_as_document_chunks() -> None:
     payload = {
         "chapter_id": "chapter-1",

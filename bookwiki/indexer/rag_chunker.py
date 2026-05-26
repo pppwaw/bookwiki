@@ -89,7 +89,8 @@ def _heading_sections(body: str) -> list[tuple[str | None, str | None, str]]:
 
 
 def _plain_text(text: str) -> str:
-    text = re.sub(r"<(QuizBlock|AnkiDeck)\b[^>]*>\s*", "", text, flags=re.DOTALL)
+    text = re.sub(r"<(QuizBlock|AnkiDeck)\b[\s\S]*?</\1>", "", text)
+    text = re.sub(r"<(QuizBlock|AnkiDeck)\b[^>]*/>\s*", "", text, flags=re.DOTALL)
     text = re.sub(r"<SourceRef\b[^>]*>\s*", "", text)
     text = re.sub(r"<!--\s*source_ref:\s*[^>]+-->", "", text)
     text = re.sub(r"^\s*---\s*$", "", text, flags=re.MULTILINE)

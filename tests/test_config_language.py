@@ -6,19 +6,29 @@ import sys
 from bookwiki.scheduler.config import default_config, load_config, save_config
 from scripts import site
 
+DEFAULT_GENERATION_EXPECTED = {
+    "quizPerChapter": 5,
+    "cardsPerChapter": 8,
+    "sourceLayoutRepair": {
+        "mode": "auto",
+        "minConfidence": 0.85,
+        "maxCandidatesPerSource": 20,
+    },
+}
+
 
 def test_default_config_writes_language_and_generation_defaults(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
     cfg = default_config(book_dir)
 
     assert cfg.language == "zh-CN"
-    assert cfg.generation == {"quizPerChapter": 5, "cardsPerChapter": 8}
+    assert cfg.generation == DEFAULT_GENERATION_EXPECTED
 
     config_path = save_config(cfg)
     payload = json.loads(config_path.read_text(encoding="utf-8"))
 
     assert payload["language"] == "zh-CN"
-    assert payload["generation"] == {"quizPerChapter": 5, "cardsPerChapter": 8}
+    assert payload["generation"] == DEFAULT_GENERATION_EXPECTED
 
 
 def test_load_config_defaults_language_and_generation_for_existing_config(tmp_path) -> None:
@@ -32,7 +42,31 @@ def test_load_config_defaults_language_and_generation_for_existing_config(tmp_pa
     cfg = load_config(book_dir)
 
     assert cfg.language == "zh-CN"
-    assert cfg.generation == {"quizPerChapter": 5, "cardsPerChapter": 8}
+    assert cfg.generation == DEFAULT_GENERATION_EXPECTED
+
+
+def test_load_config_merges_source_layout_repair_defaults(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    (book_dir / "book.config.json").write_text(
+        json.dumps(
+            {
+                "book_id": "mini",
+                "title": "Mini",
+                "generation": {"sourceLayoutRepair": {"mode": "off"}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(book_dir)
+
+    assert cfg.generation["sourceLayoutRepair"] == {
+        "mode": "off",
+        "minConfidence": 0.85,
+        "maxCandidatesPerSource": 20,
+    }
 
 
 def test_site_main_sets_site_language_from_book_config(

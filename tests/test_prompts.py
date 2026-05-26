@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 
+from bookwiki.agents.card_agent import CardAgent
 from bookwiki.agents.chapter_agent import ChapterAgent
 from bookwiki.agents.concept_agent import ConceptAgent
 from bookwiki.agents.prompting import PromptTemplate, prompt_cache_key, render_prompt
+from bookwiki.agents.quiz_agent import QuizAgent
 from bookwiki.agents.summary_agent import SummaryAgent
 from bookwiki.scheduler import cache as cache_module
 
@@ -111,7 +113,7 @@ def test_m4_content_prompts_are_embedded_in_agent_modules() -> None:
 
 
 def test_content_agents_request_markdown_math_syntax() -> None:
-    for agent_cls in [ChapterAgent, ConceptAgent]:
+    for agent_cls in [ChapterAgent, ConceptAgent, QuizAgent, CardAgent]:
         body = agent_cls.prompt_template.body
         assert "Markdown math" in body
         assert "$...$" in body

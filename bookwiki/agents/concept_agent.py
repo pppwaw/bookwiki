@@ -31,6 +31,7 @@ Do not invent cross-links or facts.""",
         chapters = [str(ch) for ch in inp.get("source_chapter_ids", ["ch01"])]
         contexts = [item for item in inp.get("chapter_contexts", []) if isinstance(item, dict)]
         citations = _context_citations(contexts)
+        allowed_refs = _context_source_refs(contexts)
         draft = ConceptResult(
             name=name,
             body_md=_draft_body(name, chapters, contexts),
@@ -47,7 +48,7 @@ Do not invent cross-links or facts.""",
             prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
-            allowed_citation_refs={item.ref_id for item in citations},
+            allowed_citation_refs=allowed_refs,
         )
         return ConceptResult.model_validate(result)
 
@@ -71,6 +72,17 @@ def _context_citations(contexts: list[dict[str, Any]]) -> list[Citation]:
         for ref_id in _source_refs(str(context.get("source_md", ""))):
             return [Citation(ref_id=ref_id, quote="source context")]
     return []
+
+
+def _context_source_refs(contexts: list[dict[str, Any]]) -> set[str]:
+    refs: set[str] = set()
+    for context in contexts:
+        for item in context.get("citations", []):
+            ref_id = str(item.get("ref_id", "")).strip()
+            if ref_id:
+                refs.add(ref_id)
+        refs.update(_source_refs(str(context.get("source_md", ""))))
+    return refs
 
 
 def _source_refs(source_md: str) -> list[str]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from bookwiki.utils.files import ensure_dir, write_json
 
 DEFAULT_MODELS = {
     "source_summary": "deepseek-v4-flash",
+    "source_layout_repair": "deepseek-v4-flash",
     "structure": "deepseek-v4-pro",
     "split": "deepseek-v4-flash",
     "chapter": "deepseek-v4-pro",
@@ -19,7 +21,15 @@ DEFAULT_MODELS = {
     "review": "deepseek-v4-pro",
 }
 
-DEFAULT_GENERATION = {"quizPerChapter": 5, "cardsPerChapter": 8}
+DEFAULT_GENERATION = {
+    "quizPerChapter": 5,
+    "cardsPerChapter": 8,
+    "sourceLayoutRepair": {
+        "mode": "auto",
+        "minConfidence": 0.85,
+        "maxCandidatesPerSource": 20,
+    },
+}
 
 
 @dataclass
@@ -30,7 +40,7 @@ class BookConfig:
     language: str = "zh-CN"
     models: dict[str, str] = field(default_factory=lambda: DEFAULT_MODELS.copy())
     budget: dict[str, Any] = field(default_factory=lambda: {"maxCostUsd": 2.0})
-    generation: dict[str, Any] = field(default_factory=lambda: DEFAULT_GENERATION.copy())
+    generation: dict[str, Any] = field(default_factory=lambda: deepcopy(DEFAULT_GENERATION))
     pause_after: list[str] = field(default_factory=list)
     dry_run: bool = False
     force_from: str | None = None
@@ -105,7 +115,7 @@ def load_config(book_dir: str | Path) -> BookConfig:
         language=str(raw.get("language") or "zh-CN"),
         models={**DEFAULT_MODELS, **raw.get("models", {})},
         budget={**{"maxCostUsd": 2.0}, **raw.get("budget", {})},
-        generation={**DEFAULT_GENERATION, **raw.get("generation", {})},
+        generation=_merge_generation(raw.get("generation", {})),
     )
 
 
@@ -120,3 +130,19 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _merge_generation(raw: Any) -> dict[str, Any]:
+    merged = deepcopy(DEFAULT_GENERATION)
+    if not isinstance(raw, dict):
+        return merged
+    for key, value in raw.items():
+        if key == "sourceLayoutRepair" and isinstance(value, dict):
+            nested = merged.get("sourceLayoutRepair")
+            if isinstance(nested, dict):
+                nested.update(value)
+            else:
+                merged[key] = value
+        else:
+            merged[key] = value
+    return merged

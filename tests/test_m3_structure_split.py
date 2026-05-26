@@ -8,7 +8,7 @@ import yaml
 
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
 from bookwiki.agents.structure_agent import StructureAgent
-from bookwiki.pipeline.nodes import split_node, structure_node
+from bookwiki.pipeline.nodes import APPROVED_STRUCTURE_MARKER, split_node, structure_node
 from bookwiki.scheduler.config import default_config
 from bookwiki.scheduler.llm import TestLLMRuntime
 from bookwiki.split.chapter_splitter import (
@@ -238,6 +238,36 @@ def test_split_sources_by_structure_aligns_fragments_and_writes_appendix(tmp_pat
     assert "| textbook | 1 | 1 | 1 |" in result.report_md
 
 
+def test_split_sources_by_structure_accepts_page_ref_ranges(tmp_path: Path) -> None:
+    source = tmp_path / "source.md"
+    source.write_text(
+        "# Source\n\n"
+        "<!-- source_ref: source-p001 -->\n\n"
+        "Intro material.\n\n"
+        "<!-- source_ref: source-p002 -->\n\n"
+        "Point estimation table.\n\n"
+        "<!-- source_ref: source-p003 -->\n\n"
+        "Point estimation continuation.\n\n"
+        "<!-- source_ref: source-p004 -->\n\n"
+        "Appendix material.\n",
+        encoding="utf-8",
+    )
+    approved = """chapters:
+  - title: Chapter 6 Point Estimation
+    topics:
+      - Point estimation
+    source_refs:
+      - source-p002..source-p003
+"""
+
+    result = split_sources_by_structure([source], approved)
+
+    assert "source-p002" in result.chapters["chapter-6"]
+    assert "source-p003" in result.chapters["chapter-6"]
+    assert "source-p001" not in result.chapters["chapter-6"]
+    assert "source-p004" in result.chapters["appendix"]
+
+
 def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: Path) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     cfg.llm_runtime = TestLLMRuntime()
@@ -259,7 +289,7 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
 
     structure_state = asyncio.run(structure_node(state, cfg))
     approved_path = cfg.book_dir / structure_state["approved_structure"]
-    approved_path.write_text(APPROVED, encoding="utf-8")
+    approved_path.write_text(f"{APPROVED_STRUCTURE_MARKER}\n{APPROVED}", encoding="utf-8")
 
     split_state = asyncio.run(split_node({**state, **structure_state}, cfg))
 
@@ -274,6 +304,34 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
     assert alignment["coverage"]["assigned_ratio"] == 1.0
     assert split_state["chapter_titles"]["chapter-1"] == "Search Foundations"
     assert not stale.exists()
+
+
+def test_split_node_requires_reviewed_approved_structure_marker(tmp_path: Path) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    sources_dir = cfg.work_dir / "sources_md"
+    structure_dir = cfg.work_dir / "structure"
+    sources_dir.mkdir(parents=True)
+    structure_dir.mkdir(parents=True)
+    source = sources_dir / "textbook.md"
+    source.write_text(
+        "<!-- source_ref: textbook-p001 -->\n\nIntroductory search material.",
+        encoding="utf-8",
+    )
+    approved_path = structure_dir / "approved-structure.yaml"
+    approved_path.write_text(APPROVED, encoding="utf-8")
+
+    state = {
+        "book_id": cfg.book_id,
+        "sources_md": ["work/sources_md/textbook.md"],
+        "approved_structure": "work/structure/approved-structure.yaml",
+    }
+
+    try:
+        asyncio.run(split_node(state, cfg))
+    except ValueError as exc:
+        assert APPROVED_STRUCTURE_MARKER in str(exc)
+    else:
+        raise AssertionError("split_node should require an approved structure marker")
 
 
 def test_structure_node_cache_key_changes_when_language_changes(tmp_path: Path) -> None:

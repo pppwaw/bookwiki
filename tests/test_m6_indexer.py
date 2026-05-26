@@ -21,11 +21,20 @@ def test_parse_mdx_file_extracts_frontmatter_components_and_source_refs(tmp_path
         "---\n"
         "# Search Basics\n\n"
         "A search frontier ranks nodes. <SourceRef id=\"textbook-p001\" />\n\n"
-        "<QuizBlock items={[{\"id\":\"q1\",\"question\":\"Pick one\","
-        "\"choices\":[\"A\",\"B\"],\"answer\":\"A\",\"explanation\":\"Because\","
-        "\"citations\":[{\"ref_id\":\"textbook-p001\"}]}]} />\n\n"
-        "<AnkiDeck cards={[{\"id\":\"c1\",\"front\":\"Front\",\"back\":\"Back\","
-        "\"citations\":[{\"ref_id\":\"lecture-slide02\"}]}]} />\n",
+        "<QuizBlock>\n"
+        "  <QuizItem id=\"q1\" answer=\"choice-1\" citations={[{\"ref_id\":\"textbook-p001\"}]}>\n"
+        "    <QuizQuestion>Pick one</QuizQuestion>\n"
+        "    <QuizChoice id=\"choice-1\">A</QuizChoice>\n"
+        "    <QuizChoice id=\"choice-2\">B</QuizChoice>\n"
+        "    <QuizExplanation>Because</QuizExplanation>\n"
+        "  </QuizItem>\n"
+        "</QuizBlock>\n\n"
+        "<AnkiDeck>\n"
+        "  <AnkiCard id=\"c1\" citations={[{\"ref_id\":\"lecture-slide02\"}]}>\n"
+        "    <AnkiFront>Front</AnkiFront>\n"
+        "    <AnkiBack>Back</AnkiBack>\n"
+        "  </AnkiCard>\n"
+        "</AnkiDeck>\n",
         encoding="utf-8",
     )
 
@@ -86,13 +95,20 @@ def test_build_sqlite_index_writes_full_schema_fts_and_learning_items(tmp_path: 
         "# Search Basics\n\n"
         "A frontier stores generated nodes. <SourceRef id=\"textbook-p001\" />\n\n"
         "## Practice\n\n"
-        "<QuizBlock items={[{\"id\":\"q1\",\"question\":\"What stores nodes?\","
-        "\"choices\":[\"Frontier\",\"Goal\"],\"answer\":\"Frontier\","
-        "\"explanation\":\"The frontier stores generated nodes.\","
-        "\"citations\":[{\"ref_id\":\"textbook-p001\"}]}]} />\n\n"
-        "<AnkiDeck cards={[{\"id\":\"c1\",\"front\":\"Frontier\","
-        "\"back\":\"Generated node container\","
-        "\"citations\":[{\"ref_id\":\"textbook-p001\"}]}]} />\n",
+        "<QuizBlock>\n"
+        "  <QuizItem id=\"q1\" answer=\"choice-1\" citations={[{\"ref_id\":\"textbook-p001\"}]}>\n"
+        "    <QuizQuestion>What stores nodes?</QuizQuestion>\n"
+        "    <QuizChoice id=\"choice-1\">Frontier</QuizChoice>\n"
+        "    <QuizChoice id=\"choice-2\">Goal</QuizChoice>\n"
+        "    <QuizExplanation>The frontier stores generated nodes.</QuizExplanation>\n"
+        "  </QuizItem>\n"
+        "</QuizBlock>\n\n"
+        "<AnkiDeck>\n"
+        "  <AnkiCard id=\"c1\" citations={[{\"ref_id\":\"textbook-p001\"}]}>\n"
+        "    <AnkiFront>Frontier</AnkiFront>\n"
+        "    <AnkiBack>Generated node container</AnkiBack>\n"
+        "  </AnkiCard>\n"
+        "</AnkiDeck>\n",
         encoding="utf-8",
     )
     concept.write_text(

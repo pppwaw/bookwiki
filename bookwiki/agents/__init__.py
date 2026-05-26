@@ -8,6 +8,7 @@ from bookwiki.agents.concept_extract import ConceptExtractAgent
 from bookwiki.agents.concept_reconcile import ConceptReconcileAgent
 from bookwiki.agents.quiz_agent import QuizAgent
 from bookwiki.agents.review_agent import ReviewAgent
+from bookwiki.agents.source_layout_repair_agent import SourceLayoutRepairAgent
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
 from bookwiki.agents.structure_agent import StructureAgent
 from bookwiki.agents.summary_agent import SummaryAgent
@@ -21,6 +22,7 @@ __all__ = [
     "ConceptReconcileAgent",
     "QuizAgent",
     "ReviewAgent",
+    "SourceLayoutRepairAgent",
     "SourceSummaryAgent",
     "StructureAgent",
     "SummaryAgent",

@@ -30,6 +30,9 @@ Each question must have at least two plausible choices and exactly one answer ma
 one of the choices.
 Explanations should teach why the answer is correct.
 Use citations from the chapter source for each item.
+Use Markdown math syntax in questions, choices, answers, and explanations:
+$...$ for inline formulas and $$...$$ for display formulas.
+Do not use \\( ... \\) or \\[ ... \\] math delimiters.
 Choose how many QuizBlock placements the chapter needs and where they belong.
 Use placements.after_block to insert after a 0-based chapter_body_blocks entry
 and placements.item_indexes as 1-based references into the items list.

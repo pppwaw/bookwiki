@@ -33,6 +33,7 @@ NODE_ORDER = [
 NODE_OUTPUT_KEYS = {
     "convert": {
         "sources_md",
+        "source_ref_manifests",
     },
     "structure": {
         "proposed_structure",

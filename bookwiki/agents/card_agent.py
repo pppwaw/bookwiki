@@ -28,6 +28,9 @@ Create exactly the requested cards_per_chapter number of cards when provided.
 The front should be a question, term, or prompt that is easy to review.
 The back should be short, precise, and source-grounded.
 Prefer high-value concepts, definitions, formula meanings, and common confusions.
+Use Markdown math syntax on card fronts and backs: $...$ for inline formulas
+and $$...$$ for display formulas.
+Do not use \\( ... \\) or \\[ ... \\] math delimiters.
 Avoid cards that merely repeat a chapter title or ask vague questions.""",
     )
 

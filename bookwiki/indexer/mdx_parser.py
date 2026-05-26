@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -108,7 +109,97 @@ def _component_items(body: str, component: str, prop: str) -> list[dict[str, Any
             continue
         if isinstance(parsed, list):
             items.extend(item for item in parsed if isinstance(item, dict))
+    if component == "QuizBlock":
+        items.extend(_quiz_child_items(body))
+    elif component == "AnkiDeck":
+        items.extend(_anki_child_items(body))
     return items
+
+
+def _quiz_child_items(body: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for block in _component_blocks(body, "QuizBlock"):
+        for item_block in _component_blocks(block["body"], "QuizItem"):
+            choices = []
+            answer_id = _prop_value(item_block["attrs"], "answer")
+            answer = answer_id or ""
+            for choice_block in _component_blocks(item_block["body"], "QuizChoice"):
+                choice_id = _prop_value(choice_block["attrs"], "id") or ""
+                choice_text = _clean_child_text(choice_block["body"])
+                choices.append(choice_text)
+                if choice_id and choice_id == answer_id:
+                    answer = choice_text
+            items.append(
+                {
+                    "id": _prop_value(item_block["attrs"], "id") or "",
+                    "question": _first_child_text(item_block["body"], "QuizQuestion"),
+                    "choices": choices,
+                    "answer": answer,
+                    "answer_id": answer_id,
+                    "explanation": _first_child_text(item_block["body"], "QuizExplanation"),
+                    "citations": _prop_json(item_block["attrs"], "citations", default=[]),
+                }
+            )
+    return items
+
+
+def _anki_child_items(body: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for block in _component_blocks(body, "AnkiDeck"):
+        for card_block in _component_blocks(block["body"], "AnkiCard"):
+            items.append(
+                {
+                    "id": _prop_value(card_block["attrs"], "id") or "",
+                    "front": _first_child_text(card_block["body"], "AnkiFront"),
+                    "back": _first_child_text(card_block["body"], "AnkiBack"),
+                    "citations": _prop_json(card_block["attrs"], "citations", default=[]),
+                }
+            )
+    return items
+
+
+def _component_blocks(body: str, component: str) -> list[dict[str, str]]:
+    pattern = re.compile(
+        rf"<{re.escape(component)}(?P<attrs>\s[^>]*)?>(?P<body>[\s\S]*?)</{re.escape(component)}>",
+        flags=re.DOTALL,
+    )
+    return [
+        {"attrs": match.group("attrs") or "", "body": match.group("body")}
+        for match in pattern.finditer(body)
+    ]
+
+
+def _first_child_text(body: str, component: str) -> str:
+    blocks = _component_blocks(body, component)
+    if not blocks:
+        return ""
+    return _clean_child_text(blocks[0]["body"])
+
+
+def _clean_child_text(value: str) -> str:
+    return textwrap.dedent(value).strip()
+
+
+def _prop_value(attrs: str, prop: str) -> str | None:
+    braced = _extract_braced_prop(attrs, prop)
+    if braced is not None:
+        try:
+            value = json.loads(braced)
+        except json.JSONDecodeError:
+            return braced.strip()
+        return str(value) if value is not None else None
+    match = re.search(rf"\b{re.escape(prop)}=(['\"])(.*?)\1", attrs, flags=re.DOTALL)
+    return match.group(2) if match else None
+
+
+def _prop_json(attrs: str, prop: str, default: Any) -> Any:
+    value = _extract_braced_prop(attrs, prop)
+    if value is None:
+        return default
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return default
 
 
 def _extract_braced_prop(tag: str, prop: str) -> str | None:
