@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
@@ -13,10 +15,13 @@ from typing import Any
 
 from bookwiki.convert.common import SOURCE_REF_RE, clean_markdown, source_id_from_stem
 from bookwiki.convert.source_normalizer import normalize_structured_source
+from bookwiki.scheduler.llm import load_dotenv
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_CLOUD_V4_API_BASE_URL = "https://mineru.net"
 DEFAULT_TIMEOUT_SECONDS = 20.0
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+DEFAULT_MODEL_VERSION = "vlm"
 COMPLETED_TASK_STATUSES = {"completed", "success", "succeeded", "done"}
 FAILED_TASK_STATUSES = {"failed", "error", "cancelled", "canceled"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -50,6 +55,7 @@ def convert_pdf_to_md(
     *,
     source_id: str | None = None,
     api_base_url: str | None = None,
+    backend: str | None = None,
     timeout_seconds: float | None = None,
     poll_interval_seconds: float | None = None,
 ) -> str:
@@ -57,6 +63,7 @@ def convert_pdf_to_md(
         path,
         source_id=source_id,
         api_base_url=api_base_url,
+        backend=backend,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
     )
@@ -67,6 +74,7 @@ def convert_document_to_md(
     *,
     source_id: str | None = None,
     api_base_url: str | None = None,
+    backend: str | None = None,
     timeout_seconds: float | None = None,
     poll_interval_seconds: float | None = None,
 ) -> str:
@@ -76,6 +84,7 @@ def convert_document_to_md(
         path,
         source_id=resolved_source_id,
         api_base_url=api_base_url,
+        backend=backend,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
     )
@@ -87,9 +96,11 @@ def convert_document_to_source(
     *,
     source_id: str | None = None,
     api_base_url: str | None = None,
+    backend: str | None = None,
     timeout_seconds: float | None = None,
     poll_interval_seconds: float | None = None,
 ) -> dict[str, Any]:
+    load_dotenv()
     document_path = Path(path)
     resolved_source_id = source_id_from_stem(source_id or document_path.stem)
     timeout = timeout_seconds or float(
@@ -98,6 +109,30 @@ def convert_document_to_source(
     poll_interval = poll_interval_seconds or float(
         os.getenv("MINERU_API_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS)
     )
+    resolved_backend = _resolve_backend(backend)
+    if resolved_backend == "cloud-v4":
+        api_url = (
+            api_base_url or os.getenv("MINERU_CLOUD_API_URL") or DEFAULT_CLOUD_V4_API_BASE_URL
+        ).rstrip("/")
+        token = _cloud_api_token()
+        try:
+            result = _parse_with_cloud_v4(
+                document_path,
+                api_url,
+                token,
+                timeout,
+                poll_interval,
+                resolved_source_id,
+            )
+        except Exception as exc:
+            msg = (
+                "MinerU cloud-v4 API is required for PDF/PPTX conversion, "
+                f"but parsing failed: {exc}"
+            )
+            raise MineruConversionError(msg) from exc
+        result["source_id"] = resolved_source_id
+        return result
+
     api_url = (api_base_url or os.getenv("MINERU_API_URL") or DEFAULT_API_BASE_URL).rstrip("/")
 
     if not _health_check(api_url, timeout):
@@ -135,6 +170,24 @@ def _split_pages(raw_md: str) -> list[str]:
     return [raw_md]
 
 
+def _resolve_backend(backend: str | None) -> str:
+    value = (backend or os.getenv("MINERU_BACKEND") or "local").strip().lower()
+    if value in {"local", "mineru-api", "self-hosted", "selfhosted"}:
+        return "local"
+    if value in {"cloud", "cloud-v4", "mineru-cloud-v4"}:
+        return "cloud-v4"
+    msg = "MINERU_BACKEND must be one of: local, cloud-v4"
+    raise MineruConversionError(msg)
+
+
+def _cloud_api_token() -> str:
+    token = os.getenv("MINERU_API_TOKEN") or os.getenv("MINERU_TOKEN")
+    if not token:
+        msg = "MINERU_API_TOKEN is required when MINERU_BACKEND=cloud-v4"
+        raise MineruConversionError(msg)
+    return token
+
+
 def _health_check(api_base_url: str, timeout_seconds: float) -> bool:
     request = urllib.request.Request(f"{api_base_url}/health", method="GET")
     try:
@@ -159,6 +212,50 @@ def _parse_with_api(
     return _extract_source_from_api_response(result, path.stem)
 
 
+def _parse_with_cloud_v4(
+    path: Path,
+    api_base_url: str,
+    token: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+    source_id: str,
+) -> dict[str, Any]:
+    submitted = _submit_cloud_v4_upload(path, api_base_url, token, timeout_seconds, source_id)
+    data = _cloud_response_data(submitted, "signed upload URL request")
+    batch_id = _cloud_batch_id(data)
+    upload_url = _cloud_upload_url(data)
+    _put_file(upload_url, path, timeout_seconds)
+    result = _wait_for_cloud_v4_result(
+        api_base_url,
+        token,
+        batch_id,
+        path.name,
+        timeout_seconds,
+        poll_interval_seconds,
+    )
+    zip_url = _cloud_zip_url(result, path.name)
+    payload = _download_bytes(zip_url, timeout_seconds)
+    if not _looks_like_zip(payload, ""):
+        msg = f"MinerU cloud-v4 result for {path.name!r} was not a zip file"
+        raise MineruConversionError(msg)
+    return _extract_source_from_zip(payload)
+
+
+def _submit_cloud_v4_upload(
+    path: Path, api_base_url: str, token: str, timeout_seconds: float, source_id: str
+) -> dict[str, Any]:
+    payload = {
+        "files": [{"name": path.name, "data_id": source_id}],
+        "model_version": os.getenv("MINERU_MODEL_VERSION", DEFAULT_MODEL_VERSION),
+    }
+    return _post_json(
+        _cloud_v4_url(api_base_url, "/api/v4/file-urls/batch"),
+        payload,
+        timeout_seconds,
+        headers=_cloud_auth_headers(token),
+    )
+
+
 def _submit_task(path: Path, api_base_url: str, timeout_seconds: float) -> dict[str, Any]:
     body, content_type = _multipart_body(
         fields={
@@ -178,6 +275,96 @@ def _submit_task(path: Path, api_base_url: str, timeout_seconds: float) -> dict[
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         payload = response.read()
     return json.loads(payload.decode("utf-8", errors="replace"))
+
+
+def _cloud_v4_url(api_base_url: str, path: str) -> str:
+    base = api_base_url.rstrip("/")
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    if base.endswith("/api/v4"):
+        normalized_path = normalized_path.removeprefix("/api/v4")
+    return f"{base}{normalized_path}"
+
+
+def _cloud_auth_headers(token: str) -> dict[str, str]:
+    return {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+
+def _post_json(
+    url: str, payload: dict[str, Any], timeout_seconds: float, *, headers: dict[str, str]
+) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        response_body = response.read()
+    return json.loads(response_body.decode("utf-8", errors="replace"))
+
+
+def _cloud_response_data(response: dict[str, Any], context: str) -> dict[str, Any]:
+    code = response.get("code", 0)
+    if code not in {0, "0"}:
+        msg = f"MinerU cloud-v4 {context} failed: {response.get('msg') or code}"
+        raise MineruConversionError(msg)
+    data = response.get("data")
+    if not isinstance(data, dict):
+        msg = f"MinerU cloud-v4 {context} response did not include data"
+        raise MineruConversionError(msg)
+    return data
+
+
+def _cloud_batch_id(data: dict[str, Any]) -> str:
+    batch_id = data.get("batch_id")
+    if not isinstance(batch_id, str) or not batch_id:
+        msg = "MinerU cloud-v4 response did not include batch_id"
+        raise MineruConversionError(msg)
+    return batch_id
+
+
+def _cloud_upload_url(data: dict[str, Any]) -> str:
+    urls = data.get("file_urls") or data.get("upload_urls")
+    if not isinstance(urls, list) or not urls:
+        msg = "MinerU cloud-v4 response did not include file_urls"
+        raise MineruConversionError(msg)
+    first = urls[0]
+    if isinstance(first, str) and first:
+        return first
+    if isinstance(first, dict):
+        for key in ("upload_url", "file_url", "url"):
+            value = first.get(key)
+            if isinstance(value, str) and value:
+                return value
+    msg = "MinerU cloud-v4 response did not include an upload URL"
+    raise MineruConversionError(msg)
+
+
+def _put_file(upload_url: str, path: Path, timeout_seconds: float) -> None:
+    payload = path.read_bytes()
+    parsed = urllib.parse.urlsplit(upload_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        msg = f"MinerU cloud-v4 upload URL is invalid: {upload_url!r}"
+        raise MineruConversionError(msg)
+    target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+    connection_cls = (
+        http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    )
+    connection = connection_cls(parsed.netloc, timeout=timeout_seconds)
+    try:
+        connection.request(
+            "PUT",
+            target,
+            body=payload,
+            headers={"Content-Length": str(len(payload))},
+        )
+        response = connection.getresponse()
+        response.read()
+        if response.status >= 400:
+            msg = f"MinerU cloud-v4 file upload failed with HTTP {response.status}"
+            raise MineruConversionError(msg)
+    finally:
+        connection.close()
 
 
 def _task_id_from_response(data: dict[str, Any]) -> str:
@@ -213,11 +400,84 @@ def _wait_for_task_result(
     raise MineruConversionError(msg)
 
 
-def _get_json(url: str, timeout_seconds: float) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+def _wait_for_cloud_v4_result(
+    api_base_url: str,
+    token: str,
+    batch_id: str,
+    file_name: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_status: str | None = None
+    url = _cloud_v4_url(api_base_url, f"/api/v4/extract-results/batch/{batch_id}")
+    headers = _cloud_auth_headers(token)
+    while time.monotonic() < deadline:
+        status_data = _get_json(url, timeout_seconds, headers=headers)
+        data = _cloud_response_data(status_data, "batch status request")
+        result = _cloud_extract_result(data, file_name)
+        status = str(result.get("state", "")).lower()
+        last_status = status or last_status
+        if status in COMPLETED_TASK_STATUSES:
+            return result
+        if status in FAILED_TASK_STATUSES:
+            msg = f"MinerU cloud-v4 batch {batch_id} failed: {result.get('err_msg') or status}"
+            raise MineruConversionError(msg)
+        time.sleep(max(poll_interval_seconds, 0.01))
+
+    msg = f"MinerU cloud-v4 batch {batch_id} timed out after {timeout_seconds:g}s"
+    if last_status:
+        msg += f" (last status: {last_status})"
+    raise MineruConversionError(msg)
+
+
+def _cloud_extract_result(data: dict[str, Any], file_name: str) -> dict[str, Any]:
+    results = data.get("extract_result")
+    if isinstance(results, dict):
+        return results
+    if not isinstance(results, list) or not results:
+        msg = "MinerU cloud-v4 batch response did not include extract_result"
+        raise MineruConversionError(msg)
+    for item in results:
+        if isinstance(item, dict) and item.get("file_name") == file_name:
+            return item
+    for item in results:
+        if isinstance(item, dict):
+            return item
+    msg = "MinerU cloud-v4 batch response did not include a usable extract_result"
+    raise MineruConversionError(msg)
+
+
+def _cloud_zip_url(result: dict[str, Any], file_name: str) -> str:
+    for key in ("full_zip_url", "zip_url"):
+        value = result.get(key)
+        if isinstance(value, str) and value:
+            return value
+    msg = f"MinerU cloud-v4 result did not include full_zip_url for {file_name!r}"
+    raise MineruConversionError(msg)
+
+
+def _get_json(
+    url: str, timeout_seconds: float, *, headers: dict[str, str] | None = None
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        headers=headers or {"Accept": "application/json"},
+        method="GET",
+    )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         payload = response.read()
     return json.loads(payload.decode("utf-8", errors="replace"))
+
+
+def _download_bytes(url: str, timeout_seconds: float) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/zip, application/octet-stream, */*"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        return response.read()
 
 
 def _get_task_result(url: str, timeout_seconds: float) -> dict[str, Any]:

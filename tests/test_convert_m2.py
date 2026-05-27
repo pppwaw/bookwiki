@@ -13,6 +13,7 @@ import pytest
 from bookwiki.convert.mineru_client import (
     MineruConversionError,
     convert_document_to_md,
+    convert_document_to_source,
     convert_pdf_to_md,
     normalize_mineru_markdown,
     normalize_mineru_parse_result,
@@ -22,6 +23,22 @@ from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.pipeline.nodes import convert_node
 from bookwiki.scheduler.config import default_config
 from tests.fakes import RecordingRuntime
+
+
+@pytest.fixture(autouse=True)
+def isolated_mineru_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BOOKWIKI_DOTENV_PATH", "C:/definitely/missing/bookwiki.env")
+    for name in (
+        "MINERU_BACKEND",
+        "MINERU_CLOUD_API_URL",
+        "MINERU_API_URL",
+        "MINERU_API_TOKEN",
+        "MINERU_TOKEN",
+        "MINERU_MODEL_VERSION",
+        "MINERU_API_TIMEOUT_SECONDS",
+        "MINERU_API_POLL_INTERVAL_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 class _AsyncMineruHandler(BaseHTTPRequestHandler):
@@ -137,6 +154,122 @@ class _ZipMineruHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class _CloudV4MineruHandler(BaseHTTPRequestHandler):
+    request_paths: list[str] = []
+    status_polls = 0
+    submitted_payload: dict[str, object] = {}
+    auth_header = ""
+    uploaded_body = b""
+    upload_content_type: str | None = None
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_POST(self) -> None:
+        self.__class__.request_paths.append(self.path)
+        self.__class__.auth_header = self.headers.get("Authorization", "")
+        length = int(self.headers.get("content-length", "0"))
+        body = self.rfile.read(length) if length else b"{}"
+        if self.path == "/api/v4/file-urls/batch":
+            self.__class__.submitted_payload = json.loads(body.decode("utf-8"))
+            upload_url = f"http://127.0.0.1:{self.server.server_port}/upload/tiny.pdf"
+            self._write_json(
+                {
+                    "code": 0,
+                    "data": {
+                        "batch_id": "batch-1",
+                        "file_urls": [
+                            {
+                                "file_name": "tiny.pdf",
+                                "upload_url": upload_url,
+                            }
+                        ],
+                    },
+                    "msg": "ok",
+                }
+            )
+            return
+        self.send_error(404)
+
+    def do_PUT(self) -> None:
+        self.__class__.request_paths.append(self.path)
+        self.__class__.upload_content_type = self.headers.get("Content-Type")
+        length = int(self.headers.get("content-length", "0"))
+        self.__class__.uploaded_body = self.rfile.read(length) if length else b""
+        if self.path == "/upload/tiny.pdf":
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_error(404)
+
+    def do_GET(self) -> None:
+        self.__class__.request_paths.append(self.path)
+        if self.path == "/api/v4/extract-results/batch/batch-1":
+            self.__class__.status_polls += 1
+            state = "done" if self.__class__.status_polls >= 2 else "running"
+            result: dict[str, object] = {
+                "file_name": "tiny.pdf",
+                "state": state,
+                "err_msg": "",
+            }
+            if state == "done":
+                result["full_zip_url"] = (
+                    f"http://127.0.0.1:{self.server.server_port}/result/tiny.zip"
+                )
+            self._write_json(
+                {
+                    "code": 0,
+                    "data": {"batch_id": "batch-1", "extract_result": [result]},
+                    "msg": "ok",
+                }
+            )
+            return
+        if self.path == "/result/tiny.zip":
+            self._write_zip()
+            return
+        self.send_error(404)
+
+    def _write_json(self, payload: dict[str, object]) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _write_zip(self) -> None:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("tiny/full.md", "Cloud combined markdown")
+            archive.writestr("tiny/images/figure-1.png", b"\x89PNG\r\n\x1a\ncloud")
+            archive.writestr(
+                "tiny/tiny_content_list_v2.json",
+                json.dumps(
+                    [
+                        {
+                            "page_idx": 0,
+                            "items": [
+                                {"type": "text", "content": "Cloud page one."},
+                                {
+                                    "type": "image",
+                                    "img_path": "images/figure-1.png",
+                                    "bbox": [4, 5, 60, 70],
+                                },
+                            ],
+                        },
+                        {"page_idx": 1, "items": [{"type": "text", "content": "Cloud page two."}]},
+                    ]
+                ),
+            )
+        body = buffer.getvalue()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 @pytest.fixture
 def async_mineru_api() -> str:
     _AsyncMineruHandler.request_paths = []
@@ -158,6 +291,25 @@ def zip_mineru_api() -> str:
     _ZipMineruHandler.status_polls = 0
     _ZipMineruHandler.submitted_body = b""
     server = ThreadingHTTPServer(("127.0.0.1", 0), _ZipMineruHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def cloud_v4_mineru_api() -> str:
+    _CloudV4MineruHandler.request_paths = []
+    _CloudV4MineruHandler.status_polls = 0
+    _CloudV4MineruHandler.submitted_payload = {}
+    _CloudV4MineruHandler.auth_header = ""
+    _CloudV4MineruHandler.uploaded_body = b""
+    _CloudV4MineruHandler.upload_content_type = None
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _CloudV4MineruHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -473,6 +625,142 @@ def test_convert_document_to_md_extracts_content_list_v2_from_zip_result(
     assert "Zip page two." in md
 
 
+def test_cloud_v4_requires_mineru_api_token(
+    tmp_path: Path, cloud_v4_mineru_api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pdf = tmp_path / "tiny.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    monkeypatch.delenv("MINERU_API_TOKEN", raising=False)
+    monkeypatch.delenv("MINERU_TOKEN", raising=False)
+
+    with pytest.raises(MineruConversionError, match="MINERU_API_TOKEN"):
+        convert_document_to_md(
+            pdf,
+            source_id="tiny",
+            api_base_url=cloud_v4_mineru_api,
+            backend="cloud-v4",
+            timeout_seconds=5,
+            poll_interval_seconds=0.01,
+        )
+
+    assert _CloudV4MineruHandler.request_paths == []
+
+
+def test_convert_document_to_md_uses_mineru_cloud_v4_upload_flow(
+    tmp_path: Path, cloud_v4_mineru_api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pdf = tmp_path / "tiny.pdf"
+    pdf_bytes = b"%PDF-1.4\n%%EOF\n"
+    pdf.write_bytes(pdf_bytes)
+    monkeypatch.setenv("MINERU_API_TOKEN", "cloud-token")
+
+    md = convert_document_to_md(
+        pdf,
+        source_id="tiny",
+        api_base_url=cloud_v4_mineru_api,
+        backend="cloud-v4",
+        timeout_seconds=5,
+        poll_interval_seconds=0.01,
+    )
+
+    assert "<!-- source_ref: tiny-p001 -->" in md
+    assert "<!-- source_ref: tiny-p002 -->" in md
+    assert "Cloud page one." in md
+    assert "Cloud page two." in md
+    assert _CloudV4MineruHandler.auth_header == "Bearer cloud-token"
+    assert _CloudV4MineruHandler.uploaded_body == pdf_bytes
+    assert _CloudV4MineruHandler.upload_content_type is None
+    assert _CloudV4MineruHandler.submitted_payload == {
+        "files": [{"name": "tiny.pdf", "data_id": "tiny"}],
+        "model_version": "vlm",
+    }
+    assert "/api/v4/file-urls/batch" in _CloudV4MineruHandler.request_paths
+    assert "/upload/tiny.pdf" in _CloudV4MineruHandler.request_paths
+    assert "/api/v4/extract-results/batch/batch-1" in _CloudV4MineruHandler.request_paths
+    assert "/result/tiny.zip" in _CloudV4MineruHandler.request_paths
+    assert "/health" not in _CloudV4MineruHandler.request_paths
+    assert "/tasks" not in _CloudV4MineruHandler.request_paths
+
+
+def test_cloud_v4_uses_cloud_url_instead_of_local_mineru_api_url(
+    tmp_path: Path, cloud_v4_mineru_api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pdf = tmp_path / "tiny.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    monkeypatch.setenv("MINERU_BACKEND", "cloud-v4")
+    monkeypatch.setenv("MINERU_API_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("MINERU_CLOUD_API_URL", cloud_v4_mineru_api)
+    monkeypatch.setenv("MINERU_API_TOKEN", "cloud-token")
+
+    md = convert_document_to_md(
+        pdf,
+        source_id="tiny",
+        timeout_seconds=5,
+        poll_interval_seconds=0.01,
+    )
+
+    assert "Cloud page one." in md
+    assert "/api/v4/file-urls/batch" in _CloudV4MineruHandler.request_paths
+
+
+def test_convert_document_loads_mineru_settings_from_dotenv(
+    tmp_path: Path, cloud_v4_mineru_api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pdf = tmp_path / "tiny.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "\n".join(
+            [
+                "MINERU_BACKEND=cloud-v4",
+                f"MINERU_CLOUD_API_URL={cloud_v4_mineru_api}",
+                "MINERU_API_TOKEN=cloud-token",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for name in (
+        "MINERU_BACKEND",
+        "MINERU_CLOUD_API_URL",
+        "MINERU_API_URL",
+        "MINERU_API_TOKEN",
+        "MINERU_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("BOOKWIKI_DOTENV_PATH", str(env_path))
+
+    md = convert_document_to_md(
+        pdf,
+        source_id="tiny",
+        timeout_seconds=5,
+        poll_interval_seconds=0.01,
+    )
+
+    assert "Cloud page one." in md
+    assert "/api/v4/file-urls/batch" in _CloudV4MineruHandler.request_paths
+
+
+def test_convert_document_to_source_preserves_cloud_v4_assets(
+    tmp_path: Path, cloud_v4_mineru_api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pdf = tmp_path / "tiny.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    monkeypatch.setenv("MINERU_API_TOKEN", "cloud-token")
+
+    parsed = convert_document_to_source(
+        pdf,
+        source_id="tiny",
+        api_base_url=cloud_v4_mineru_api,
+        backend="cloud-v4",
+        timeout_seconds=5,
+        poll_interval_seconds=0.01,
+    )
+
+    assert parsed["source_id"] == "tiny"
+    assert parsed["assets"][0]["filename"] == "figure-1.png"
+    assert parsed["assets"][0]["data"] == b"\x89PNG\r\n\x1a\ncloud"
+
+
 def test_convert_pptx_to_md_uses_async_mineru_tasks(
     tmp_path: Path, async_mineru_api: str
 ) -> None:
@@ -561,6 +849,33 @@ def test_convert_node_writes_mineru_zip_image_assets_and_manifest(
     assert image_block["type"] == "image"
     assert image_block["asset_path"] == "work/assets/tiny/figure-1.png"
     assert image_block["bbox"] == [1, 2, 30, 40]
+
+
+def test_convert_node_uses_mineru_cloud_v4_backend(
+    tmp_path: Path, cloud_v4_mineru_api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    pdf = cfg.input_dir / "tiny.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    monkeypatch.setenv("MINERU_BACKEND", "cloud-v4")
+    monkeypatch.setenv("MINERU_CLOUD_API_URL", cloud_v4_mineru_api)
+    monkeypatch.setenv("MINERU_API_TOKEN", "cloud-token")
+    monkeypatch.setenv("MINERU_API_POLL_INTERVAL_SECONDS", "0.01")
+    cfg.generation["visionCaption"] = {"mode": "off"}
+
+    state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+
+    source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
+    assert "Cloud page one." in source_md
+    assert 'src="/bookwiki-assets/tiny/figure-1.png"' in source_md
+    assert (cfg.work_dir / "assets" / "tiny" / "figure-1.png").read_bytes() == (
+        b"\x89PNG\r\n\x1a\ncloud"
+    )
+    manifest = json.loads(
+        (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
+    )
+    assert manifest["pages"][0]["blocks"][1]["asset_path"] == "work/assets/tiny/figure-1.png"
 
 
 def test_convert_node_propagates_mineru_api_errors_for_pdf(tmp_path: Path, monkeypatch) -> None:
