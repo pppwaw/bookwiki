@@ -84,8 +84,8 @@ function createProcessor(): Processor {
         components: {
           ...defaultMdxComponents,
           pre: Pre,
-          p: options?.inline ? InlineParagraph : undefined,
-          img: undefined,
+          ...(options?.inline ? { p: InlineParagraph } : {}),
+          img: IgnoredImage,
         },
       });
     },
@@ -111,6 +111,10 @@ function Pre(props: ComponentProps<'pre'>) {
 
 function InlineParagraph(props: ComponentProps<'span'>) {
   return <span {...props} />;
+}
+
+function IgnoredImage() {
+  return null;
 }
 
 const processor = createProcessor();

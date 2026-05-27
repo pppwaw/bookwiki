@@ -95,7 +95,9 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "createFromSource" in search_route
     assert "searchChunks" not in search_route
     assert "searchChunks" in chat_route
-    assert "fetch(\"/api/chat\"" in chat_box
+    assert "useChat" in chat_box
+    assert "DefaultChatTransport" in chat_box
+    assert "fetch(\"/api/chat\"" not in chat_box
     assert "Markdown" not in quiz_block
     assert "Markdown" not in anki_deck
     assert "children" in quiz_block
@@ -134,15 +136,53 @@ def test_quiz_block_item_effects_are_stable_against_context_state_updates() -> N
 
 
 def test_official_ai_panel_is_backed_by_bookwiki_chat_api() -> None:
+    package = json.loads((SITE / "package.json").read_text(encoding="utf-8"))
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
     panel = (SITE / "components" / "ai" / "search.tsx").read_text(encoding="utf-8")
     chat_route = (SITE / "app" / "api" / "chat" / "route.ts").read_text(encoding="utf-8")
+    rag = (SITE / "lib" / "rag.ts").read_text(encoding="utf-8")
 
+    assert "BOOKWIKI_CHAT_API_KEY=" in env_example
+    assert "BOOKWIKI_CHAT_BASE_URL=" in env_example
+    assert "BOOKWIKI_CHAT_MODEL=" in env_example
+    assert "OPENROUTER_API_KEY" not in env_example
+    assert "ai" in package["dependencies"]
+    assert "@ai-sdk/react" in package["dependencies"]
+    assert "@openrouter/ai-sdk-provider" in package["dependencies"]
     assert "AISearchPanel" in panel
     assert "AISearchTrigger" in panel
-    assert "fetch(\"/api/chat\"" in panel
-    assert "@ai-sdk/react" not in panel
+    assert "useChat" in panel
+    assert "DefaultChatTransport" in panel
+    assert "prepareSendMessagesRequest" in panel
+    assert "fetch(\"/api/chat\"" not in panel
+    assert "usePathname" in panel
+    assert "pagePath" in panel
+    assert "@ai-sdk/react" in panel
+    assert "createOpenRouter" in chat_route
+    assert "streamText" in chat_route
+    assert "toUIMessageStreamResponse" in chat_route
+    assert "generateText" not in chat_route
+    assert "stepCountIs" in chat_route
+    assert "tool(" in chat_route
+    assert "OPENROUTER_API_KEY" not in chat_route
+    assert "BOOKWIKI_CHAT_API_KEY" in chat_route
+    assert "BOOKWIKI_CHAT_BASE_URL" in chat_route
+    assert "BOOKWIKI_CHAT_MODEL" in chat_route
+    assert "google/gemma-4-31b-it" in chat_route
+    assert "search_book" in chat_route
+    assert "get_current_article" in chat_route
+    assert "promptFromQuestion" in chat_route
+    assert "<current_article>" in chat_route
     assert "searchChunks" in chat_route
-    assert "answerWithChatModel" in chat_route
+    assert "answerWithChatModel" not in chat_route
+    assert "currentArticleFromPath" in rag
+
+
+def test_ai_markdown_renderer_does_not_register_undefined_components() -> None:
+    markdown = (SITE / "components" / "markdown.tsx").read_text(encoding="utf-8")
+
+    assert "p: options?.inline ? InlineParagraph : undefined" not in markdown
+    assert "img: undefined" not in markdown
 
 
 def test_site_template_contains_sample_mdx_content_for_m6a() -> None:

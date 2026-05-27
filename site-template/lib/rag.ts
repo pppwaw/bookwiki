@@ -1,4 +1,5 @@
 import { queryAll } from './sqlite';
+import { getLLMText, getSourcePage } from './source';
 
 export type SearchChunk = {
   chunkId: string;
@@ -11,6 +12,13 @@ export type SearchChunk = {
   sourceRefs: string[];
 };
 
+export type CurrentArticle = {
+  slug: string;
+  title: string;
+  text: string;
+  sourceRefs: string[];
+};
+
 type ChunkRow = {
   chunk_id: string;
   page_id: string;
@@ -19,6 +27,10 @@ type ChunkRow = {
   slug: string;
   heading_path: string | null;
   text: string;
+  source_refs_json: string;
+};
+
+type PageSourceRow = {
   source_refs_json: string;
 };
 
@@ -44,13 +56,21 @@ export function searchChunks(query: string, limit = 8, chapterId?: string) {
   })) satisfies SearchChunk[];
 }
 
-export function contextFromChunks(chunks: SearchChunk[]) {
-  return chunks
-    .map((chunk, index) => {
-      const sources = chunk.sourceRefs.length ? ` sources=${chunk.sourceRefs.join(',')}` : '';
-      return `<chunk index="${index + 1}" page="${chunk.slug}"${sources}>\n${chunk.text}\n</chunk>`;
-    })
-    .join('\n\n');
+export async function currentArticleFromPath(pagePath?: string, maxChars = 16000) {
+  const slug = slugFromPagePath(pagePath);
+  if (slug === undefined) return null;
+
+  const page = getSourcePage(slug.length ? slug.split('/') : undefined);
+  if (!page) return null;
+
+  const text = truncateText(await getLLMText(page), maxChars);
+
+  return {
+    slug: page.url.replace(/^\/docs\/?/, '') || 'index',
+    title: page.data.title,
+    text,
+    sourceRefs: sourceRefsForSlug(page.url.replace(/^\/docs\/?/, '') || 'index'),
+  } satisfies CurrentArticle;
 }
 
 function queryRows(ftsQuery: string, rawQuery: string, limit: number, chapterId?: string) {
@@ -120,4 +140,37 @@ function parseSourceRefs(value: string) {
   } catch {
     return [];
   }
+}
+
+function slugFromPagePath(pagePath?: string) {
+  if (!pagePath) return undefined;
+  const clean = pagePath.split(/[?#]/, 1)[0]?.replace(/\/+$/, '') ?? '';
+  if (!clean || clean === '/docs') return '';
+  if (!clean.startsWith('/docs/')) return undefined;
+  return clean.slice('/docs/'.length);
+}
+
+function sourceRefsForSlug(slug: string) {
+  const rows = queryAll<PageSourceRow>(
+    `
+    SELECT chunks.source_refs_json
+    FROM chunks
+    JOIN pages ON pages.id = chunks.page_id
+    WHERE pages.slug = ?
+    ORDER BY chunks.chunk_index
+    `,
+    [slug],
+  );
+  const refs: string[] = [];
+  for (const row of rows) {
+    for (const ref of parseSourceRefs(row.source_refs_json)) {
+      if (!refs.includes(ref)) refs.push(ref);
+    }
+  }
+  return refs;
+}
+
+function truncateText(value: string, maxChars: number) {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n\n[truncated after ${maxChars} characters]`;
 }

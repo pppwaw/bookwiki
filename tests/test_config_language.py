@@ -202,6 +202,75 @@ def test_site_main_sets_site_language_from_book_config(
     assert (next_cache / "next-development.log").read_text(encoding="utf-8") == "cache"
 
 
+def test_site_main_syncs_only_chat_env_to_site_env_file(tmp_path, monkeypatch) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    (book_dir / "book.config.json").write_text(
+        json.dumps({"book_id": "mini", "title": "Mini", "language": "en-US"}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "BOOKWIKI_CHAT_API_KEY=chat-from-dotenv",
+                "BOOKWIKI_CHAT_BASE_URL=https://openrouter.ai/api/v1",
+                "BOOKWIKI_CHAT_MODEL=google/gemma-4-31b-it",
+                "OPENROUTER_API_KEY=do-not-copy",
+                "DEEPSEEK_API_KEY=do-not-copy",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_run(cmd, *, cwd, env, check):  # noqa: ANN001
+        calls.append({"cmd": cmd, "cwd": cwd, "env": env, "check": check})
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BOOKWIKI_CHAT_API_KEY", raising=False)
+    monkeypatch.delenv("BOOKWIKI_CHAT_BASE_URL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("BOOKWIKI_CHAT_MODEL", raising=False)
+    monkeypatch.setattr(sys, "argv", ["site.py", str(book_dir)])
+    monkeypatch.setattr(site.subprocess, "run", fake_run)
+
+    site.main()
+
+    assert calls
+    site_env = (book_dir / "site" / ".env.local").read_text(encoding="utf-8")
+    assert "BOOKWIKI_CHAT_API_KEY=chat-from-dotenv" in site_env
+    assert "BOOKWIKI_CHAT_BASE_URL=https://openrouter.ai/api/v1" in site_env
+    assert "BOOKWIKI_CHAT_MODEL=google/gemma-4-31b-it" in site_env
+    assert "OPENROUTER_API_KEY" not in site_env
+    assert "DEEPSEEK_API_KEY" not in site_env
+
+
+def test_materialize_site_preserves_local_env_file(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    (book_dir / "book.config.json").write_text(
+        json.dumps({"book_id": "mini", "title": "Mini"}),
+        encoding="utf-8",
+    )
+    env_path = book_dir / "site" / ".env.local"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text("BOOKWIKI_CHAT_API_KEY=book-local\n", encoding="utf-8")
+
+    site.materialize_site(load_config(book_dir))
+
+    assert env_path.read_text(encoding="utf-8") == "BOOKWIKI_CHAT_API_KEY=book-local\n"
+
+
 def test_site_main_fails_loudly_when_content_docs_is_missing(
     tmp_path, monkeypatch
 ) -> None:

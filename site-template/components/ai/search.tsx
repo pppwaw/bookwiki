@@ -8,10 +8,14 @@ import {
   use,
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
 } from 'react';
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport, type ChatStatus, type UIMessage } from 'ai';
 import { Loader2, MessageCircleIcon, RefreshCw, SearchIcon, Send, X } from 'lucide-react';
+import { usePathname } from 'next/navigation';
 import { Presence } from '@radix-ui/react-presence';
 import { Markdown } from '../markdown';
 import { buttonVariants } from 'fumadocs-ui/components/ui/button';
@@ -23,19 +27,16 @@ type ChatSource = {
   heading?: string | null;
 };
 
-type ChatMessage = {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
+type ChatMetadata = {
   sources?: ChatSource[];
 };
 
-type ChatStatus = 'ready' | 'submitted';
+type BookWikiChatMessage = UIMessage<ChatMetadata>;
 
 const Context = createContext<{
   open: boolean;
   setOpen: (open: boolean) => void;
-  messages: ChatMessage[];
+  messages: BookWikiChatMessage[];
   status: ChatStatus;
   error: string | null;
   sendMessage: (question: string) => Promise<void>;
@@ -44,75 +45,73 @@ const Context = createContext<{
 } | null>(null);
 
 export function AISearch({ children }: { children: ReactNode }) {
+  const pagePath = usePathname();
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [status, setStatus] = useState<ChatStatus>('ready');
-  const [error, setError] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState('');
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport<BookWikiChatMessage>({
+        api: '/api/chat',
+        prepareSendMessagesRequest: ({ id, messages }) => ({
+          body: {
+            id,
+            message: messages.at(-1),
+            pagePath,
+          },
+        }),
+      }),
+    [pagePath],
+  );
+  const {
+    clearError,
+    error,
+    messages,
+    regenerate,
+    sendMessage: sendChatMessage,
+    setMessages,
+    status,
+  } = useChat<BookWikiChatMessage>({
+    id: `bookwiki:${pagePath}`,
+    transport,
+  });
 
   async function sendMessage(question: string) {
     const trimmed = question.trim();
-    if (!trimmed || status === 'submitted') return;
+    if (!trimmed || isBusy(status)) return;
 
     setLastQuestion(trimmed);
-    setError(null);
-    setStatus('submitted');
-    setMessages((current) => [
-      ...current,
-      { id: crypto.randomUUID(), role: 'user', text: trimmed },
-    ]);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: trimmed }),
-      });
-      const payload = (await response.json()) as {
-        answer?: string;
-        sources?: ChatSource[];
-        error?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? 'chat failed');
-      }
-
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          text: payload.answer ?? '',
-          sources: payload.sources ?? [],
-        },
-      ]);
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'chat failed';
-      setError(message);
-      setMessages((current) => [
-        ...current,
-        { id: crypto.randomUUID(), role: 'assistant', text: message },
-      ]);
-    } finally {
-      setStatus('ready');
-    }
+    clearError();
+    await sendChatMessage({ text: trimmed });
   }
 
   async function retry() {
-    if (lastQuestion) {
-      await sendMessage(lastQuestion);
+    if (isBusy(status)) return;
+
+    if (messages.at(-1)?.role === 'assistant') {
+      await regenerate();
+    } else if (lastQuestion) {
+      await sendChatMessage({ text: lastQuestion });
     }
   }
 
   function clear() {
     setMessages([]);
-    setError(null);
+    clearError();
+    setLastQuestion('');
   }
 
   return (
     <Context
-      value={{ clear, error, messages, open, retry, sendMessage, setOpen, status }}
+      value={{
+        clear,
+        error: error ? messageFromError(error) : null,
+        messages,
+        open,
+        retry,
+        sendMessage,
+        setOpen,
+        status,
+      }}
     >
       {children}
     </Context>
@@ -157,7 +156,7 @@ export function AISearchPanelHeader({ className, ...props }: ComponentProps<'div
 
 export function AISearchInputActions() {
   const { clear, messages, retry, status } = useAISearchContext();
-  const isLoading = status === 'submitted';
+  const isLoading = isBusy(status);
 
   if (messages.length === 0) return null;
 
@@ -201,7 +200,7 @@ const StorageKeyInput = '__bookwiki_ai_search_input';
 export function AISearchInput(props: ComponentProps<'form'>) {
   const { sendMessage, status } = useAISearchContext();
   const [input, setInput] = useState(() => localStorage.getItem(StorageKeyInput) ?? '');
-  const isLoading = status === 'submitted';
+  const isLoading = isBusy(status);
 
   const onStart = (event?: SyntheticEvent) => {
     event?.preventDefault();
@@ -307,12 +306,41 @@ function Input(props: ComponentProps<'textarea'>) {
   );
 }
 
-const roleName: Record<ChatMessage['role'], string> = {
+function isBusy(status: ChatStatus) {
+  return status === 'submitted' || status === 'streaming';
+}
+
+function messageFromError(error: Error) {
+  try {
+    const payload = JSON.parse(error.message) as { error?: unknown };
+    if (typeof payload.error === 'string') return payload.error;
+  } catch {
+    // The transport may already expose a plain text error.
+  }
+
+  return error.message;
+}
+
+function textFromMessage(message: BookWikiChatMessage) {
+  return message.parts
+    .filter(
+      (part): part is Extract<BookWikiChatMessage['parts'][number], { type: 'text' }> =>
+        part.type === 'text',
+    )
+    .map((part) => part.text)
+    .join('');
+}
+
+const roleName: Record<BookWikiChatMessage['role'], string> = {
+  system: 'system',
   user: 'you',
   assistant: 'bookwiki',
 };
 
-function Message({ message, ...props }: { message: ChatMessage } & ComponentProps<'div'>) {
+function Message({ message, ...props }: { message: BookWikiChatMessage } & ComponentProps<'div'>) {
+  const text = textFromMessage(message);
+  const sources = message.metadata?.sources ?? [];
+
   return (
     <div onClick={(event) => event.stopPropagation()} {...props}>
       <p
@@ -324,17 +352,17 @@ function Message({ message, ...props }: { message: ChatMessage } & ComponentProp
         {roleName[message.role]}
       </p>
       <div className="prose text-sm">
-        <Markdown text={message.text} />
+        {text ? <Markdown text={text} /> : <p className="text-fd-muted-foreground">Searching...</p>}
       </div>
 
-      {message.sources?.length ? (
+      {sources.length ? (
         <div className="flex flex-col gap-2 mt-3 rounded-lg border bg-fd-secondary text-fd-muted-foreground text-xs p-2">
           <div className="flex flex-row gap-2 items-center">
             <SearchIcon className="size-4" />
-            <p>{message.sources.length} source refs</p>
+            <p>{sources.length} source refs</p>
           </div>
           <ul className="flex flex-wrap gap-1.5">
-            {message.sources.map((source) => (
+            {sources.map((source) => (
               <li key={`${source.ref_id}-${source.page ?? ''}-${source.heading ?? ''}`}>
                 <code>{source.ref_id}</code>
               </li>

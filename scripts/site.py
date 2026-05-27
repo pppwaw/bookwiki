@@ -17,8 +17,27 @@ except ImportError:  # pragma: no cover - direct script execution
 from bookwiki.scheduler.config import BookConfig, load_config  # noqa: E402
 
 TEMPLATE_DIR = ROOT / "site-template"
-PRESERVE_SITE_NAMES = {".bookwiki", ".next", ".source", "node_modules", "tsconfig.tsbuildinfo"}
-SKIP_TEMPLATE_NAMES = {"node_modules", ".next", ".source", ".bookwiki", "tsconfig.tsbuildinfo"}
+SITE_ENV_KEYS = (
+    "BOOKWIKI_CHAT_API_KEY",
+    "BOOKWIKI_CHAT_BASE_URL",
+    "BOOKWIKI_CHAT_MODEL",
+)
+PRESERVE_SITE_NAMES = {
+    ".bookwiki",
+    ".env.local",
+    ".next",
+    ".source",
+    "node_modules",
+    "tsconfig.tsbuildinfo",
+}
+SKIP_TEMPLATE_NAMES = {
+    ".bookwiki",
+    ".env.local",
+    ".next",
+    ".source",
+    "node_modules",
+    "tsconfig.tsbuildinfo",
+}
 
 
 def load_site_config(book_dir: str | Path) -> BookConfig:
@@ -69,11 +88,98 @@ def materialize_site(book: BookConfig | str | Path) -> Path:
     return site_dir
 
 
+def sync_site_env(site_dir: Path) -> Path | None:
+    values = _site_env_values()
+    env_path = site_dir / ".env.local"
+    existing = _env_keys(env_path)
+    additions = [(key, value) for key, value in values.items() if key not in existing]
+
+    if not additions:
+        return env_path if env_path.exists() else None
+
+    lines: list[str] = []
+    if env_path.exists():
+        current = env_path.read_text(encoding="utf-8")
+        lines.append(current.rstrip("\n"))
+    else:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines.extend(f"{key}={value}" for key, value in additions)
+    env_path.write_text("\n".join(line for line in lines if line) + "\n", encoding="utf-8")
+    return env_path
+
+
 def _remove_path(path: Path) -> None:
     if path.is_dir():
         shutil.rmtree(path)
     else:
         path.unlink()
+
+
+def _site_env_values() -> dict[str, str]:
+    values = _read_site_values_from_dotenv()
+    for key in SITE_ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            values[key] = value
+    return values
+
+
+def _read_site_values_from_dotenv() -> dict[str, str]:
+    dotenv_path = _default_dotenv_path()
+    if dotenv_path is None:
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_env_line(raw_line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        if key in SITE_ENV_KEYS and value:
+            values[key] = value
+    return values
+
+
+def _default_dotenv_path() -> Path | None:
+    for parent in (Path.cwd(), *Path.cwd().parents):
+        candidate = parent / ".env"
+        if candidate.exists():
+            return candidate
+    repo_candidate = ROOT / ".env"
+    return repo_candidate if repo_candidate.exists() else None
+
+
+def _env_keys(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    keys: set[str] = set()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_env_line(raw_line)
+        if parsed is not None:
+            keys.add(parsed[0])
+    return keys
+
+
+def _parse_env_line(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    if stripped.startswith("export "):
+        stripped = stripped.removeprefix("export ").lstrip()
+    if "=" not in stripped:
+        return None
+    key, value = stripped.split("=", 1)
+    key = key.strip()
+    if key not in SITE_ENV_KEYS:
+        return None
+    return key, _parse_env_value(value.strip())
+
+
+def _parse_env_value(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value.split(" #", 1)[0].strip()
 
 
 def main() -> None:
@@ -82,6 +188,7 @@ def main() -> None:
 
     cfg = load_site_config(args.book_dir)
     site_dir = materialize_site(cfg)
+    sync_site_env(site_dir)
     env = os.environ.copy()
     env["BOOKWIKI_SITE_LANGUAGE"] = cfg.language
 
