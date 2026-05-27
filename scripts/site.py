@@ -58,6 +58,14 @@ def materialize_site(book: BookConfig | str | Path) -> Path:
     target_docs.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(cfg.content_dir, target_docs)
 
+    source_assets = cfg.work_dir / "assets"
+    target_assets = site_dir / "public" / "bookwiki-assets"
+    if target_assets.exists():
+        _remove_path(target_assets)
+    if source_assets.exists():
+        target_assets.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source_assets, target_assets)
+
     return site_dir
 
 
@@ -78,7 +86,8 @@ def main() -> None:
     env["BOOKWIKI_SITE_LANGUAGE"] = cfg.language
 
     subprocess.run(["pnpm", "install"], cwd=site_dir, env=env, check=True)
-    subprocess.run(["pnpm", "dev"], cwd=site_dir, env=env, check=True)
+    subprocess.run(["pnpm", "build"], cwd=site_dir, env=env, check=True)
+    subprocess.run(["pnpm", "start"], cwd=site_dir, env=env, check=True)
 
 
 if __name__ == "__main__":

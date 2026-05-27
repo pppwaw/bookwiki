@@ -19,6 +19,7 @@ DEFAULT_MODELS = {
     "card": "deepseek-v4-flash",
     "concept": "deepseek-v4-pro",
     "review": "deepseek-v4-pro",
+    "vision": "kimi-k2.6",
 }
 
 DEFAULT_GENERATION = {
@@ -28,6 +29,10 @@ DEFAULT_GENERATION = {
         "mode": "auto",
         "minConfidence": 0.85,
         "maxCandidatesPerSource": 20,
+    },
+    "visionCaption": {
+        "mode": "auto",
+        "maxImagesPerSource": 20,
     },
 }
 
@@ -150,8 +155,10 @@ def _merge_generation(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return merged
     for key, value in raw.items():
-        if key == "sourceLayoutRepair" and isinstance(value, dict):
+        if key in {"sourceLayoutRepair", "visionCaption"} and isinstance(value, dict):
             nested = merged.get("sourceLayoutRepair")
+            if key == "visionCaption":
+                nested = merged.get("visionCaption")
             if isinstance(nested, dict):
                 nested.update(value)
             else:

@@ -31,6 +31,8 @@ Page shape:
   related.
 
 Rules:
+- Fill summary_md with a compact 1-2 sentence preview for hover cards. It should
+  define the concept directly and avoid long examples, headings, and citations.
 - Write a concise concept page suitable for a Fumadocs MDX learning site.
 - Explain the concept, why it matters, and how it relates to linked chapters.
 - Use related only for closely connected concepts that are supported by input.
@@ -50,6 +52,7 @@ Math:
         allowed_refs = _context_source_refs(contexts)
         draft = ConceptResult(
             name=name,
+            summary_md=_draft_summary(name, chapters, contexts),
             body_md=_draft_body(name, chapters, contexts),
             related=[],
             citations=citations,
@@ -67,6 +70,15 @@ Math:
             allowed_citation_refs=allowed_refs,
         )
         return ConceptResult.model_validate(result)
+
+
+def _draft_summary(name: str, chapters: list[str], contexts: list[dict[str, Any]]) -> str:
+    if not contexts:
+        return f"{name} is a reconciled concept linked from {', '.join(chapters)}."
+    chapter_titles = ", ".join(
+        str(item.get("title") or item.get("chapter_id")) for item in contexts
+    )
+    return f"{name} is a key concept used in {chapter_titles}."
 
 
 def _draft_body(name: str, chapters: list[str], contexts: list[dict[str, Any]]) -> str:

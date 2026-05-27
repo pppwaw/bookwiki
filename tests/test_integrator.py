@@ -93,7 +93,11 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         concept_dir / "state-space.json",
         {
             "name": "state space",
-            "body_md": "State space contains reachable states.",
+            "summary_md": "State space is the reachable-state set.",
+            "body_md": (
+                "State space contains reachable states.\n\n"
+                "This second paragraph should stay out of hover previews."
+            ),
             "related": [],
             "citations": [{"ref_id": "source-p001", "quote": "State space"}],
             "owner_task_id": "concept:state space",
@@ -137,7 +141,16 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
     )
     index_mdx = (book_dir / "content" / "docs" / "index.mdx").read_text(encoding="utf-8")
 
-    assert chapter_mdx == dedent(
+    chapter_preview = (
+        '<PreviewLink href={"../concepts/state-space"} title={"state space"} '
+        'summary={"State space is the reachable-state set."}>state space</PreviewLink>'
+    )
+    backlink_preview = (
+        '<PreviewLink href={"../chapters/chapter-1"} title={"Chapter 1 Search"} '
+        'summary={"Search summary."}>Chapter 1 Search</PreviewLink>'
+    )
+
+    expected_chapter = dedent(
         """\
         ---
         chapter_id: chapter-1
@@ -150,7 +163,7 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
 
         # Chapter 1 Search
 
-        Core idea [state space](../concepts/state-space).
+        Core idea CHAPTER_PREVIEW.
 
         ## Quick Check
 
@@ -205,8 +218,9 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         </AnkiCard>
         </AnkiDeck>
         """
-    )
-    assert concept_mdx == dedent(
+    ).replace("CHAPTER_PREVIEW", chapter_preview)
+    assert chapter_mdx == expected_chapter
+    expected_concept = dedent(
         """\
         ---
         title: state space
@@ -217,11 +231,14 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
 
         State space contains reachable states.
 
+        This second paragraph should stay out of hover previews.
+
         ## Referenced By
 
-        - [Chapter 1 Search](../chapters/chapter-1)
+        - BACKLINK_PREVIEW
         """
-    )
+    ).replace("BACKLINK_PREVIEW", backlink_preview)
+    assert concept_mdx == expected_concept
     assert index_mdx == dedent(
         """\
         ---

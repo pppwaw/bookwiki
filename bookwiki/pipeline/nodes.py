@@ -19,6 +19,7 @@ from bookwiki.agents import (
     SourceSummaryAgent,
     StructureAgent,
     SummaryAgent,
+    VisionCaptionAgent,
 )
 from bookwiki.convert.common import source_id_from_stem
 from bookwiki.convert.mineru_client import convert_document_to_source
@@ -441,45 +442,47 @@ def _load_alias_map(state: State, cfg: BookConfig) -> dict[str, str]:
 
 
 def _normalize_concept_links(
-    markdown: str, alias_map: dict[str, str], concept_stems: dict[str, str]
+    markdown: str, alias_map: dict[str, str], concept_previews: dict[str, dict[str, str]]
 ) -> str:
     linked_canonicals: set[str] = set()
 
     def replace(match: re.Match[str]) -> str:
         label = match.group(1).strip()
         canonical = alias_map.get(label) or alias_map.get(_concept_key(label)) or label
-        stem = concept_stems.get(canonical)
-        if stem:
+        preview = concept_previews.get(canonical)
+        if preview:
             linked_canonicals.add(canonical)
-            return f"[{canonical}](../concepts/{stem})"
+            return _preview_link_mdx(
+                preview["href"], preview["title"], preview["summary"], canonical
+            )
         return f"[[{canonical}]]"
 
     normalized = re.sub(r"\[\[([^\]]+)\]\]", replace, markdown)
     return _auto_link_concept_terms(
-        normalized, _concept_link_terms(alias_map, concept_stems), linked_canonicals
+        normalized, _concept_link_terms(alias_map, concept_previews), linked_canonicals
     )
 
 
 def _concept_link_terms(
-    alias_map: dict[str, str], concept_stems: dict[str, str]
-) -> list[tuple[str, str, str]]:
-    terms: dict[str, tuple[str, str, str]] = {}
-    for canonical, stem in concept_stems.items():
+    alias_map: dict[str, str], concept_previews: dict[str, dict[str, str]]
+) -> list[tuple[str, str, dict[str, str]]]:
+    terms: dict[str, tuple[str, str, dict[str, str]]] = {}
+    for canonical, preview in concept_previews.items():
         clean = str(canonical).strip()
         if clean:
-            terms[_concept_key(clean)] = (clean, clean, stem)
+            terms[_concept_key(clean)] = (clean, clean, preview)
     for alias, canonical in alias_map.items():
         clean_alias = str(alias).strip()
         clean_canonical = str(canonical).strip()
-        stem = concept_stems.get(clean_canonical)
-        if clean_alias and stem:
-            terms[_concept_key(clean_alias)] = (clean_alias, clean_canonical, stem)
+        preview = concept_previews.get(clean_canonical)
+        if clean_alias and preview:
+            terms[_concept_key(clean_alias)] = (clean_alias, clean_canonical, preview)
     return sorted(terms.values(), key=lambda item: len(item[0]), reverse=True)
 
 
 def _auto_link_concept_terms(
     markdown: str,
-    terms: list[tuple[str, str, str]],
+    terms: list[tuple[str, str, dict[str, str]]],
     linked_canonicals: set[str],
 ) -> str:
     if not terms:
@@ -500,7 +503,7 @@ _CONCEPT_LINK_PROTECTED_RE = re.compile(
 
 def _auto_link_concept_terms_in_line(
     line: str,
-    terms: list[tuple[str, str, str]],
+    terms: list[tuple[str, str, dict[str, str]]],
     linked_canonicals: set[str],
 ) -> str:
     parts = _CONCEPT_LINK_PROTECTED_RE.split(line)
@@ -514,31 +517,31 @@ def _auto_link_concept_terms_in_line(
 
 def _auto_link_concept_terms_in_text(
     text: str,
-    terms: list[tuple[str, str, str]],
+    terms: list[tuple[str, str, dict[str, str]]],
     linked_canonicals: set[str],
 ) -> str:
-    candidates: list[tuple[int, int, str, str]] = []
-    for term, canonical, stem in terms:
+    candidates: list[tuple[int, int, str, dict[str, str]]] = []
+    for term, canonical, preview in terms:
         if canonical in linked_canonicals:
             continue
         pattern = _concept_term_pattern(term)
         flags = re.IGNORECASE if re.search(r"[A-Za-z]", term) else 0
         for match in re.finditer(pattern, text, flags=flags):
-            candidates.append((match.start(), match.end(), canonical, stem))
+            candidates.append((match.start(), match.end(), canonical, preview))
     if not candidates:
         return text
 
-    selected: list[tuple[int, int, str, str]] = []
+    selected: list[tuple[int, int, str, dict[str, str]]] = []
     local_linked: set[str] = set()
     occupied_until = -1
-    for start, end, canonical, stem in sorted(
+    for start, end, canonical, preview in sorted(
         candidates, key=lambda item: (item[0], -(item[1] - item[0]))
     ):
         if canonical in linked_canonicals or canonical in local_linked:
             continue
         if start < occupied_until:
             continue
-        selected.append((start, end, canonical, stem))
+        selected.append((start, end, canonical, preview))
         local_linked.add(canonical)
         occupied_until = end
     if not selected:
@@ -546,13 +549,44 @@ def _auto_link_concept_terms_in_text(
 
     chunks: list[str] = []
     cursor = 0
-    for start, end, canonical, stem in selected:
+    for start, end, canonical, preview in selected:
         chunks.append(text[cursor:start])
-        chunks.append(f"[{text[start:end]}](../concepts/{stem})")
+        chunks.append(
+            _preview_link_mdx(
+                preview["href"], preview["title"], preview["summary"], text[start:end]
+            )
+        )
         cursor = end
         linked_canonicals.add(canonical)
     chunks.append(text[cursor:])
     return "".join(chunks)
+
+
+def _preview_link_mdx(href: str, title: str, summary: str, label: str) -> str:
+    props = " ".join(
+        [
+            _jsx_prop("href", href),
+            _jsx_prop("title", title),
+            _jsx_prop("summary", summary),
+        ]
+    )
+    return f"<PreviewLink {props}>{_markdown_text(label).strip()}</PreviewLink>"
+
+
+def _preview_summary(markdown: str, *, max_chars: int = 180) -> str:
+    text = re.sub(r"^---\n.*?\n---", " ", str(markdown), flags=re.DOTALL)
+    text = next((part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()), "")
+    text = normalize_mdx_math(text)
+    text = re.sub(r"```[\s\S]*?```", " ", text)
+    text = re.sub(r"<[^>\n]+>", " ", text)
+    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"^[#>*\-\s]+", " ", text, flags=re.MULTILINE)
+    text = re.sub(r"[`*_~]+", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
 
 
 def _concept_term_pattern(term: str) -> str:
@@ -747,6 +781,7 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
         suffix = path.suffix.lower()
         if suffix in {".pdf", ".pptx"}:
             parsed = convert_document_to_source(path, source_id=source_id)
+            _materialize_mineru_assets(parsed, source_id, cfg)
             normalized = await _normalize_with_layout_repair(parsed, source_id, cfg)
             body = normalized.markdown
             manifest = normalized.manifest
@@ -769,6 +804,7 @@ async def _normalize_with_layout_repair(
     parsed: dict[str, Any], source_id: str, cfg: BookConfig
 ) -> NormalizedSource:
     settings = _source_layout_repair_settings(cfg)
+    block_overrides: dict[str, dict[str, Any]] = {}
     normalized = normalize_structured_source(
         raw_md=str(parsed.get("markdown") or ""),
         source_id=source_id,
@@ -777,7 +813,22 @@ async def _normalize_with_layout_repair(
         min_confidence=settings["min_confidence"],
         max_candidates=settings["max_candidates"],
     )
+    vision_warnings: list[str] = []
+    vision_overrides = await _vision_caption_overrides(normalized, cfg, vision_warnings)
+    if vision_overrides:
+        block_overrides.update(vision_overrides)
+        normalized = normalize_structured_source(
+            raw_md=str(parsed.get("markdown") or ""),
+            source_id=source_id,
+            content_list_v2=parsed.get("content_list_v2"),
+            content_list=parsed.get("content_list"),
+            block_overrides=block_overrides,
+            min_confidence=settings["min_confidence"],
+            max_candidates=settings["max_candidates"],
+        )
     if settings["mode"] == "off" or not normalized.repair_candidates:
+        if vision_warnings:
+            normalized.manifest["vision_warnings"] = vision_warnings
         return normalized
 
     result = await run_with_cache(
@@ -798,15 +849,151 @@ async def _normalize_with_layout_repair(
     ]
     if not patches:
         return normalized
-    return normalize_structured_source(
+    repaired = normalize_structured_source(
         raw_md=str(parsed.get("markdown") or ""),
         source_id=source_id,
         content_list_v2=parsed.get("content_list_v2"),
         content_list=parsed.get("content_list"),
+        block_overrides=block_overrides,
         repair_patches=patches,
         min_confidence=settings["min_confidence"],
         max_candidates=settings["max_candidates"],
     )
+    if vision_warnings:
+        repaired.manifest["vision_warnings"] = vision_warnings
+    return repaired
+
+
+def _materialize_mineru_assets(parsed: dict[str, Any], source_id: str, cfg: BookConfig) -> None:
+    assets = [asset for asset in parsed.get("assets") or [] if isinstance(asset, dict)]
+    if not assets:
+        return
+    asset_dir = ensure_dir(cfg.work_dir / "assets" / source_id)
+    path_index: dict[str, str] = {}
+    for index, asset in enumerate(assets, start=1):
+        data = asset.get("data")
+        if not isinstance(data, bytes):
+            continue
+        filename = _safe_asset_filename(str(asset.get("filename") or ""), index)
+        out_path = asset_dir / filename
+        out_path.write_bytes(data)
+        rel_path = _rel(out_path, cfg.book_dir)
+        archive_path = str(asset.get("archive_path") or filename).replace("\\", "/")
+        for key in {archive_path, archive_path.lower(), Path(archive_path).name.lower()}:
+            path_index[key] = rel_path
+    if path_index:
+        for value in (parsed.get("content_list_v2"), parsed.get("content_list")):
+            _attach_asset_paths(value, path_index)
+
+
+def _attach_asset_paths(value: Any, path_index: dict[str, str]) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _attach_asset_paths(item, path_index)
+        return
+    if not isinstance(value, dict):
+        return
+    block_type = str(value.get("type") or value.get("category") or "").lower()
+    if block_type in {"image", "chart"} and not value.get("asset_path"):
+        for key in ("img_path", "image_path", "path", "url"):
+            raw = value.get(key)
+            if not isinstance(raw, str):
+                continue
+            rel_path = _asset_match(raw, path_index)
+            if rel_path:
+                value["asset_path"] = rel_path
+                break
+    for item in value.values():
+        _attach_asset_paths(item, path_index)
+
+
+def _asset_match(raw_path: str, path_index: dict[str, str]) -> str | None:
+    normalized = raw_path.replace("\\", "/").lower().lstrip("/")
+    if normalized in path_index:
+        return path_index[normalized]
+    basename = Path(normalized).name
+    if basename in path_index:
+        return path_index[basename]
+    for key, rel_path in path_index.items():
+        if key.endswith(normalized) or key.endswith("/" + basename):
+            return rel_path
+    return None
+
+
+def _safe_asset_filename(filename: str, index: int) -> str:
+    clean = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(filename).name).strip(".-")
+    if not clean:
+        clean = f"asset-{index:03d}.png"
+    return clean
+
+
+async def _vision_caption_overrides(
+    normalized: NormalizedSource, cfg: BookConfig, warnings: list[str]
+) -> dict[str, dict[str, Any]]:
+    settings = _vision_caption_settings(cfg)
+    if settings["mode"] == "off":
+        return {}
+    candidates = _image_caption_candidates(normalized)[: settings["max_images"]]
+    overrides: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        try:
+            result = await run_with_cache(
+                VisionCaptionAgent,
+                candidate,
+                model=cfg.model_for("vision"),
+                cache_dir=_cache_dir(cfg),
+                runtime=cfg.llm_runtime,
+            )
+        except Exception as exc:  # noqa: BLE001 - captioning is best-effort enrichment
+            warnings.append(
+                f"vision caption failed for {candidate['block_id']}: {exc}"
+            )
+            continue
+        overrides[candidate["block_id"]] = {
+            "caption": result.result.caption_md,
+            "asset_path": candidate["asset_path"],
+        }
+    return overrides
+
+
+def _image_caption_candidates(normalized: NormalizedSource) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for page in normalized.manifest.get("pages", []):
+        blocks = page.get("blocks", []) if isinstance(page, dict) else []
+        nearby_text = " ".join(
+            str(block.get("text_preview") or "")
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") not in {"image", "chart"}
+        )
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") not in {"image", "chart"}:
+                continue
+            if block.get("caption") or not block.get("asset_path"):
+                continue
+            candidates.append(
+                {
+                    "block_id": str(block.get("block_id") or ""),
+                    "source_ref": str(block.get("page_ref") or page.get("source_ref") or ""),
+                    "asset_path": str(block.get("asset_path") or ""),
+                    "nearby_text": nearby_text,
+                    "bbox": block.get("bbox"),
+                }
+            )
+    return candidates
+
+
+def _vision_caption_settings(cfg: BookConfig) -> dict[str, Any]:
+    raw = cfg.generation.get("visionCaption")
+    settings = raw if isinstance(raw, dict) else {}
+    mode = str(settings.get("mode", "auto")).lower()
+    if mode not in {"auto", "off"}:
+        mode = "auto"
+    return {
+        "mode": mode,
+        "max_images": _int_setting(settings.get("maxImagesPerSource"), 20),
+    }
 
 
 def _source_layout_repair_settings(cfg: BookConfig) -> dict[str, Any]:
@@ -1134,10 +1321,20 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     chapter_outputs: list[str] = []
     concept_backlinks: dict[str, list[dict[str, str]]] = {}
     alias_map = _load_alias_map(state, cfg)
-    concept_stems = {
-        str(name): Path(rel_path).stem
-        for name, rel_path in state.get("concept_pages", {}).items()
-    }
+    concept_previews: dict[str, dict[str, str]] = {}
+    for name, rel_path in state.get("concept_pages", {}).items():
+        concept = read_json(cfg.book_dir / rel_path)
+        concept_name = str(concept.get("name") or name)
+        stem = Path(rel_path).stem
+        preview = {
+            "href": f"../concepts/{stem}",
+            "title": concept_name,
+            "summary": _preview_summary(
+                str(concept.get("summary_md") or concept.get("body_md", ""))
+            ),
+        }
+        concept_previews[str(name)] = preview
+        concept_previews[concept_name] = preview
 
     for ch_id, paths in state.get("agent_results", {}).items():
         chapter = _agent_result(read_json(cfg.book_dir / paths["chapter"]))
@@ -1163,7 +1360,11 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         concept_names = [str(name) for name in chapter.get("concepts", [])]
         for name in concept_names:
             concept_backlinks.setdefault(name, []).append(
-                {"title": display_title, "href": f"../chapters/{ch_id}"}
+                {
+                    "title": display_title,
+                    "href": f"../chapters/{ch_id}",
+                    "summary": str(summary["summary_md"]),
+                }
             )
         path = write_text(
             chapters_dir / f"{ch_id}.mdx",
@@ -1180,7 +1381,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                 + _insert_quiz_blocks(
                     normalize_mdx_math(
                         _normalize_concept_links(
-                            body_md, alias_map, concept_stems
+                            body_md, alias_map, concept_previews
                         )
                     ),
                     quiz,
@@ -1199,7 +1400,11 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             str(concept["name"]), []
         )
         backlink_md = "\n".join(
-            f"- [{item['title']}]({item['href']})" for item in backlinks
+            "- "
+            + _preview_link_mdx(
+                item["href"], item["title"], item.get("summary", ""), item["title"]
+            )
+            for item in backlinks
         )
         referenced_by = f"\n\n## Referenced By\n\n{backlink_md}\n" if backlink_md else ""
         write_text(

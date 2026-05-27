@@ -109,11 +109,22 @@ class _ZipMineruHandler(BaseHTTPRequestHandler):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("tiny/tiny.md", "Combined markdown")
+            archive.writestr("tiny/images/figure-1.png", b"\x89PNG\r\n\x1a\nfigure")
             archive.writestr(
                 "tiny/tiny_content_list_v2.json",
                 json.dumps(
                     [
-                        {"page_idx": 0, "items": [{"type": "text", "content": "Zip page one."}]},
+                        {
+                            "page_idx": 0,
+                            "items": [
+                                {"type": "text", "content": "Zip page one."},
+                                {
+                                    "type": "image",
+                                    "img_path": "images/figure-1.png",
+                                    "bbox": [1, 2, 30, 40],
+                                },
+                            ],
+                        },
                         {"page_idx": 1, "items": [{"type": "text", "content": "Zip page two."}]},
                     ]
                 ),
@@ -259,6 +270,36 @@ def test_content_list_v2_nested_content_dicts_render_text() -> None:
     assert "x^2" in normalized.markdown
     assert "<table><tr><td>A</td></tr></table>" in normalized.markdown
     assert len(normalized.manifest["pages"][0]["blocks"]) == 4
+
+
+def test_image_blocks_render_book_figure_with_asset_metadata() -> None:
+    normalized = normalize_structured_source(
+        raw_md="",
+        source_id="figures",
+        content_list_v2=[
+            {
+                "page_idx": 0,
+                "items": [
+                    {
+                        "type": "image",
+                        "asset_path": "work/assets/figures/figure-1.png",
+                        "caption": "Sampling distribution diagram.",
+                        "bbox": [1, 2, 30, 40],
+                    }
+                ],
+            }
+        ],
+    )
+
+    block = normalized.manifest["pages"][0]["blocks"][0]
+    assert block["type"] == "image"
+    assert block["asset_path"] == "work/assets/figures/figure-1.png"
+    assert block["caption"] == "Sampling distribution diagram."
+    assert block["bbox"] == [1, 2, 30, 40]
+    assert '<BookFigure id="figures-p001-b001"' in normalized.markdown
+    assert 'src="/bookwiki-assets/figures/figure-1.png"' in normalized.markdown
+    assert 'sourceRef="figures-p001"' in normalized.markdown
+    assert 'caption="Sampling distribution diagram."' in normalized.markdown
 
 
 def test_legacy_content_list_pages_generate_page_refs() -> None:
@@ -495,6 +536,33 @@ def test_convert_node_routes_text_and_pptx_to_required_converters(
     ]
 
 
+def test_convert_node_writes_mineru_zip_image_assets_and_manifest(
+    tmp_path: Path, zip_mineru_api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    pdf = cfg.input_dir / "tiny.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    monkeypatch.setenv("MINERU_API_URL", zip_mineru_api)
+    monkeypatch.setenv("MINERU_API_POLL_INTERVAL_SECONDS", "0.01")
+    cfg.generation["visionCaption"] = {"mode": "off"}
+
+    state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+
+    asset_path = cfg.work_dir / "assets" / "tiny" / "figure-1.png"
+    assert asset_path.read_bytes() == b"\x89PNG\r\n\x1a\nfigure"
+    source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
+    assert '<BookFigure id="tiny-p001-b002"' in source_md
+    assert 'src="/bookwiki-assets/tiny/figure-1.png"' in source_md
+    manifest = json.loads(
+        (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
+    )
+    image_block = manifest["pages"][0]["blocks"][1]
+    assert image_block["type"] == "image"
+    assert image_block["asset_path"] == "work/assets/tiny/figure-1.png"
+    assert image_block["bbox"] == [1, 2, 30, 40]
+
+
 def test_convert_node_propagates_mineru_api_errors_for_pdf(tmp_path: Path, monkeypatch) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     cfg.input_dir.mkdir(parents=True)
@@ -573,3 +641,54 @@ def test_convert_node_skips_layout_repair_without_candidates(
     asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
 
     assert cfg.llm_runtime.calls == []
+
+
+def test_convert_node_adds_vision_caption_to_image_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    (cfg.input_dir / "paper.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    cfg.llm_runtime = RecordingRuntime(
+        [
+            {
+                "caption_md": "A bell-shaped sampling distribution.",
+                "key_points": ["bell shape"],
+                "source_ref": "paper-p001",
+                "confidence": 0.91,
+            }
+        ]
+    )
+
+    def fake_convert(path: Path, *, source_id: str):
+        return {
+            "markdown": "raw",
+            "content_list_v2": [
+                {
+                    "page_idx": 0,
+                    "items": [
+                        {"type": "text", "content": "Normal approximation."},
+                        {
+                            "type": "image",
+                            "asset_path": "work/assets/paper/figure.png",
+                            "bbox": [0, 0, 10, 10],
+                        },
+                    ],
+                }
+            ],
+            "content_list": None,
+            "assets": [],
+        }
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+
+    state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+
+    source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
+    assert "A bell-shaped sampling distribution." in source_md
+    manifest = json.loads(
+        (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
+    )
+    image_block = manifest["pages"][0]["blocks"][1]
+    assert image_block["caption"] == "A bell-shaped sampling distribution."
+    assert cfg.llm_runtime.calls[0]["output_model"].__name__ == "VisionCaptionResult"

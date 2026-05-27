@@ -15,6 +15,10 @@ DEFAULT_GENERATION_EXPECTED = {
         "minConfidence": 0.85,
         "maxCandidatesPerSource": 20,
     },
+    "visionCaption": {
+        "mode": "auto",
+        "maxImagesPerSource": 20,
+    },
 }
 
 
@@ -27,6 +31,7 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
     assert cfg.notes_path == "book.notes.md"
     assert "lesson" in cfg.models
     assert "quiz" not in cfg.models
+    assert cfg.models["vision"] == "kimi-k2.6"
 
     config_path = save_config(cfg)
     payload = json.loads(config_path.read_text(encoding="utf-8"))
@@ -36,6 +41,7 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
     assert payload["notesPath"] == "book.notes.md"
     assert "lesson" in payload["models"]
     assert "quiz" not in payload["models"]
+    assert payload["models"]["vision"] == "kimi-k2.6"
 
 
 def test_load_config_defaults_language_and_generation_for_existing_config(tmp_path) -> None:
@@ -110,6 +116,33 @@ def test_load_config_merges_source_layout_repair_defaults(tmp_path) -> None:
         "minConfidence": 0.85,
         "maxCandidatesPerSource": 20,
     }
+    assert cfg.generation["visionCaption"] == {
+        "mode": "auto",
+        "maxImagesPerSource": 20,
+    }
+
+
+def test_load_config_merges_vision_caption_defaults(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    (book_dir / "book.config.json").write_text(
+        json.dumps(
+            {
+                "book_id": "mini",
+                "title": "Mini",
+                "generation": {"visionCaption": {"mode": "off"}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(book_dir)
+
+    assert cfg.generation["visionCaption"] == {
+        "mode": "off",
+        "maxImagesPerSource": 20,
+    }
 
 
 def test_site_main_sets_site_language_from_book_config(
@@ -147,7 +180,8 @@ def test_site_main_sets_site_language_from_book_config(
 
     assert calls
     assert calls[0]["cmd"] == ["pnpm", "install"]
-    assert calls[-1]["cmd"] == ["pnpm", "dev"]
+    assert calls[1]["cmd"] == ["pnpm", "build"]
+    assert calls[-1]["cmd"] == ["pnpm", "start"]
     assert calls[-1]["cwd"] == book_dir / "site"
     assert calls[-1]["env"]["BOOKWIKI_SITE_LANGUAGE"] == "en-US"
     assert "BOOKWIKI_CONTENT_DIR" not in calls[-1]["env"]
@@ -157,6 +191,13 @@ def test_site_main_sets_site_language_from_book_config(
     assert (book_dir / "site" / "content" / "docs" / "index.mdx").read_text(
         encoding="utf-8"
     ).endswith("# Mini Book\n")
+    assets_dir = book_dir / "work" / "assets" / "mini"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "figure.png").write_bytes(b"image")
+    site.materialize_site(load_config(book_dir))
+    assert (
+        book_dir / "site" / "public" / "bookwiki-assets" / "mini" / "figure.png"
+    ).read_bytes() == b"image"
     assert sqlite_path.read_bytes() == b"sqlite fixture"
     assert (next_cache / "next-development.log").read_text(encoding="utf-8") == "cache"
 

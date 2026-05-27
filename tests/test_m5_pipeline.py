@@ -586,7 +586,11 @@ def test_integrate_uses_alias_map_embedded_in_reconciled_concepts(tmp_path) -> N
     chapter = (book_dir / "content" / "docs" / "chapters" / "chapter-1.mdx").read_text(
         encoding="utf-8"
     )
-    assert "[递归](../concepts/递归)" in chapter
+    assert (
+        '<PreviewLink href={"../concepts/递归"} title={"递归"} '
+        'summary={"Concept."}>递归</PreviewLink>'
+        in chapter
+    )
     assert "[[递推]]" not in chapter
 
 

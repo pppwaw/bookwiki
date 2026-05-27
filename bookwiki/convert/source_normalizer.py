@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -50,6 +51,8 @@ class SourceBlock:
     type: str
     text: str
     bbox: list[float | int] | None = None
+    asset_path: str | None = None
+    caption: str | None = None
     attached_to: str | None = None
 
     @property
@@ -67,6 +70,10 @@ class SourceBlock:
         }
         if self.bbox is not None:
             payload["bbox"] = self.bbox
+        if self.asset_path:
+            payload["asset_path"] = self.asset_path
+        if self.caption:
+            payload["caption"] = self.caption
         if self.attached_to:
             payload["attached_to"] = self.attached_to
         return payload
@@ -101,12 +108,13 @@ def normalize_structured_source(
     content_list_v2: Any | None = None,
     content_list: Any | None = None,
     repair_patches: list[dict[str, Any]] | None = None,
+    block_overrides: dict[str, dict[str, Any]] | None = None,
     min_confidence: float = 0.85,
     max_candidates: int = 20,
 ) -> NormalizedSource:
-    pages = _pages_from_content_list_v2(source_id, content_list_v2)
+    pages = _pages_from_content_list_v2(source_id, content_list_v2, block_overrides)
     if not pages:
-        pages = _pages_from_content_list(source_id, content_list)
+        pages = _pages_from_content_list(source_id, content_list, block_overrides)
     if not pages:
         pages = _fallback_pages(source_id, raw_md)
 
@@ -137,7 +145,9 @@ def normalize_structured_source(
     )
 
 
-def _pages_from_content_list_v2(source_id: str, value: Any) -> list[SourcePage]:
+def _pages_from_content_list_v2(
+    source_id: str, value: Any, block_overrides: dict[str, dict[str, Any]] | None = None
+) -> list[SourcePage]:
     if not isinstance(value, list):
         return []
 
@@ -154,10 +164,12 @@ def _pages_from_content_list_v2(source_id: str, value: Any) -> list[SourcePage]:
         elif "page_idx" in item:
             grouped.setdefault(_page_idx(item, 0), []).append(item)
 
-    return _pages_from_grouped_blocks(source_id, grouped)
+    return _pages_from_grouped_blocks(source_id, grouped, block_overrides)
 
 
-def _pages_from_content_list(source_id: str, value: Any) -> list[SourcePage]:
+def _pages_from_content_list(
+    source_id: str, value: Any, block_overrides: dict[str, dict[str, Any]] | None = None
+) -> list[SourcePage]:
     if not isinstance(value, list):
         return []
     grouped: dict[int, list[dict[str, Any]]] = {}
@@ -165,7 +177,7 @@ def _pages_from_content_list(source_id: str, value: Any) -> list[SourcePage]:
         if not isinstance(item, dict):
             continue
         grouped.setdefault(_page_idx(item, 0), []).append(item)
-    return _pages_from_grouped_blocks(source_id, grouped)
+    return _pages_from_grouped_blocks(source_id, grouped, block_overrides)
 
 
 def _looks_like_page_container(item: dict[str, Any]) -> bool:
@@ -186,7 +198,9 @@ def _container_items(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _pages_from_grouped_blocks(
-    source_id: str, grouped: dict[int, list[dict[str, Any]]]
+    source_id: str,
+    grouped: dict[int, list[dict[str, Any]]],
+    block_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> list[SourcePage]:
     pages: list[SourcePage] = []
     for page_idx in sorted(grouped):
@@ -195,17 +209,23 @@ def _pages_from_grouped_blocks(
         for block_index, raw in enumerate(grouped[page_idx], start=1):
             block_type = _block_type(raw)
             text = _block_text(raw)
+            block_id = f"{source_ref}-b{block_index:03d}"
+            overrides = block_overrides.get(block_id, {}) if block_overrides else {}
+            asset_path = _string_override(overrides, "asset_path") or _asset_path(raw)
+            caption = _string_override(overrides, "caption") or _caption(raw)
             if not text and block_type not in {"image", "table", "chart"}:
                 continue
             blocks.append(
                 SourceBlock(
-                    block_id=f"{source_ref}-b{block_index:03d}",
+                    block_id=block_id,
                     page_ref=source_ref,
                     page_idx=page_idx,
                     block_index=block_index,
                     type=block_type,
                     text=text,
                     bbox=_bbox(raw),
+                    asset_path=asset_path,
+                    caption=caption,
                 )
             )
         pages.append(SourcePage(page_idx=page_idx, source_ref=source_ref, blocks=blocks))
@@ -381,6 +401,8 @@ def _render_markdown(
 
 def _render_block(block: SourceBlock) -> str:
     text = clean_markdown(block.text)
+    if block.type in {"image", "chart"}:
+        return _render_figure(block, text)
     if not text:
         return ""
     if block.type == "title":
@@ -388,6 +410,33 @@ def _render_block(block: SourceBlock) -> str:
     if block.type == "equation":
         return f"$$\n{text.strip('$')}\n$$"
     return text
+
+
+def _render_figure(block: SourceBlock, text: str) -> str:
+    caption = block.caption or text
+    if not block.asset_path and not caption:
+        return ""
+    props = [
+        ("id", block.block_id),
+        ("sourceRef", block.page_ref),
+    ]
+    if block.asset_path:
+        props.append(("src", _public_asset_path(block.asset_path)))
+    if caption:
+        props.append(("caption", caption))
+    return "<BookFigure " + " ".join(_jsx_attr(name, value) for name, value in props) + " />"
+
+
+def _jsx_attr(name: str, value: str) -> str:
+    return f'{name}="{html.escape(str(value), quote=True)}"'
+
+
+def _public_asset_path(asset_path: str) -> str:
+    normalized = asset_path.replace("\\", "/")
+    prefix = "work/assets/"
+    if normalized.startswith(prefix):
+        return "/bookwiki-assets/" + normalized.removeprefix(prefix)
+    return normalized
 
 
 def _last_meaningful_block(page: SourcePage) -> SourceBlock | None:
@@ -433,6 +482,36 @@ def _block_text(raw: dict[str, Any]) -> str:
             "\n".join(_block_text(block) for block in blocks if isinstance(block, dict))
         )
     return ""
+
+
+def _asset_path(raw: dict[str, Any]) -> str | None:
+    for key in ("asset_path", "image_path", "img_path", "path", "url"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().replace("\\", "/")
+    return None
+
+
+def _caption(raw: dict[str, Any]) -> str | None:
+    for key in ("caption", "image_caption", "chart_caption", "table_caption"):
+        value = raw.get(key)
+        text = _content_value_text(value)
+        if text:
+            return clean_markdown(text)
+    content = raw.get("content")
+    if isinstance(content, dict):
+        for key in ("image_caption", "chart_caption", "table_caption"):
+            text = _content_value_text(content.get(key))
+            if text:
+                return clean_markdown(text)
+    return None
+
+
+def _string_override(overrides: dict[str, Any], key: str) -> str | None:
+    value = overrides.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip().replace("\\", "/") if key.endswith("path") else value.strip()
+    return None
 
 
 def _content_dict_text(value: dict[str, Any]) -> str:

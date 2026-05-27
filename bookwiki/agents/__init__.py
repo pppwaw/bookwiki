@@ -10,6 +10,7 @@ from bookwiki.agents.source_layout_repair_agent import SourceLayoutRepairAgent
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
 from bookwiki.agents.structure_agent import StructureAgent
 from bookwiki.agents.summary_agent import SummaryAgent
+from bookwiki.agents.vision_caption_agent import VisionCaptionAgent
 
 __all__ = [
     "ChapterSplitAgent",
@@ -22,4 +23,5 @@ __all__ = [
     "SourceSummaryAgent",
     "StructureAgent",
     "SummaryAgent",
+    "VisionCaptionAgent",
 ]

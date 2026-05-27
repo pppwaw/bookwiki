@@ -30,7 +30,7 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     shared = (SITE / "lib" / "shared.ts").read_text(encoding="utf-8")
 
     assert "defineDocs" in source_config
-    assert "dir: 'content/docs'" in source_config
+    assert 'dir: "content/docs"' in source_config
     assert "BOOKWIKI_CONTENT_DIR" not in source_config
     assert "providerImportSource" in source_config
     assert "remarkMath" in source_config
@@ -66,9 +66,12 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     quiz_block = (SITE / "components" / "QuizBlock.tsx").read_text(encoding="utf-8")
     anki_deck = (SITE / "components" / "AnkiDeck.tsx").read_text(encoding="utf-8")
     markdown = (SITE / "components" / "markdown.tsx").read_text(encoding="utf-8")
+    preview_link = (SITE / "components" / "PreviewLink.tsx").read_text(encoding="utf-8")
+    global_css = (SITE / "app" / "global.css").read_text(encoding="utf-8")
 
     for component in [
         "ConceptLink",
+        "PreviewLink",
         "QuizBlock",
         "AnkiDeck",
         "SourceRef",
@@ -99,6 +102,10 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "children" in anki_deck
     assert "remarkMath" in markdown
     assert "rehypeKatex" in markdown
+    assert "role=\"tooltip\"" in preview_link
+    assert "preview-link-card" in preview_link
+    assert ".preview-link-wrap:focus-within .preview-link-card" in global_css
+    assert ".preview-link-wrap:hover .preview-link-card" in global_css
     assert "NEXT_PUBLIC_OPENAI_API_KEY" not in (sqlite + rag + chat_route + search_route)
 
 

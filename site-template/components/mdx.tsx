@@ -3,7 +3,9 @@ import type { MDXComponents } from 'mdx/types';
 import { AnkiBack, AnkiCard, AnkiDeck, AnkiFront } from './AnkiDeck';
 import { ChapterSummary } from './ChapterSummary';
 import { ChatBox } from './ChatBox';
+import { BookFigure } from './BookFigure';
 import { ConceptLink } from './ConceptLink';
+import { PreviewLink } from './PreviewLink';
 import {
   QuizBlock,
   QuizCheck,
@@ -20,6 +22,7 @@ export function getMDXComponents(components?: MDXComponents) {
     ...defaultMdxComponents,
     ChapterSummary,
     ConceptLink,
+    PreviewLink,
     QuizBlock,
     QuizItem,
     QuizQuestion,
@@ -33,6 +36,7 @@ export function getMDXComponents(components?: MDXComponents) {
     AnkiBack,
     SourceRef,
     ChatBox,
+    BookFigure,
     ...components,
   } satisfies MDXComponents;
 }

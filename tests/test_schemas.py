@@ -238,6 +238,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
         ConceptResult,
         {
             "name": "state space",
+            "summary_md": "A reachable-state set.",
             "body_md": "State space is the set of reachable states.",
             "related": ["frontier"],
             "citations": [{"ref_id": "source-p001", "quote": "State space"}],
@@ -246,6 +247,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
         {
             "schema_version": SCHEMA_VERSION,
             "name": "state space",
+            "summary_md": "A reachable-state set.",
             "body_md": "State space is the set of reachable states.",
             "related": ["frontier"],
             "citations": [{"ref_id": "source-p001", "quote": "State space"}],

@@ -59,3 +59,10 @@ class SourceLayoutPatch(VersionedModel):
 class SourceLayoutRepairResult(VersionedModel):
     patches: list[SourceLayoutPatch] = Field(default_factory=list)
     notes: str = ""
+
+
+class VisionCaptionResult(VersionedModel):
+    caption_md: str
+    key_points: list[str] = Field(default_factory=list)
+    source_ref: str
+    confidence: float = 0.0

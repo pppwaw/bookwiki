@@ -19,6 +19,7 @@ DEFAULT_TIMEOUT_SECONDS = 20.0
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 COMPLETED_TASK_STATUSES = {"completed", "success", "succeeded", "done"}
 FAILED_TASK_STATUSES = {"failed", "error", "cancelled", "canceled"}
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 class MineruConversionError(RuntimeError):
@@ -241,11 +242,21 @@ def _extract_source_from_zip(payload: bytes) -> dict[str, Any]:
     markdown: str | None = None
     content_list_v2: Any | None = None
     content_list: Any | None = None
+    assets: list[dict[str, Any]] = []
     with zipfile.ZipFile(BytesIO(payload)) as archive:
         for name in archive.namelist():
             normalized = name.replace("\\", "/").lower()
             if normalized.endswith(".md") and markdown is None:
                 markdown = archive.read(name).decode("utf-8", errors="replace")
+                continue
+            if Path(normalized).suffix in IMAGE_SUFFIXES:
+                assets.append(
+                    {
+                        "archive_path": name.replace("\\", "/"),
+                        "filename": Path(name).name,
+                        "data": archive.read(name),
+                    }
+                )
                 continue
             if not normalized.endswith(".json"):
                 continue
@@ -267,6 +278,7 @@ def _extract_source_from_zip(payload: bytes) -> dict[str, Any]:
         "markdown": markdown,
         "content_list_v2": content_list_v2,
         "content_list": content_list,
+        "assets": assets,
     }
 
 
@@ -312,7 +324,7 @@ def _extract_markdown_from_api_response(data: dict[str, Any], stem: str) -> str:
 def _extract_source_from_api_response(data: dict[str, Any], stem: str) -> dict[str, Any]:
     for item in _api_response_candidates(data, stem):
         if isinstance(item, str):
-            return {"markdown": item, "content_list_v2": None, "content_list": None}
+            return {"markdown": item, "content_list_v2": None, "content_list": None, "assets": []}
         if isinstance(item, dict):
             markdown = _markdown_from_mapping(item)
             if markdown is not None:
@@ -320,6 +332,7 @@ def _extract_source_from_api_response(data: dict[str, Any], stem: str) -> dict[s
                     "markdown": markdown,
                     "content_list_v2": item.get("content_list_v2"),
                     "content_list": item.get("content_list"),
+                    "assets": item.get("assets") or [],
                 }
 
     msg = f"MinerU API response did not include markdown for {stem!r}"

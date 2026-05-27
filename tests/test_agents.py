@@ -19,6 +19,7 @@ from bookwiki.agents import (
     SourceSummaryAgent,
     StructureAgent,
     SummaryAgent,
+    VisionCaptionAgent,
 )
 
 
@@ -154,6 +155,7 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
             },
             {
                 "name": "state space",
+                "summary_md": "A state space is the set of reachable states.",
                 "body_md": "A state space contains reachable states.",
                 "related": [],
                 "citations": [{"ref_id": "source-p001", "quote": "State space"}],
@@ -175,6 +177,12 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
                     }
                 ],
                 "notes": "Attach one caption.",
+            },
+            {
+                "caption_md": "A diagram showing state expansion.",
+                "key_points": ["states expand outward"],
+                "source_ref": "source-p001",
+                "confidence": 0.92,
             },
         ]
     )
@@ -250,6 +258,16 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
         model="deepseek-v4-flash",
         runtime=runtime,
     )
+    vision = await VisionCaptionAgent().run(
+        {
+            "block_id": "source-p001-b003",
+            "source_ref": "source-p001",
+            "asset_path": "work/assets/source/figure.png",
+            "nearby_text": "State space search expands states.",
+        },
+        model="kimi-k2.6",
+        runtime=runtime,
+    )
 
     assert source_summary.source_refs == ["source-p001"]
     assert structure.chapters == ["Chapter 1 Search"]
@@ -261,11 +279,14 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert extracted.concepts[0].name == "state space"
     assert reconciled.alias_map["states"] == "state space"
     assert concept.owner_task_id == "concept:state space"
+    assert concept.summary_md
     assert repair.action == "regenerate"
     assert layout.patches[0].action == "attach_caption"
-    assert len(runtime.calls) == 9
+    assert vision.caption_md == "A diagram showing state expansion."
+    assert len(runtime.calls) == 10
     assert runtime.responses == []
     assert {call["output_model"] for call in runtime.calls} >= {
         "LessonResult",
         "SourceLayoutRepairResult",
+        "VisionCaptionResult",
     }

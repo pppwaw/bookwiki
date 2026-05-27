@@ -24,6 +24,7 @@ class ConceptReconciledItem(VersionedModel):
 
 class ConceptResult(VersionedModel):
     name: str
+    summary_md: str = ""
     body_md: str
     related: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)

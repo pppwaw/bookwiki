@@ -290,8 +290,17 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "## Summary" not in body
     assert "## Concepts" not in body
     assert "# [Point Estimation]" not in body
-    assert "[似然函数](../concepts/似然函数)" in body
-    assert "[point estimation](../concepts/Point-Estimation)" in body
+    assert (
+        '<PreviewLink href={"../concepts/似然函数"} title={"似然函数"} '
+        'summary={"似然函数 measures parameter fit."}>似然函数</PreviewLink>'
+        in body
+    )
+    assert (
+        '<PreviewLink href={"../concepts/Point-Estimation"} title={"Point Estimation"} '
+        'summary={"Point estimation may use formulas like $\\\\hat\\\\theta$. '
+        'Display math may be written as $$ E(X)=\\\\theta $$"}>point estimation</PreviewLink>'
+        in body
+    )
     assert "<QuizBlock" in chapter_text
     assert "<QuizItem id=" in chapter_text
     quiz_item_ids = re.findall(r"<QuizItem id=\{\"([^\"]+)\"\}", chapter_text)
@@ -338,9 +347,19 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "\n\n$$\nE(X)=\\theta\n$$\n\n" in concept_text
     assert "$\\hat\\theta$" in concept_text
     assert "## Referenced By" in concept_text
-    assert "[Chapter 6 Point Estimation](../chapters/chapter-6)" in concept_text
+    assert (
+        '- <PreviewLink href={"../chapters/chapter-6"} '
+        'title={"Chapter 6 Point Estimation"} '
+        'summary={"Point estimation summary."}>Chapter 6 Point Estimation</PreviewLink>'
+        in concept_text
+    )
 
     zh_concept_page = book_dir / "content" / "docs" / "concepts" / "似然函数.mdx"
     assert zh_concept_page.exists()
     zh_concept_text = zh_concept_page.read_text(encoding="utf-8")
-    assert "[Chapter 6 Point Estimation](../chapters/chapter-6)" in zh_concept_text
+    assert (
+        '- <PreviewLink href={"../chapters/chapter-6"} '
+        'title={"Chapter 6 Point Estimation"} '
+        'summary={"Point estimation summary."}>Chapter 6 Point Estimation</PreviewLink>'
+        in zh_concept_text
+    )
