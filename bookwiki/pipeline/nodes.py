@@ -290,12 +290,27 @@ def _frontmatter(data: dict[str, Any]) -> str:
 
 
 def _quiz_block_mdx(
-    title: str, items: list[dict[str, Any]], item_indexes: list[int] | None = None
+    title: str,
+    items: list[dict[str, Any]],
+    item_indexes: list[int] | None = None,
+    *,
+    heading_level: int = 2,
 ) -> str:
+    heading = "#" * min(max(heading_level, 1), 6)
     return (
-        f"## {title or 'Quiz'}\n\n<QuizBlock>\n"
+        f"{heading} {title or 'Quiz'}\n\n<QuizBlock>\n"
         f"{_quiz_items_mdx(items, item_indexes)}\n</QuizBlock>"
     )
+
+
+def _quiz_heading_level(blocks: list[str], after_index: int) -> int:
+    current_level = 1
+    for block in blocks[: after_index + 1]:
+        first_line = block.splitlines()[0] if block else ""
+        match = re.match(r"^(#{1,6})\s+\S", first_line)
+        if match:
+            current_level = len(match.group(1))
+    return min(current_level + 1, 6)
 
 
 def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
@@ -306,10 +321,17 @@ def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
     if not items:
         return _join_leading_h1(heading, content_md.strip())
     if not placements:
-        quiz_block = _quiz_block_mdx("Quiz", items)
         if len(blocks) < 2:
+            after = max(len(blocks) - 1, 0)
+            quiz_block = _quiz_block_mdx(
+                "Quiz", items, heading_level=_quiz_heading_level(blocks, after)
+            )
             return _join_leading_h1(heading, f"{content_md.strip()}\n\n{quiz_block}".strip())
         insert_after = max(1, (len(blocks) + 1) // 2)
+        after = insert_after - 1
+        quiz_block = _quiz_block_mdx(
+            "Quiz", items, heading_level=_quiz_heading_level(blocks, after)
+        )
         merged = [*blocks[:insert_after], quiz_block, *blocks[insert_after:]]
         return _join_leading_h1(heading, "\n\n".join(merged))
 
@@ -327,7 +349,12 @@ def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
         selected = [items[index - 1] for index in indexes]
         after = min(max(int(placement["after_block"]), 0), max(len(blocks) - 1, 0))
         chunks_by_after.setdefault(after, []).append(
-            _quiz_block_mdx(str(placement.get("title") or "Quiz"), selected, indexes)
+            _quiz_block_mdx(
+                str(placement.get("title") or "Quiz"),
+                selected,
+                indexes,
+                heading_level=_quiz_heading_level(blocks, after),
+            )
         )
 
     unassigned_indexes = [
@@ -337,7 +364,12 @@ def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
     if unassigned:
         after = max(chunks_by_after, default=max(0, (len(blocks) - 1) // 2))
         chunks_by_after.setdefault(after, []).append(
-            _quiz_block_mdx("Quiz", unassigned, unassigned_indexes)
+            _quiz_block_mdx(
+                "Quiz",
+                unassigned,
+                unassigned_indexes,
+                heading_level=_quiz_heading_level(blocks, after),
+            )
         )
 
     merged: list[str] = []

@@ -5,7 +5,12 @@ import re
 
 import pytest
 
-from bookwiki.pipeline.nodes import concept_pages_node, generate_node, integrate_node
+from bookwiki.pipeline.nodes import (
+    _insert_quiz_blocks,
+    concept_pages_node,
+    generate_node,
+    integrate_node,
+)
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import TestLLMRuntime
 
@@ -54,6 +59,44 @@ async def test_generate_node_requires_chapter_sources(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="chapter_sources"):
         await generate_node({"book_id": "book"}, cfg)
+
+
+def test_quiz_block_heading_is_nested_under_current_section() -> None:
+    body_md = (
+        "# Chapter 1 Search\n\n"
+        "Intro paragraph.\n\n"
+        "## Frontier\n\n"
+        "Opening explanation.\n\n"
+        "### Ordering\n\n"
+        "Middle derivation."
+    )
+    quiz = {
+        "items": [
+            {
+                "question": "What is a frontier?",
+                "choices": ["Open nodes", "Closed nodes"],
+                "answer": "Open nodes",
+                "explanation": "The frontier stores generated nodes.",
+            },
+            {
+                "question": "What changes ordering?",
+                "choices": ["Strategy", "Filename"],
+                "answer": "Strategy",
+                "explanation": "Search strategy orders the frontier.",
+            },
+        ],
+        "placements": [
+            {"after_block": 2, "item_indexes": [1], "title": "Checkpoint"},
+            {"after_block": 4, "item_indexes": [2], "title": "Practice"},
+        ],
+    }
+
+    rendered = _insert_quiz_blocks(body_md, quiz)
+
+    assert "### Checkpoint\n\n<QuizBlock>" in rendered
+    assert "#### Practice\n\n<QuizBlock>" in rendered
+    assert not re.search(r"^## Checkpoint$", rendered, flags=re.MULTILINE)
+    assert not re.search(r"^## Practice$", rendered, flags=re.MULTILINE)
 
 
 @pytest.mark.asyncio
