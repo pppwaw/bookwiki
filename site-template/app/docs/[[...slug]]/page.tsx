@@ -10,6 +10,7 @@ import {
 import { notFound } from 'next/navigation';
 import { getMDXComponents } from '@/components/mdx';
 import { ChapterSummary } from '@/components/ChapterSummary';
+import { Markdown } from '@/components/markdown';
 import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import { gitConfig } from '@/lib/shared';
@@ -35,7 +36,7 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
         />
       </div>
       <DocsBody>
-        {summary ? <ChapterSummary>{summary}</ChapterSummary> : null}
+        {summary ? <ChapterSummary><Markdown text={summary} /></ChapterSummary> : null}
         <MDX
           components={getMDXComponents({
             // this allows you to link to other pages with relative file paths

@@ -111,6 +111,16 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "NEXT_PUBLIC_OPENAI_API_KEY" not in (sqlite + rag + chat_route + search_route)
 
 
+def test_chapter_summary_uses_markdown_renderer() -> None:
+    docs_page = (SITE / "app" / "docs" / "[[...slug]]" / "page.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "import { Markdown } from '@/components/markdown';" in docs_page
+    assert "<ChapterSummary><Markdown text={summary} /></ChapterSummary>" in docs_page
+    assert "<ChapterSummary>{summary}</ChapterSummary>" not in docs_page
+
+
 def test_quiz_block_item_effects_are_stable_against_context_state_updates() -> None:
     quiz_block = (SITE / "components" / "QuizBlock.tsx").read_text(encoding="utf-8")
 
@@ -162,6 +172,10 @@ def test_official_ai_panel_is_backed_by_bookwiki_chat_api() -> None:
     assert "streamText" in chat_route
     assert "toUIMessageStreamResponse" in chat_route
     assert "generateText" not in chat_route
+    assert "providerOptions" in chat_route
+    assert "reasoning: {" in chat_route
+    assert "effort: 'low'" in chat_route
+    assert "exclude: false" in chat_route
     assert "stepCountIs" in chat_route
     assert "tool(" in chat_route
     assert "OPENROUTER_API_KEY" not in chat_route
@@ -171,11 +185,40 @@ def test_official_ai_panel_is_backed_by_bookwiki_chat_api() -> None:
     assert "google/gemma-4-31b-it" in chat_route
     assert "search_book" in chat_route
     assert "get_current_article" in chat_route
+    assert "chatFormatInstructions" in chat_route
+    assert "[^Week-10-p008]" in chat_route
     assert "promptFromQuestion" in chat_route
     assert "<current_article>" in chat_route
+    assert "answerText += part.text" in chat_route
+    assert "citedSourcesFromText" in chat_route
     assert "searchChunks" in chat_route
     assert "answerWithChatModel" not in chat_route
     assert "currentArticleFromPath" in rag
+
+
+def test_ai_chat_surfaces_reasoning_and_tool_parts() -> None:
+    panel = (SITE / "components" / "ai" / "search.tsx").read_text(encoding="utf-8")
+    chat_box = (SITE / "components" / "ChatBox.tsx").read_text(encoding="utf-8")
+
+    for component in (panel, chat_box):
+        assert "part.type === 'reasoning'" in component
+        assert "part.type.startsWith('tool-')" in component
+        assert "Reasoning" in component
+        assert "Tool" in component
+        assert "summarizeToolOutput" in component
+        assert "Markdown" in component
+        assert component.count("<Markdown text={part.text}") >= 2
+        assert "<pre>{part.text}</pre>" not in component
+        assert "whitespace-pre-wrap\">{part.text}</p>" not in component
+
+
+def test_ai_markdown_renderer_supports_source_ref_citations() -> None:
+    markdown = (SITE / "components" / "markdown.tsx").read_text(encoding="utf-8")
+
+    assert "rehypeSourceRefs" in markdown
+    assert "SourceRef" in markdown
+    assert "sourceRefCitationPattern" in markdown
+    assert "tagName: 'SourceRef'" in markdown
 
 
 def test_ai_markdown_renderer_does_not_register_undefined_components() -> None:

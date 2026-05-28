@@ -32,6 +32,8 @@ type ChatMetadata = {
 };
 
 type BookWikiChatMessage = UIMessage<ChatMetadata>;
+type BookWikiChatPart = BookWikiChatMessage['parts'][number];
+type ToolMessagePart = BookWikiChatPart & { type: `tool-${string}` };
 
 const Context = createContext<{
   open: boolean;
@@ -321,14 +323,99 @@ function messageFromError(error: Error) {
   return error.message;
 }
 
-function textFromMessage(message: BookWikiChatMessage) {
-  return message.parts
-    .filter(
-      (part): part is Extract<BookWikiChatMessage['parts'][number], { type: 'text' }> =>
-        part.type === 'text',
-    )
-    .map((part) => part.text)
-    .join('');
+function isVisiblePart(part: BookWikiChatPart) {
+  return part.type === 'text' || part.type === 'reasoning' || isToolPart(part);
+}
+
+function isToolPart(part: BookWikiChatPart): part is ToolMessagePart {
+  return part.type.startsWith('tool-');
+}
+
+function MessagePart({ part }: { part: BookWikiChatPart }) {
+  if (part.type === 'text') {
+    return (
+      <div className="prose text-sm">
+        <Markdown text={part.text} />
+      </div>
+    );
+  }
+
+  if (part.type === 'reasoning') {
+    if (!part.text) return null;
+
+    return (
+      <details className="rounded-lg border bg-fd-secondary/60 p-2 text-xs text-fd-muted-foreground">
+        <summary className="cursor-pointer font-medium text-fd-foreground">Reasoning</summary>
+        <div className="mt-2">
+          <Markdown text={part.text} />
+        </div>
+      </details>
+    );
+  }
+
+  if (isToolPart(part)) {
+    return <ToolPart part={part} />;
+  }
+
+  return null;
+}
+
+function ToolPart({ part }: { part: ToolMessagePart }) {
+  const toolName = part.type.slice('tool-'.length);
+  const title = 'title' in part && typeof part.title === 'string' ? part.title : toolName;
+  const state = 'state' in part && typeof part.state === 'string' ? part.state : 'pending';
+  const input = 'input' in part ? compactJson(part.input) : null;
+  const output = 'output' in part ? summarizeToolOutput(part.output) : null;
+  const errorText = 'errorText' in part && typeof part.errorText === 'string' ? part.errorText : null;
+
+  return (
+    <div className="rounded-lg border bg-fd-secondary/60 p-2 text-xs text-fd-muted-foreground">
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-medium text-fd-foreground">Tool: {title}</p>
+        <code>{state}</code>
+      </div>
+      {input ? (
+        <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">Input: {input}</pre>
+      ) : null}
+      {output ? (
+        <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">Output: {output}</pre>
+      ) : null}
+      {errorText ? <p className="mt-2 text-fd-error">{errorText}</p> : null}
+    </div>
+  );
+}
+
+function summarizeToolOutput(value: unknown) {
+  if (value === undefined || value === null) return null;
+
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+
+    if (Array.isArray(record.chunks)) {
+      return compactJson({ chunks: record.chunks.length });
+    }
+
+    if ('slug' in record || 'sourceRefs' in record || 'found' in record) {
+      return compactJson({
+        found: record.found,
+        slug: record.slug,
+        title: record.title,
+        sourceRefs: record.sourceRefs,
+      });
+    }
+  }
+
+  return compactJson(value);
+}
+
+function compactJson(value: unknown) {
+  try {
+    const json = JSON.stringify(value, null, 2);
+    if (!json) return null;
+    return json.length > 800 ? `${json.slice(0, 800)}...` : json;
+  } catch {
+    return String(value);
+  }
 }
 
 const roleName: Record<BookWikiChatMessage['role'], string> = {
@@ -338,7 +425,7 @@ const roleName: Record<BookWikiChatMessage['role'], string> = {
 };
 
 function Message({ message, ...props }: { message: BookWikiChatMessage } & ComponentProps<'div'>) {
-  const text = textFromMessage(message);
+  const hasVisibleParts = message.parts.some(isVisiblePart);
   const sources = message.metadata?.sources ?? [];
 
   return (
@@ -351,8 +438,11 @@ function Message({ message, ...props }: { message: BookWikiChatMessage } & Compo
       >
         {roleName[message.role]}
       </p>
-      <div className="prose text-sm">
-        {text ? <Markdown text={text} /> : <p className="text-fd-muted-foreground">Searching...</p>}
+      <div className="flex flex-col gap-2">
+        {message.parts.map((part, index) => (
+          <MessagePart key={`${message.id}-${index}`} part={part} />
+        ))}
+        {!hasVisibleParts ? <p className="text-fd-muted-foreground">Searching...</p> : null}
       </div>
 
       {sources.length ? (

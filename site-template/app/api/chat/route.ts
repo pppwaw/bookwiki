@@ -52,6 +52,7 @@ export async function POST(request: Request) {
     });
     const currentArticle = await currentArticleFromPath(pagePath);
     if (currentArticle) addArticleSources(sources, currentArticle);
+    let answerText = '';
 
     const result = streamText({
       model: openrouter(process.env.BOOKWIKI_CHAT_MODEL ?? 'google/gemma-4-31b-it'),
@@ -60,9 +61,18 @@ export async function POST(request: Request) {
         'The current article is provided in the user message when available.',
         'Use search_book when the current article does not contain enough evidence.',
         'Answer only from the current article context and tool results. If evidence is insufficient, say so.',
-        'Include source_ref IDs in the answer when source_ref IDs are available.',
+        chatFormatInstructions(),
       ].join(' '),
       prompt: promptFromQuestion(question, currentArticle),
+      providerOptions: {
+        openrouter: {
+          reasoning: {
+            enabled: true,
+            exclude: false,
+            effort: 'low',
+          },
+        },
+      },
       stopWhen: stepCountIs(4),
       tools: {
         get_current_article: tool({
@@ -112,8 +122,9 @@ export async function POST(request: Request) {
 
     return result.toUIMessageStreamResponse({
       messageMetadata: ({ part }) => {
+        if (part.type === 'text-delta') answerText += part.text;
         if (part.type !== 'finish') return undefined;
-        return { sources: Array.from(sources.values()) };
+        return { sources: citedSourcesFromText(answerText, sources) };
       },
       onError: (error) => (error instanceof Error ? error.message : 'chat request failed'),
     });
@@ -125,6 +136,16 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
+}
+
+function chatFormatInstructions() {
+  return [
+    'Format answers as concise GitHub-flavored Markdown.',
+    'Cite evidence with source_ref footnote markers, for example [^Week-10-p008].',
+    'Only cite source_ref IDs that appear in the current article context or tool results.',
+    'Do not invent source_ref IDs.',
+    'Do not add footnote definition blocks; the BookWiki UI renders source_ref markers directly.',
+  ].join(' ');
 }
 
 function questionFromBody(body: ChatRequest) {
@@ -184,4 +205,30 @@ function addArticleSources(sources: Map<string, ChatSource>, article: CurrentArt
       heading: article.title,
     });
   }
+}
+
+function citedSourcesFromText(text: string, sources: Map<string, ChatSource>) {
+  const citedRefs = citedSourceRefs(text);
+  const seenRefs = new Set<string>();
+  const citedSources: ChatSource[] = [];
+
+  for (const source of sources.values()) {
+    if (!citedRefs.has(source.ref_id) || seenRefs.has(source.ref_id)) continue;
+    citedSources.push(source);
+    seenRefs.add(source.ref_id);
+  }
+
+  return citedSources;
+}
+
+function citedSourceRefs(text: string) {
+  const refs = new Set<string>();
+  const pattern = /\[\^([A-Za-z0-9_.:-]+)\](?!:)|\[([A-Za-z0-9_.:-]+-p\d+[A-Za-z0-9_.:-]*)\](?!\()/g;
+
+  for (const match of text.matchAll(pattern)) {
+    const refId = match[1] ?? match[2];
+    if (refId) refs.add(refId);
+  }
+
+  return refs;
 }
