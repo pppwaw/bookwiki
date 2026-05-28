@@ -402,6 +402,7 @@ def test_content_list_v2_nested_content_dicts_render_text() -> None:
                         "paragraph_content": [
                             {"text": "Nested paragraph "},
                             {"content": "body."},
+                            {"type": "inline", "content": " Plain inline text."},
                         ]
                     },
                 },
@@ -418,10 +419,72 @@ def test_content_list_v2_nested_content_dicts_render_text() -> None:
     )
 
     assert "Chapter Title" in normalized.markdown
-    assert "Nested paragraph body." in normalized.markdown
-    assert "x^2" in normalized.markdown
+    assert "Nested paragraph body. Plain inline text." in normalized.markdown
+    assert "$Plain inline text.$" not in normalized.markdown
+    assert "$$\nx^2\n$$" in normalized.markdown
     assert "<table><tr><td>A</td></tr></table>" in normalized.markdown
     assert len(normalized.manifest["pages"][0]["blocks"]) == 4
+
+
+def test_content_list_math_fields_render_markdown_math_once() -> None:
+    normalized = normalize_structured_source(
+        raw_md="",
+        source_id="math",
+        content_list=[
+            {"page_idx": 0, "type": "equation", "text": "$$\ny = mx + b\n$$"},
+        ],
+        content_list_v2=[],
+    )
+
+    assert normalized.markdown.count("$$\ny = mx + b\n$$") == 1
+    assert "$$$" not in normalized.markdown
+
+
+def test_content_list_v2_math_content_and_spans_render_markdown_math() -> None:
+    normalized = normalize_structured_source(
+        raw_md="",
+        source_id="mathv2",
+        content_list_v2=[
+            [
+                {
+                    "type": "paragraph",
+                    "content": {
+                        "paragraph_content": [
+                            {"type": "text", "content": "Let "},
+                            {"type": "inline_equation", "content": "$x$"},
+                            {"type": "text", "content": " be observed."},
+                        ]
+                    },
+                },
+                {
+                    "type": "equation_interline",
+                    "content": {"math_content": "$$\ny=x^2\n$$", "math_type": "interline"},
+                },
+                {
+                    "type": "text",
+                    "lines": [
+                        {
+                            "spans": [
+                                {"type": "text", "content": "Then "},
+                                {"type": "inline_equation", "content": "E[X]"},
+                                {"type": "text", "content": " follows."},
+                            ]
+                        },
+                        {
+                            "spans": [
+                                {"type": "interline_equation", "content": "V(X)=1"},
+                            ]
+                        },
+                    ],
+                },
+            ]
+        ],
+    )
+
+    assert "Let $x$ be observed." in normalized.markdown
+    assert normalized.markdown.count("$$\ny=x^2\n$$") == 1
+    assert "Then $E[X]$ follows." in normalized.markdown
+    assert "$$\nV(X)=1\n$$" in normalized.markdown
 
 
 def test_image_blocks_render_book_figure_with_asset_metadata() -> None:

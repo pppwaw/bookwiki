@@ -155,7 +155,7 @@ def _source_citation_md(citations: list[dict[str, Any]]) -> str:
 
 
 def _source_quote_markdown(quote: str) -> str:
-    return _wrap_bare_latex_commands(normalize_mdx_math(quote))
+    return normalize_mdx_math(quote)
 
 
 def _display_chapter_title(chapter_id: str, title: str) -> str:
@@ -180,24 +180,6 @@ def _normalize_chapter_body_heading(body_md: str, display_title: str) -> str:
     return f"# {display_title}\n\n{body}" if body else f"# {display_title}"
 
 
-def _wrap_bare_latex_commands(markdown: str) -> str:
-    parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|```[\s\S]*?```|`[^`\n]*`)", markdown)
-    return "".join(
-        part if part.startswith(("`", "$")) else _wrap_latex_segment(part) for part in parts
-    )
-
-
-def _wrap_latex_segment(segment: str) -> str:
-    brace_arg = r"\{[^{}\n]*(?:\{[^{}\n]*\}[^{}\n]*)*\}"
-    sub_sup_target = rf"(?:{brace_arg}|[A-Za-z0-9]+)"
-    sub_sup = rf"\s*[_^]\s*{sub_sup_target}"
-    command = rf"\\[A-Za-z]+\*?(?:\s*{brace_arg})*(?:{sub_sup})*"
-    subscripted_ident = rf"[A-Za-z0-9]+(?:{sub_sup})+"
-    delim_sup = rf"[)\]](?:{sub_sup})+"
-    pattern = re.compile(rf"(?:{command}|{subscripted_ident}|{delim_sup})")
-    return pattern.sub(lambda match: f"${match.group(0)}$", segment)
-
-
 def _escape_mdx_text_outside_math(markdown: str) -> str:
     parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|```[\s\S]*?```|`[^`\n]*`)", markdown)
     return "".join(
@@ -219,9 +201,7 @@ def _escape_mdx_text_segment(segment: str) -> str:
 
 
 def _markdown_text(value: Any) -> str:
-    return _escape_mdx_text_outside_math(
-        _wrap_bare_latex_commands(normalize_mdx_math(str(value)))
-    )
+    return _escape_mdx_text_outside_math(normalize_mdx_math(str(value)))
 
 
 def _jsx_prop(name: str, value: Any) -> str:

@@ -34,6 +34,17 @@ CONTENT_DICT_TEXT_KEYS = (
     "chart_caption",
     "chart_footnote",
 )
+MATH_BLOCK_TYPES = {"equation", "interline_equation", "equation_interline"}
+INLINE_MATH_KINDS = {"inline", "inline_equation"}
+DISPLAY_MATH_KINDS = {
+    "display",
+    "interline",
+    "block",
+    "equation",
+    "interline_equation",
+    "equation_interline",
+}
+MATH_SPAN_TYPES = {"inline_equation", "interline_equation"}
 ALLOWED_REPAIR_ACTIONS = {
     "link_table_parts",
     "attach_caption",
@@ -208,7 +219,7 @@ def _pages_from_grouped_blocks(
         blocks: list[SourceBlock] = []
         for block_index, raw in enumerate(grouped[page_idx], start=1):
             block_type = _block_type(raw)
-            text = _block_text(raw)
+            text = _block_text(raw, block_type=block_type)
             block_id = f"{source_ref}-b{block_index:03d}"
             overrides = block_overrides.get(block_id, {}) if block_overrides else {}
             asset_path = _string_override(overrides, "asset_path") or _asset_path(raw)
@@ -407,8 +418,8 @@ def _render_block(block: SourceBlock) -> str:
         return ""
     if block.type == "title":
         return f"### {text.lstrip('#').strip()}"
-    if block.type == "equation":
-        return f"$$\n{text.strip('$')}\n$$"
+    if block.type in MATH_BLOCK_TYPES:
+        return _display_math(text)
     return text
 
 
@@ -458,7 +469,8 @@ def _block_type(raw: dict[str, Any]) -> str:
     return str(value).strip().lower() or "text"
 
 
-def _block_text(raw: dict[str, Any]) -> str:
+def _block_text(raw: dict[str, Any], *, block_type: str | None = None) -> str:
+    block_type = block_type or _block_type(raw)
     if isinstance(raw.get("list_items"), list):
         return "\n".join(f"- {item}" for item in raw["list_items"])
     for key in TEXT_KEYS:
@@ -466,11 +478,11 @@ def _block_text(raw: dict[str, Any]) -> str:
         if isinstance(value, str):
             return clean_markdown(value)
         if isinstance(value, dict):
-            text = _content_dict_text(value)
+            text = _content_dict_text(value, block_type=block_type)
             if text:
                 return text
         if isinstance(value, list):
-            text = _content_list_text(value)
+            text = _content_list_text(value, block_type=block_type)
             if text:
                 return text
     lines = raw.get("lines")
@@ -514,33 +526,57 @@ def _string_override(overrides: dict[str, Any], key: str) -> str | None:
     return None
 
 
-def _content_dict_text(value: dict[str, Any]) -> str:
+def _content_dict_text(value: dict[str, Any], *, block_type: str = "") -> str:
+    span_type = str(value.get("type") or "").strip().lower()
+    if span_type in MATH_SPAN_TYPES:
+        text = _content_value_text(_primary_content_value(value), block_type=block_type)
+        return _format_math(text, math_type=span_type, block_type=block_type)
+
     parts: list[str] = []
     for key in CONTENT_DICT_TEXT_KEYS:
         item = value.get(key)
-        text = _content_value_text(item)
+        text = _content_value_text(item, block_type=block_type)
         if text:
+            if key == "math_content" and block_type not in MATH_BLOCK_TYPES:
+                text = _format_math(
+                    text,
+                    math_type=str(value.get("math_type") or ""),
+                    block_type=block_type,
+                )
             parts.append(text)
     return clean_markdown("\n".join(parts))
 
 
-def _content_list_text(value: list[Any]) -> str:
-    return clean_markdown("".join(_content_value_text(item) for item in value))
+def _content_list_text(value: list[Any], *, block_type: str = "") -> str:
+    return clean_markdown(
+        "".join(_content_value_text(item, block_type=block_type) for item in value)
+    )
 
 
-def _content_value_text(value: Any) -> str:
+def _content_value_text(value: Any, *, block_type: str = "") -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, int | float):
         return str(value)
     if isinstance(value, list):
-        return _content_list_text(value)
+        return _content_list_text(value, block_type=block_type)
     if isinstance(value, dict):
         for key in ("text", "content", "value", "latex", "html"):
             nested = value.get(key)
             if nested is not None:
-                return _content_value_text(nested)
-        return _content_dict_text(value)
+                text = _content_value_text(nested, block_type=block_type)
+                span_type = str(value.get("type") or "").strip().lower()
+                if span_type in MATH_SPAN_TYPES:
+                    return _format_math(text, math_type=span_type, block_type=block_type)
+                return text
+        return _content_dict_text(value, block_type=block_type)
+    return ""
+
+
+def _primary_content_value(value: dict[str, Any]) -> Any:
+    for key in ("content", "text", "latex", "value"):
+        if key in value:
+            return value[key]
     return ""
 
 
@@ -549,8 +585,48 @@ def _line_text(raw: Any) -> str:
         return ""
     spans = raw.get("spans")
     if isinstance(spans, list):
-        return "".join(str(span.get("content") or "") for span in spans if isinstance(span, dict))
+        return "".join(_span_text(span) for span in spans if isinstance(span, dict))
     return str(raw.get("content") or raw.get("text") or "")
+
+
+def _span_text(span: dict[str, Any]) -> str:
+    text = str(span.get("content") or "")
+    span_type = str(span.get("type") or "").strip().lower()
+    if span_type in MATH_SPAN_TYPES:
+        return _format_math(text, math_type=span_type, block_type="")
+    return text
+
+
+def _format_math(text: str, *, math_type: str = "", block_type: str = "") -> str:
+    kind = math_type.strip().lower()
+    if kind in INLINE_MATH_KINDS:
+        return _inline_math(text)
+    if kind in DISPLAY_MATH_KINDS or block_type in MATH_BLOCK_TYPES:
+        return _display_math(text)
+    return _display_math(text) if "\n" in clean_markdown(text) else _inline_math(text)
+
+
+def _inline_math(text: str) -> str:
+    body = _strip_math_delimiters(text)
+    return f"${body}$" if body else ""
+
+
+def _display_math(text: str) -> str:
+    body = _strip_math_delimiters(text)
+    return f"$$\n{body}\n$$" if body else ""
+
+
+def _strip_math_delimiters(text: str) -> str:
+    body = clean_markdown(text)
+    if body.startswith("$$") and body.endswith("$$"):
+        return clean_markdown(body[2:-2])
+    if body.startswith(r"\[") and body.endswith(r"\]"):
+        return clean_markdown(body[2:-2])
+    if body.startswith("$") and body.endswith("$"):
+        return clean_markdown(body[1:-1])
+    if body.startswith(r"\(") and body.endswith(r"\)"):
+        return clean_markdown(body[2:-2])
+    return body
 
 
 def _bbox(raw: dict[str, Any]) -> list[float | int] | None:

@@ -5,7 +5,7 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
-from bookwiki.pipeline.nodes import integrate_node
+from bookwiki.pipeline.nodes import _source_citation_md, integrate_node
 from bookwiki.scheduler.config import BookConfig
 
 
@@ -21,6 +21,25 @@ def agent_payload(result: dict[str, Any]) -> dict[str, Any]:
         "_model": "stub",
         "result": result,
     }
+
+
+def test_source_citations_do_not_repair_bare_latex_expressions() -> None:
+    markdown = _source_citation_md(
+        [
+            {
+                "ref_id": "Week-10-p023",
+                "quote": r"\frac { 1 } { n } is not unbiased",
+            },
+            {
+                "ref_id": "source-p004",
+                "quote": r"Display math may be written as \[E(X)=\theta\].",
+            },
+        ]
+    )
+
+    assert r"\frac &#123; 1 &#125; &#123; n &#125; is not unbiased" in markdown
+    assert "\n\n$$\nE(X)=\\theta\n$$\n\n" in markdown
+    assert r"$\frac$" not in markdown
 
 
 def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Path) -> None:

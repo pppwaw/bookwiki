@@ -73,7 +73,12 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
                             "choices": ["parameter", "path"],
                             "answer": "parameter",
                             "explanation": "Point estimation estimates parameters.",
-                            "citations": [{"ref_id": "Week-10-p001", "quote": "unknown parameters"}],
+                            "citations": [
+                                {
+                                    "ref_id": "Week-10-p001",
+                                    "quote": "unknown parameters",
+                                }
+                            ],
                         }
                     ],
                     "placements": [{"after_block": 0, "item_indexes": [1], "title": "Quiz"}],
@@ -85,7 +90,12 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
                         {
                             "front": "Point estimation",
                             "back": "Estimate unknown parameters.",
-                            "citations": [{"ref_id": "Week-10-p001", "quote": "unknown parameters"}],
+                            "citations": [
+                                {
+                                    "ref_id": "Week-10-p001",
+                                    "quote": "unknown parameters",
+                                }
+                            ],
                         }
                     ],
                     "owner_task_id": "chapter-6:card",

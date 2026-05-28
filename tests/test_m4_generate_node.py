@@ -334,8 +334,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "$\\hat\\theta$" in chapter_text
     assert "$\\theta$" in chapter_text
     assert "$$\n\\hat\\theta\n$$" in chapter_text
-    assert "The moment estimator is $\\hat{\\theta}_M$" in chapter_text
-    assert "$\\frac{1}{2n}$" in chapter_text
+    assert "The moment estimator is \\hat&#123;\\theta&#125;_M" in chapter_text
+    assert "\\frac&#123;1&#125;&#123;2n&#125;" in chapter_text
     assert "<Markdown" not in chapter_text
 
     concept_page = book_dir / "content" / "docs" / "concepts" / "Point-Estimation.mdx"
