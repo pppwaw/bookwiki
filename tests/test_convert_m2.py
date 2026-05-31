@@ -21,9 +21,18 @@ from bookwiki.convert.mineru_client import (
 )
 from bookwiki.convert.source_normalizer import normalize_structured_source
 from bookwiki.convert.text_to_md import convert_text_to_md
-from bookwiki.pipeline.nodes import convert_node
+from bookwiki.pipeline.nodes import caption_node, convert_node
 from bookwiki.scheduler.config import default_config
 from tests.fakes import RecordingRuntime
+
+
+def _prompt_input_json(call: dict[str, object]) -> dict[str, object]:
+    user = str(call["user"])
+    start_marker = "Input JSON:\n```json\n"
+    end_marker = "\n```\n\nDraft JSON:"
+    start = user.index(start_marker) + len(start_marker)
+    end = user.index(end_marker, start)
+    return json.loads(user[start:end])
 
 
 @pytest.fixture(autouse=True)
@@ -916,6 +925,7 @@ def test_convert_node_reuses_matching_hashed_artifact(
     manifest_path = cfg.book_dir / first_state["source_ref_manifests"][0]
     markdown_path = cfg.book_dir / first_state["sources_md"][0]
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["convert_artifact_version"] == 2
     assert manifest["source_file"]["sha256"] == hashlib.sha256(pdf.read_bytes()).hexdigest()
     assert manifest["outputs"]["markdown_sha256"] == hashlib.sha256(
         markdown_path.read_text(encoding="utf-8").encode("utf-8")
@@ -930,6 +940,39 @@ def test_convert_node_reuses_matching_hashed_artifact(
 
     assert calls == 1
     assert second_state == first_state
+
+
+def test_convert_node_reruns_artifact_without_current_convert_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    (cfg.input_dir / "paper.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    responses = ["Old text.", "Fresh text."]
+
+    def fake_convert(path: Path, *, source_id: str):
+        return {
+            "markdown": "raw",
+            "content_list_v2": [
+                {"page_idx": 0, "items": [{"type": "text", "content": responses.pop(0)}]}
+            ],
+            "content_list": None,
+            "assets": [],
+        }
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+
+    first_state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+    manifest_path = cfg.book_dir / first_state["source_ref_manifests"][0]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("convert_artifact_version", None)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    second_state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+
+    assert second_state == first_state
+    markdown = (cfg.book_dir / first_state["sources_md"][0]).read_text(encoding="utf-8")
+    assert "Fresh text." in markdown
 
 
 def test_convert_node_writes_mineru_zip_image_assets_and_manifest(
@@ -1066,12 +1109,15 @@ def test_convert_node_skips_layout_repair_without_candidates(
     assert cfg.llm_runtime.calls == []
 
 
-def test_convert_node_adds_vision_caption_to_image_blocks(
+def test_caption_node_adds_vision_caption_to_image_blocks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     cfg.input_dir.mkdir(parents=True)
     (cfg.input_dir / "paper.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    figure = cfg.book_dir / "work" / "assets" / "paper" / "figure.png"
+    figure.parent.mkdir(parents=True)
+    figure.write_bytes(b"image-bytes")
     cfg.llm_runtime = RecordingRuntime(
         [
             {
@@ -1108,10 +1154,261 @@ def test_convert_node_adds_vision_caption_to_image_blocks(
     state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
 
     source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
+    assert "A bell-shaped sampling distribution." not in source_md
+    manifest = json.loads(
+        (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
+    )
+    image_block = manifest["pages"][0]["blocks"][1]
+    assert "caption" not in image_block
+    assert cfg.llm_runtime.calls == []
+
+    caption_state = asyncio.run(caption_node(state, cfg))
+
+    source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
     assert "A bell-shaped sampling distribution." in source_md
     manifest = json.loads(
         (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
     )
     image_block = manifest["pages"][0]["blocks"][1]
     assert image_block["caption"] == "A bell-shaped sampling distribution."
+    assert caption_state["caption_results"] == [
+        {
+            "block_id": "paper-p001-b002",
+            "source_ref": "paper-p001",
+            "manifest": "work/source_refs/paper.json",
+            "cache_hit": False,
+        }
+    ]
     assert cfg.llm_runtime.calls[0]["output_model"].__name__ == "VisionCaptionResult"
+    assert cfg.llm_runtime.calls[0]["image_paths"] == [str(figure)]
+
+
+def test_caption_node_uses_nested_mineru_image_source_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    (cfg.input_dir / "paper.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    cfg.llm_runtime = RecordingRuntime(
+        [
+            {
+                "caption_md": "A diagram of the sampling distribution.",
+                "key_points": ["sampling distribution"],
+                "source_ref": "paper-p001",
+                "confidence": 0.91,
+            }
+        ]
+    )
+
+    def fake_convert(path: Path, *, source_id: str):
+        return {
+            "markdown": "raw",
+            "content_list_v2": [
+                {
+                    "page_idx": 0,
+                    "items": [
+                        {"type": "text", "content": "Sampling distribution context."},
+                        {
+                            "type": "image",
+                            "content": {
+                                "image_source": {"path": "images/figure-1.png"},
+                            },
+                            "bbox": [0, 0, 10, 10],
+                        },
+                    ],
+                }
+            ],
+            "content_list": None,
+            "assets": [
+                {
+                    "archive_path": "images/figure-1.png",
+                    "filename": "figure-1.png",
+                    "data": b"\x89PNG\r\n\x1a\nfigure",
+                }
+            ],
+        }
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+
+    state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+
+    figure = cfg.book_dir / "work" / "assets" / "paper" / "figure-1.png"
+    manifest = json.loads(
+        (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
+    )
+    image_block = manifest["pages"][0]["blocks"][1]
+    assert image_block["asset_path"] == "work/assets/paper/figure-1.png"
+    assert "caption" not in image_block
+    assert cfg.llm_runtime.calls == []
+
+    asyncio.run(caption_node(state, cfg))
+
+    source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
+    assert 'src="/bookwiki-assets/paper/figure-1.png"' in source_md
+    assert "A diagram of the sampling distribution." in source_md
+    manifest = json.loads(
+        (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
+    )
+    image_block = manifest["pages"][0]["blocks"][1]
+    assert image_block["caption"] == "A diagram of the sampling distribution."
+    assert cfg.llm_runtime.calls[0]["image_paths"] == [str(figure)]
+
+
+def test_caption_node_passes_heading_section_context_to_vision_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    (cfg.input_dir / "paper.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    figure = cfg.book_dir / "work" / "assets" / "paper" / "figure.png"
+    figure.parent.mkdir(parents=True)
+    figure.write_bytes(b"image-bytes")
+    cfg.llm_runtime = RecordingRuntime(
+        [
+            {
+                "caption_md": "A contextual figure caption.",
+                "key_points": ["context"],
+                "source_ref": "paper-p001",
+                "confidence": 0.91,
+            }
+        ]
+    )
+
+    def fake_convert(path: Path, *, source_id: str):
+        return {
+            "markdown": "raw",
+            "content_list_v2": [
+                {
+                    "page_idx": 0,
+                    "items": [
+                        {
+                            "type": "image",
+                            "asset_path": "work/assets/paper/figure.png",
+                            "bbox": [0, 0, 10, 10],
+                        },
+                    ],
+                }
+            ],
+            "content_list": None,
+            "assets": [],
+        }
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+
+    state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+    source_path = cfg.book_dir / state["sources_md"][0]
+    source_path.write_text(
+        "# paper\n\n"
+        "Intro outside the section.\n\n"
+        "### Sampling Distribution\n\n"
+        "Use the central limit theorem for this visual.\n\n"
+        '<BookFigure id="paper-p001-b001" sourceRef="paper-p001" '
+        'src="/bookwiki-assets/paper/figure.png" />\n\n'
+        "The picture compares the approximation visually.\n\n"
+        "### Next Section\n\n"
+        "This text should not be in the section context.\n",
+        encoding="utf-8",
+    )
+
+    asyncio.run(caption_node(state, cfg))
+
+    prompt_input = _prompt_input_json(cfg.llm_runtime.calls[0])
+    section_context = str(prompt_input["section_context"])
+    assert section_context.startswith("### Sampling Distribution")
+    assert "Use the central limit theorem" in section_context
+    assert "The picture compares the approximation" in section_context
+    assert "### Next Section" not in section_context
+    assert "This text should not be in the section context" not in section_context
+
+
+def test_caption_node_skips_existing_caption_without_refining(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    (cfg.input_dir / "paper.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    figure = cfg.book_dir / "work" / "assets" / "paper" / "figure.png"
+    figure.parent.mkdir(parents=True)
+    figure.write_bytes(b"image-bytes")
+    cfg.llm_runtime = RecordingRuntime([])
+
+    def fake_convert(path: Path, *, source_id: str):
+        return {
+            "markdown": "raw",
+            "content_list_v2": [
+                {
+                    "page_idx": 0,
+                    "items": [
+                        {
+                            "type": "chart",
+                            "asset_path": "work/assets/paper/figure.png",
+                            "caption": "One hundred 95% Cls.",
+                            "bbox": [0, 0, 10, 10],
+                        },
+                    ],
+                }
+            ],
+            "content_list": None,
+            "assets": [],
+        }
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+
+    state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+    asyncio.run(caption_node(state, cfg))
+
+    assert cfg.llm_runtime.calls == []
+    manifest = json.loads(
+        (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
+    )
+    image_block = manifest["pages"][0]["blocks"][0]
+    assert image_block["caption"] == "One hundred 95% Cls."
+    assert "caption_source" not in image_block
+
+
+def test_caption_node_preserves_latex_backslashes_when_rewriting_book_figure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    (cfg.input_dir / "paper.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    figure = cfg.book_dir / "work" / "assets" / "paper" / "figure.png"
+    figure.parent.mkdir(parents=True)
+    figure.write_bytes(b"image-bytes")
+    cfg.llm_runtime = RecordingRuntime(
+        [
+            {
+                "caption_md": r"A density curve with $\lambda=2$.",
+                "key_points": ["lambda"],
+                "source_ref": "paper-p001",
+                "confidence": 0.91,
+            }
+        ]
+    )
+
+    def fake_convert(path: Path, *, source_id: str):
+        return {
+            "markdown": "raw",
+            "content_list_v2": [
+                {
+                    "page_idx": 0,
+                    "items": [
+                        {
+                            "type": "image",
+                            "asset_path": "work/assets/paper/figure.png",
+                            "bbox": [0, 0, 10, 10],
+                        },
+                    ],
+                }
+            ],
+            "content_list": None,
+            "assets": [],
+        }
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+
+    state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+    asyncio.run(caption_node(state, cfg))
+
+    source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
+    assert r"A density curve with $\lambda=2$." in source_md

@@ -23,7 +23,12 @@ from bookwiki.agents import (
 )
 from bookwiki.convert.common import source_id_from_stem
 from bookwiki.convert.mineru_client import convert_document_to_source
-from bookwiki.convert.source_normalizer import NormalizedSource, normalize_structured_source
+from bookwiki.convert.source_normalizer import (
+    NormalizedSource,
+    SourceBlock,
+    _render_figure,
+    normalize_structured_source,
+)
 from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
 from bookwiki.integrator.markdown_renderers import normalize_mdx_math
@@ -39,6 +44,7 @@ State = dict[str, Any]
 
 APPROVED_STRUCTURE_MARKER = "# bookwiki: approved-structure"
 PENDING_STRUCTURE_MARKER = "# bookwiki: pending-structure-review"
+CONVERT_ARTIFACT_VERSION = 2
 
 
 def _rel(path: Path, base: Path) -> str:
@@ -158,6 +164,7 @@ def _attach_convert_metadata(
 ) -> dict[str, Any]:
     return {
         **manifest,
+        "convert_artifact_version": CONVERT_ARTIFACT_VERSION,
         "source_file": _source_file_metadata(source_path, cfg, source_sha256),
         "outputs": _outputs_metadata(out_path, cfg, body),
     }
@@ -178,6 +185,8 @@ def _matching_convert_artifact(
         return False
     source_file = manifest.get("source_file")
     outputs = manifest.get("outputs")
+    if manifest.get("convert_artifact_version") != CONVERT_ARTIFACT_VERSION:
+        return False
     if not isinstance(source_file, dict) or not isinstance(outputs, dict):
         return False
     if source_file.get("path") != _rel(source_path, cfg.book_dir):
@@ -894,11 +903,105 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
     return {"sources_md": outputs, "source_ref_manifests": manifests}
 
 
+async def caption_node(state: State, cfg: BookConfig) -> State:
+    source_mds = [str(path) for path in state.get("sources_md") or []]
+    manifests = [str(path) for path in state.get("source_ref_manifests") or []]
+    if not source_mds:
+        msg = "caption requires converted markdown; run convert first"
+        raise FileNotFoundError(msg)
+    if not manifests:
+        msg = "caption requires source ref manifests; run convert first"
+        raise FileNotFoundError(msg)
+
+    md_by_source_id = {Path(path).stem: str(path) for path in source_mds}
+    caption_results: list[dict[str, Any]] = []
+    cache_results: list[CacheResult] = []
+    settings = _vision_caption_settings(cfg)
+
+    for manifest_rel in manifests:
+        manifest_path = cfg.book_dir / manifest_rel
+        if not manifest_path.exists():
+            msg = f"caption source ref manifest not found: {manifest_path}"
+            raise FileNotFoundError(msg)
+        manifest = read_json(manifest_path, default={})
+        if not isinstance(manifest, dict):
+            msg = f"caption source ref manifest is not a JSON object: {manifest_path}"
+            raise ValueError(msg)
+        source_id = str(manifest.get("source_id") or Path(manifest_rel).stem)
+        md_rel = md_by_source_id.get(source_id) or md_by_source_id.get(Path(manifest_rel).stem)
+        md_path = cfg.book_dir / md_rel if md_rel else None
+        if md_path is None or not md_path.exists():
+            msg = f"caption converted markdown not found for {manifest_rel}"
+            raise FileNotFoundError(msg)
+        md_text = md_path.read_text(encoding="utf-8")
+        warnings = [
+            str(item)
+            for item in manifest.get("vision_warnings", [])
+            if isinstance(item, str) and item.strip()
+        ]
+
+        if settings["mode"] == "off":
+            continue
+
+        normalized = NormalizedSource(markdown=md_text, manifest=manifest)
+        for candidate in _image_caption_candidates(normalized)[: settings["max_images"]]:
+            candidate_input = dict(candidate)
+            section_context = _section_context_for_book_figure(
+                md_text, candidate["block_id"]
+            )
+            if section_context:
+                candidate_input["section_context"] = section_context
+            try:
+                result = await _run_vision_caption(candidate_input, cfg)
+            except Exception as exc:  # noqa: BLE001 - captioning is best-effort enrichment
+                warnings.append(f"vision caption failed for {candidate['block_id']}: {exc}")
+                continue
+
+            block = _set_manifest_block_caption(
+                manifest,
+                candidate["block_id"],
+                result.result.caption_md,
+                model=cfg.model_for("vision"),
+            )
+            if block is None:
+                warnings.append(
+                    f"vision caption target block not found for {candidate['block_id']}"
+                )
+                continue
+            if md_text:
+                md_text, replaced = _replace_book_figure(md_text, block)
+                if not replaced:
+                    warnings.append(
+                        f"vision caption markdown tag not found for {candidate['block_id']}"
+                    )
+            cache_results.append(result)
+            caption_results.append(
+                {
+                    "block_id": candidate["block_id"],
+                    "source_ref": candidate["source_ref"],
+                    "manifest": manifest_rel,
+                    "cache_hit": result.cache_hit,
+                }
+            )
+
+        if warnings:
+            manifest["vision_warnings"] = warnings
+        write_json(manifest_path, manifest)
+        if md_path and md_text:
+            write_text(md_path, md_text)
+
+    return {
+        "sources_md": source_mds,
+        "source_ref_manifests": manifests,
+        "caption_results": caption_results,
+        "cache_hit": not cache_results or _stage_cache_hit(cache_results),
+    }
+
+
 async def _normalize_with_layout_repair(
     parsed: dict[str, Any], source_id: str, cfg: BookConfig
 ) -> NormalizedSource:
     settings = _source_layout_repair_settings(cfg)
-    block_overrides: dict[str, dict[str, Any]] = {}
     normalized = normalize_structured_source(
         raw_md=str(parsed.get("markdown") or ""),
         source_id=source_id,
@@ -907,22 +1010,7 @@ async def _normalize_with_layout_repair(
         min_confidence=settings["min_confidence"],
         max_candidates=settings["max_candidates"],
     )
-    vision_warnings: list[str] = []
-    vision_overrides = await _vision_caption_overrides(normalized, cfg, vision_warnings)
-    if vision_overrides:
-        block_overrides.update(vision_overrides)
-        normalized = normalize_structured_source(
-            raw_md=str(parsed.get("markdown") or ""),
-            source_id=source_id,
-            content_list_v2=parsed.get("content_list_v2"),
-            content_list=parsed.get("content_list"),
-            block_overrides=block_overrides,
-            min_confidence=settings["min_confidence"],
-            max_candidates=settings["max_candidates"],
-        )
     if settings["mode"] == "off" or not normalized.repair_candidates:
-        if vision_warnings:
-            normalized.manifest["vision_warnings"] = vision_warnings
         return normalized
 
     result = await run_with_cache(
@@ -948,13 +1036,10 @@ async def _normalize_with_layout_repair(
         source_id=source_id,
         content_list_v2=parsed.get("content_list_v2"),
         content_list=parsed.get("content_list"),
-        block_overrides=block_overrides,
         repair_patches=patches,
         min_confidence=settings["min_confidence"],
         max_candidates=settings["max_candidates"],
     )
-    if vision_warnings:
-        repaired.manifest["vision_warnings"] = vision_warnings
     return repaired
 
 
@@ -989,16 +1074,30 @@ def _attach_asset_paths(value: Any, path_index: dict[str, str]) -> None:
         return
     block_type = str(value.get("type") or value.get("category") or "").lower()
     if block_type in {"image", "chart"} and not value.get("asset_path"):
-        for key in ("img_path", "image_path", "path", "url"):
-            raw = value.get(key)
-            if not isinstance(raw, str):
-                continue
+        for raw in _asset_path_refs(value):
             rel_path = _asset_match(raw, path_index)
             if rel_path:
                 value["asset_path"] = rel_path
                 break
     for item in value.values():
         _attach_asset_paths(item, path_index)
+
+
+def _asset_path_refs(value: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for key in ("img_path", "image_path", "path", "url"):
+        raw = value.get(key)
+        if isinstance(raw, str) and raw.strip():
+            refs.append(raw)
+    content = value.get("content")
+    if isinstance(content, dict):
+        image_source = content.get("image_source") or content.get("chart_source")
+        if isinstance(image_source, dict):
+            for key in ("img_path", "image_path", "path", "url"):
+                raw = image_source.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    refs.append(raw)
+    return refs
 
 
 def _asset_match(raw_path: str, path_index: dict[str, str]) -> str | None:
@@ -1021,33 +1120,81 @@ def _safe_asset_filename(filename: str, index: int) -> str:
     return clean
 
 
-async def _vision_caption_overrides(
-    normalized: NormalizedSource, cfg: BookConfig, warnings: list[str]
-) -> dict[str, dict[str, Any]]:
-    settings = _vision_caption_settings(cfg)
-    if settings["mode"] == "off":
-        return {}
-    candidates = _image_caption_candidates(normalized)[: settings["max_images"]]
-    overrides: dict[str, dict[str, Any]] = {}
-    for candidate in candidates:
-        try:
-            result = await run_with_cache(
-                VisionCaptionAgent,
-                candidate,
-                model=cfg.model_for("vision"),
-                cache_dir=_cache_dir(cfg),
-                runtime=cfg.llm_runtime,
-            )
-        except Exception as exc:  # noqa: BLE001 - captioning is best-effort enrichment
-            warnings.append(
-                f"vision caption failed for {candidate['block_id']}: {exc}"
-            )
+async def _run_vision_caption(candidate: dict[str, Any], cfg: BookConfig) -> CacheResult:
+    agent_input = _vision_caption_agent_input(candidate, cfg)
+    return await run_with_cache(
+        VisionCaptionAgent,
+        agent_input,
+        model=cfg.model_for("vision"),
+        cache_dir=_cache_dir(cfg),
+        runtime=cfg.llm_runtime,
+    )
+
+
+def _set_manifest_block_caption(
+    manifest: dict[str, Any], block_id: str, caption: str, *, model: str
+) -> dict[str, Any] | None:
+    block = _manifest_block(manifest, block_id)
+    if block is None:
+        return None
+    block["caption"] = caption
+    block["caption_source"] = "vision"
+    block["caption_model"] = model
+    return block
+
+
+def _manifest_block(manifest: dict[str, Any], block_id: str) -> dict[str, Any] | None:
+    for page in manifest.get("pages", []):
+        if not isinstance(page, dict):
             continue
-        overrides[candidate["block_id"]] = {
-            "caption": result.result.caption_md,
-            "asset_path": candidate["asset_path"],
-        }
-    return overrides
+        for block in page.get("blocks", []):
+            if isinstance(block, dict) and str(block.get("block_id") or "") == block_id:
+                return block
+    return None
+
+
+def _replace_book_figure(markdown: str, block: dict[str, Any]) -> tuple[str, bool]:
+    figure = _render_figure(_source_block_from_manifest(block), "")
+    if not figure:
+        return markdown, False
+    pattern = _book_figure_pattern(str(block.get("block_id") or ""))
+    if not pattern.search(markdown):
+        return markdown, False
+    return pattern.sub(lambda _match: figure, markdown, count=1), True
+
+
+def _section_context_for_book_figure(markdown: str, block_id: str) -> str:
+    match = _book_figure_pattern(block_id).search(markdown)
+    if not match:
+        return ""
+    start = 0
+    end = len(markdown)
+    for heading in re.finditer(r"(?m)^#{1,6}\s+\S.*$", markdown):
+        if heading.start() <= match.start():
+            start = heading.start()
+            continue
+        end = heading.start()
+        break
+    return markdown[start:end].strip()
+
+
+def _book_figure_pattern(block_id: str) -> re.Pattern[str]:
+    escaped = re.escape(block_id)
+    return re.compile(rf'<BookFigure\b(?=[^>]*\bid="{escaped}")[^>]*/>')
+
+
+def _source_block_from_manifest(block: dict[str, Any]) -> SourceBlock:
+    return SourceBlock(
+        block_id=str(block.get("block_id") or ""),
+        page_ref=str(block.get("page_ref") or ""),
+        page_idx=_int_setting(block.get("page_idx"), 0),
+        block_index=_int_setting(block.get("block_index"), 0),
+        type=str(block.get("type") or "image"),
+        text=str(block.get("text_preview") or ""),
+        bbox=block.get("bbox") if isinstance(block.get("bbox"), list) else None,
+        asset_path=str(block.get("asset_path") or "") or None,
+        caption=str(block.get("caption") or "") or None,
+    )
 
 
 def _image_caption_candidates(normalized: NormalizedSource) -> list[dict[str, Any]]:
@@ -1076,6 +1223,17 @@ def _image_caption_candidates(normalized: NormalizedSource) -> list[dict[str, An
                 }
             )
     return candidates
+
+
+def _vision_caption_agent_input(candidate: dict[str, Any], cfg: BookConfig) -> dict[str, Any]:
+    agent_input = dict(candidate)
+    image_path = Path(str(candidate.get("asset_path") or ""))
+    if not image_path.is_absolute():
+        image_path = cfg.book_dir / image_path
+    agent_input["asset_full_path"] = str(image_path)
+    if image_path.is_file():
+        agent_input["asset_sha256"] = sha256_file(image_path)
+    return agent_input
 
 
 def _vision_caption_settings(cfg: BookConfig) -> dict[str, Any]:
@@ -1725,6 +1883,7 @@ def index_node(state: State, cfg: BookConfig) -> State:
 
 NODE_FUNCTIONS = {
     "convert": convert_node,
+    "caption": caption_node,
     "structure": structure_node,
     "split": split_node,
     "generate": generate_node,

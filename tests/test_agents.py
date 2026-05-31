@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ class LitellmMockRuntime:
         system: str,
         user: str,
         context: dict[str, Any] | None = None,
+        image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
     ) -> BaseModel:
         self.calls.append(
@@ -45,6 +47,7 @@ class LitellmMockRuntime:
                 "system": system,
                 "user": user,
                 "context": context,
+                "image_paths": [str(path) for path in image_paths or []],
                 "max_retries": max_retries,
             }
         )
@@ -258,11 +261,14 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
         model="deepseek-v4-flash",
         runtime=runtime,
     )
+    figure = tmp_path / "figure.png"
+    figure.write_bytes(b"image-bytes")
     vision = await VisionCaptionAgent().run(
         {
             "block_id": "source-p001-b003",
             "source_ref": "source-p001",
             "asset_path": "work/assets/source/figure.png",
+            "asset_full_path": str(figure),
             "nearby_text": "State space search expands states.",
         },
         model="kimi-k2.6",
@@ -283,6 +289,7 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert repair.action == "regenerate"
     assert layout.patches[0].action == "attach_caption"
     assert vision.caption_md == "A diagram showing state expansion."
+    assert runtime.calls[-1]["image_paths"] == [str(figure)]
     assert len(runtime.calls) == 10
     assert runtime.responses == []
     assert {call["output_model"] for call in runtime.calls} >= {

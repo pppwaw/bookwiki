@@ -19,6 +19,7 @@ LOGGER = get_logger(__name__)
 
 NODE_ORDER = [
     "convert",
+    "caption",
     "structure",
     "split",
     "generate",
@@ -34,6 +35,9 @@ NODE_OUTPUT_KEYS = {
     "convert": {
         "sources_md",
         "source_ref_manifests",
+    },
+    "caption": {
+        "caption_results",
     },
     "structure": {
         "proposed_structure",
@@ -118,7 +122,8 @@ class BookGraph:
             f"{self.get_graph().draw_mermaid()}\n\n"
             f"Estimated tokens: {estimate.tokens}\n"
             f"Estimated cost USD: {estimate.cost_usd:.6f}\n"
-            "Critical path: convert -> structure -> split -> generate -> check -> index\n"
+            "Critical path: convert -> caption -> structure -> split -> "
+            "generate -> check -> index\n"
         )
 
     def invoke(
@@ -288,13 +293,20 @@ class BookGraph:
     ) -> tuple[dict[str, Any], int]:
         sources_md = checkpoint_state.get("sources_md")
         if sources_md and self.stop_after != "convert":
-            print("resume: config changed; rerunning from structure")
+            source_ref_manifests = checkpoint_state.get(
+                "source_ref_manifests"
+            ) or self._existing_source_ref_manifests()
+            if not source_ref_manifests:
+                print("resume: config changed; rerunning from convert")
+                return {"book_id": self.cfg.book_id}, 0
+            print("resume: config changed; rerunning from caption")
             return (
                 {
                     "book_id": checkpoint_state.get("book_id", self.cfg.book_id),
                     "sources_md": sources_md,
+                    "source_ref_manifests": source_ref_manifests,
                 },
-                NODE_ORDER.index("structure"),
+                NODE_ORDER.index("caption"),
             )
         print("resume: config changed; rerunning from convert")
         return {"book_id": self.cfg.book_id}, 0
@@ -307,9 +319,10 @@ class BookGraph:
             for node_name in NODE_ORDER[start_index:]:
                 for key in NODE_OUTPUT_KEYS.get(node_name, set()):
                     state.pop(key, None)
-        if self.cfg.force_from and NODE_ORDER.index(self.cfg.force_from) >= NODE_ORDER.index(
-            "structure"
-        ) and not state.get("sources_md"):
+        start_index = NODE_ORDER.index(self.cfg.force_from) if self.cfg.force_from else 0
+        if self.cfg.force_from and start_index >= NODE_ORDER.index("caption") and not state.get(
+            "sources_md"
+        ):
             sources = self._existing_sources_md()
             if not sources:
                 msg = (
@@ -318,9 +331,18 @@ class BookGraph:
                 )
                 raise FileNotFoundError(msg)
             state["sources_md"] = sources
-        if self.cfg.force_from and NODE_ORDER.index(self.cfg.force_from) >= NODE_ORDER.index(
-            "generate"
-        ) and not state.get("chapter_sources"):
+        if self.cfg.force_from == "caption" and not state.get("source_ref_manifests"):
+            manifests = self._existing_source_ref_manifests()
+            if not manifests:
+                msg = (
+                    "--from caption requires source ref manifests in "
+                    f"{self.cfg.work_dir / 'source_refs'}; run convert first"
+                )
+                raise FileNotFoundError(msg)
+            state["source_ref_manifests"] = manifests
+        if self.cfg.force_from and start_index >= NODE_ORDER.index("generate") and not state.get(
+            "chapter_sources"
+        ):
             chapter_sources, chapter_titles, alignment_path = self._existing_split_state()
             if chapter_sources:
                 state["chapter_sources"] = chapter_sources
@@ -337,6 +359,16 @@ class BookGraph:
         return [
             path.relative_to(self.cfg.book_dir).as_posix()
             for path in sorted(sources_dir.glob("*.md"))
+            if path.is_file()
+        ]
+
+    def _existing_source_ref_manifests(self) -> list[str]:
+        refs_dir = self.cfg.work_dir / "source_refs"
+        if not refs_dir.exists():
+            return []
+        return [
+            path.relative_to(self.cfg.book_dir).as_posix()
+            for path in sorted(refs_dir.glob("*.json"))
             if path.is_file()
         ]
 

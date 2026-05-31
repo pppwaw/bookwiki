@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, ClassVar
 
 from bookwiki.agents.llm import generate_with_llm
@@ -16,14 +17,16 @@ class VisionCaptionAgent:
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
         body="""You describe one source image for a textbook-style learning site.
 
-Return a concise source-grounded caption and key points. Use the image metadata,
-nearby source text, and source_ref. Do not invent details not supported by the
-available context. Keep caption_md short enough to place below the image.""",
+Return a concise source-grounded caption and key points. Use the attached image,
+the heading-bounded section_context, nearby source text, image metadata, and
+source_ref. Do not invent details not supported by the available context. Keep
+caption_md short enough to place below the image.""",
     )
 
     async def run(
         self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime
     ) -> VisionCaptionResult:
+        image_path = _image_path(inp)
         draft = VisionCaptionResult(
             caption_md=str(inp.get("nearby_text") or "Source figure."),
             key_points=[],
@@ -37,7 +40,23 @@ available context. Keep caption_md short enough to place below the image.""",
             agent_name=self.__class__.__name__,
             prompt_name=self.prompt_name,
             prompt_template=self.prompt_template,
-            inp=inp,
+            inp=_prompt_input(inp),
             draft=draft,
+            image_paths=[image_path],
         )
         return VisionCaptionResult.model_validate(result)
+
+
+def _image_path(inp: dict[str, Any]) -> Path:
+    raw = inp.get("asset_full_path") or inp.get("asset_path")
+    if not isinstance(raw, str) or not raw.strip():
+        raise FileNotFoundError("vision caption requires asset_full_path or asset_path")
+    path = Path(raw)
+    if not path.is_file():
+        raise FileNotFoundError(f"vision caption image not found: {path}")
+    return path
+
+
+def _prompt_input(inp: dict[str, Any]) -> dict[str, Any]:
+    hidden_keys = {"asset_full_path", "asset_sha256"}
+    return {key: value for key, value in inp.items() if key not in hidden_keys}

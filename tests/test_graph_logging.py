@@ -61,6 +61,34 @@ def test_force_from_structure_reuses_converted_sources(
     assert state["sources_md"] == seen["sources_md"]
 
 
+def test_force_from_caption_reuses_converted_sources_and_manifests(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.force_from = "caption"
+    sources_dir = cfg.work_dir / "sources_md"
+    refs_dir = cfg.work_dir / "source_refs"
+    sources_dir.mkdir(parents=True)
+    refs_dir.mkdir(parents=True)
+    (sources_dir / "alpha.md").write_text("# Alpha\n", encoding="utf-8")
+    (refs_dir / "alpha.json").write_text('{"source_id":"alpha","pages":[]}', encoding="utf-8")
+
+    seen: dict[str, Any] = {}
+
+    def fake_caption(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001
+        seen.update(state)
+        return {"caption_results": [], "cache_hit": True}
+
+    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "caption", fake_caption)
+    graph = BookGraph(cfg=cfg, stop_after="caption")
+    state = graph.invoke({"book_id": cfg.book_id})
+
+    assert seen["sources_md"] == ["work/sources_md/alpha.md"]
+    assert seen["source_ref_manifests"] == ["work/source_refs/alpha.json"]
+    assert "caption_results" not in seen
+    assert state["caption_results"] == []
+
+
 def test_force_from_structure_pauses_before_split_for_manual_review(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -173,7 +201,7 @@ def test_repair_resume_reintegrates_before_honoring_stop_after_check(
         {"book_id": cfg.book_id, "repair_targets": ["chapter-1:quiz"]},
         [],
         status="paused",
-        next_index=8,
+        next_index=9,
     )
     calls: list[str] = []
 
@@ -209,7 +237,7 @@ def test_resume_does_not_run_nodes_after_stop_after_target(
         {"book_id": cfg.book_id, "check_report": "work/logs/check-report.json"},
         [],
         status="paused",
-        next_index=9,
+        next_index=10,
     )
 
     def fail_index(state: dict[str, Any], cfg_arg) -> dict[str, Any]:  # noqa: ANN001

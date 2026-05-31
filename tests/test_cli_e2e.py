@@ -129,6 +129,23 @@ def test_completed_checkpoint_is_not_reused_after_language_change(tmp_path) -> N
     assert checkpoint["config_hash"]
 
 
+def test_caption_stage_script_runs_after_convert(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    source = tmp_path / "notes.txt"
+    source.write_text("BookWiki caption stage smoke source.", encoding="utf-8")
+
+    run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
+    run_script("scripts/convert.py", str(book_dir))
+    result = run_script("scripts/caption.py", str(book_dir))
+
+    assert "stage complete: caption" in result.stdout
+    checkpoint = json.loads(
+        (book_dir / "work" / ".cache" / "checkpoint.json").read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "paused"
+    assert checkpoint["next_node"] == "structure"
+
+
 def test_dry_run_prints_mermaid_and_estimate(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
     source = tmp_path / "notes.txt"

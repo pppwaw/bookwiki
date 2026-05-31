@@ -36,6 +36,8 @@ def test_build_graph_exposes_pipeline_topology(tmp_path: Path) -> None:
 
     assert mermaid.startswith("graph TD")
     assert "START --> convert" in mermaid
+    assert "convert --> caption" in mermaid
+    assert "caption --> structure" in mermaid
     assert "check -->|issues| repair" in mermaid
     assert "check -->|clean| index" in mermaid
     assert "repair --> integrate" in mermaid

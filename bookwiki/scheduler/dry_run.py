@@ -5,6 +5,7 @@ from typing import Any
 
 ESTIMATE: dict[str, dict[str, float]] = {
     "source_summary": {"tokens": 400, "cost_usd": 0.0002},
+    "caption": {"tokens": 300, "cost_usd": 0.0002},
     "structure": {"tokens": 900, "cost_usd": 0.0010},
     "split": {"tokens": 300, "cost_usd": 0.0001},
     "chapter": {"tokens": 1200, "cost_usd": 0.0020},

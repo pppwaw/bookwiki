@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -19,6 +21,7 @@ class RecordingRuntime:
         system: str,
         user: str,
         context: dict[str, Any] | None = None,
+        image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
     ) -> BaseModel:
         last_error: ValidationError | None = None
@@ -30,6 +33,7 @@ class RecordingRuntime:
                     "system": system,
                     "user": user,
                     "context": context,
+                    "image_paths": [str(path) for path in image_paths or []],
                     "max_retries": max_retries,
                 }
             )

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import os
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -18,6 +21,7 @@ class LLMRuntime(Protocol):
         system: str,
         user: str,
         context: dict[str, Any] | None = None,
+        image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
     ) -> BaseModel:
         """Return a validated structured result from a real or explicitly injected LLM."""
@@ -53,6 +57,7 @@ class LiteLLMRuntime:
         system: str,
         user: str,
         context: dict[str, Any] | None = None,
+        image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
     ) -> BaseModel:
         _ensure_api_key(model)
@@ -63,13 +68,10 @@ class LiteLLMRuntime:
         result = await client.create(
             model=model,
             response_model=output_model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            messages=_messages(system=system, user=user, image_paths=image_paths),
             max_retries=max_retries,
             context=context,
-            temperature=0,
+            temperature=_temperature_for_model(model),
         )
         if isinstance(result, output_model):
             return result
@@ -87,6 +89,7 @@ class TestLLMRuntime:
         system: str,
         user: str,
         context: dict[str, Any] | None = None,
+        image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
     ) -> BaseModel:
         draft = _extract_draft_payload(user)
@@ -147,6 +150,7 @@ def _model_list() -> list[dict[str, Any]]:
             "litellm_params": {
                 "model": "moonshot/kimi-k2.6",
                 "api_key": os.getenv("MOONSHOT_API_KEY"),
+                "api_base": "https://api.moonshot.cn/v1",
             },
         },
     ]
@@ -168,6 +172,10 @@ def _api_key_env(model: str) -> str | None:
     if normalized.startswith("kimi") or normalized.startswith("moonshot/"):
         return "MOONSHOT_API_KEY"
     return None
+
+
+def _temperature_for_model(model: str) -> int:
+    return 1 if _api_key_env(model) == "MOONSHOT_API_KEY" else 0
 
 
 def load_dotenv(path: str | Path | None = None) -> bool:
@@ -271,6 +279,32 @@ def _extract_draft_payload(user: str) -> Any | None:
     else:
         draft = draft.split("\n\nReturn only", 1)[0].strip()
     return json.loads(draft)
+
+
+def _messages(
+    *, system: str, user: str, image_paths: Sequence[str | Path] | None = None
+) -> list[dict[str, Any]]:
+    if not image_paths:
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+    content: list[dict[str, Any]] = [{"type": "text", "text": user}]
+    for image_path in image_paths:
+        content.append({"type": "image_url", "image_url": {"url": _image_data_url(image_path)}})
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": content},
+    ]
+
+
+def _image_data_url(image_path: str | Path) -> str:
+    path = Path(image_path)
+    mime_type = mimetypes.guess_type(path.name)[0]
+    if mime_type is None or not mime_type.startswith("image/"):
+        mime_type = "image/png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def build_instructor_client(router: Any) -> Any:

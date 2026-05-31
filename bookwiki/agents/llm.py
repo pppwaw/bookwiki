@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ async def generate_with_llm(
     inp: Any,
     draft: BaseModel | dict[str, Any],
     allowed_citation_refs: Iterable[str] | None = None,
+    image_paths: Sequence[str | Path] | None = None,
     max_attempts: int = 2,
 ) -> BaseModel:
     prompt = render_prompt(
@@ -38,6 +40,7 @@ async def generate_with_llm(
         system=prompt.system,
         user=prompt.user,
         context=context,
+        image_paths=image_paths,
         max_retries=max_attempts,
     )
 
