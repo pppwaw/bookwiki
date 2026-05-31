@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import threading
@@ -885,6 +886,50 @@ def test_convert_node_routes_text_and_pptx_to_required_converters(
         "work/source_refs/notes.json",
         "work/source_refs/slides.json",
     ]
+
+
+def test_convert_node_reuses_matching_hashed_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.input_dir.mkdir(parents=True)
+    pdf = cfg.input_dir / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    calls = 0
+
+    def fake_convert(path: Path, *, source_id: str):
+        nonlocal calls
+        calls += 1
+        return {
+            "markdown": "raw",
+            "content_list_v2": [
+                {"page_idx": 0, "items": [{"type": "text", "content": "Cached text."}]}
+            ],
+            "content_list": None,
+            "assets": [],
+        }
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+
+    first_state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+
+    manifest_path = cfg.book_dir / first_state["source_ref_manifests"][0]
+    markdown_path = cfg.book_dir / first_state["sources_md"][0]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["source_file"]["sha256"] == hashlib.sha256(pdf.read_bytes()).hexdigest()
+    assert manifest["outputs"]["markdown_sha256"] == hashlib.sha256(
+        markdown_path.read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+
+    def fail_convert(path: Path, *, source_id: str):
+        pytest.fail("matching convert artifact should be reused")
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fail_convert)
+
+    second_state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
+
+    assert calls == 1
+    assert second_state == first_state
 
 
 def test_convert_node_writes_mineru_zip_image_assets_and_manifest(

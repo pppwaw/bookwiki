@@ -33,7 +33,7 @@ from bookwiki.schemas import SCHEMA_VERSION
 from bookwiki.schemas.report import CheckReport, Issue
 from bookwiki.split.chapter_splitter import parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
-from bookwiki.utils.hashing import sha256_text
+from bookwiki.utils.hashing import sha256_file, sha256_text
 
 State = dict[str, Any]
 
@@ -129,6 +129,69 @@ def _clear_generated_files(directory: Path, pattern: str) -> None:
     for path in directory.glob(pattern):
         if path.is_file():
             path.unlink()
+
+
+def _source_file_metadata(path: Path, cfg: BookConfig, source_sha256: str) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "path": _rel(path, cfg.book_dir),
+        "sha256": source_sha256,
+        "size_bytes": stat.st_size,
+    }
+
+
+def _outputs_metadata(out_path: Path, cfg: BookConfig, body: str) -> dict[str, Any]:
+    return {
+        "markdown_path": _rel(out_path, cfg.book_dir),
+        "markdown_sha256": sha256_text(body),
+    }
+
+
+def _attach_convert_metadata(
+    manifest: dict[str, Any],
+    *,
+    source_path: Path,
+    source_sha256: str,
+    out_path: Path,
+    body: str,
+    cfg: BookConfig,
+) -> dict[str, Any]:
+    return {
+        **manifest,
+        "source_file": _source_file_metadata(source_path, cfg, source_sha256),
+        "outputs": _outputs_metadata(out_path, cfg, body),
+    }
+
+
+def _matching_convert_artifact(
+    *,
+    source_path: Path,
+    source_sha256: str,
+    out_path: Path,
+    manifest_path: Path,
+    cfg: BookConfig,
+) -> bool:
+    if not out_path.exists() or not manifest_path.exists():
+        return False
+    manifest = read_json(manifest_path, default={})
+    if not isinstance(manifest, dict):
+        return False
+    source_file = manifest.get("source_file")
+    outputs = manifest.get("outputs")
+    if not isinstance(source_file, dict) or not isinstance(outputs, dict):
+        return False
+    if source_file.get("path") != _rel(source_path, cfg.book_dir):
+        return False
+    if source_file.get("sha256") != source_sha256:
+        return False
+    expected_markdown_sha256 = outputs.get("markdown_sha256")
+    if not isinstance(expected_markdown_sha256, str) or not expected_markdown_sha256:
+        return False
+    try:
+        body = out_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return sha256_text(body) == expected_markdown_sha256
 
 
 def _mdx_prop(value: Any) -> str:
@@ -790,6 +853,17 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
         source_id = source_id_from_stem(path.stem)
         out_path = out_dir / f"{source_id}.md"
         manifest_path = manifest_dir / f"{source_id}.json"
+        source_sha256 = sha256_file(path)
+        if _matching_convert_artifact(
+            source_path=path,
+            source_sha256=source_sha256,
+            out_path=out_path,
+            manifest_path=manifest_path,
+            cfg=cfg,
+        ):
+            outputs.append(_rel(out_path, cfg.book_dir))
+            manifests.append(_rel(manifest_path, cfg.book_dir))
+            continue
         suffix = path.suffix.lower()
         if suffix in {".pdf", ".pptx"}:
             parsed = convert_document_to_source(path, source_id=source_id)
@@ -804,6 +878,14 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
         else:
             msg = f"unsupported source file type: {path.name}"
             raise ValueError(msg)
+        manifest = _attach_convert_metadata(
+            manifest,
+            source_path=path,
+            source_sha256=source_sha256,
+            out_path=out_path,
+            body=body,
+            cfg=cfg,
+        )
         write_text(out_path, body)
         write_json(manifest_path, manifest)
         outputs.append(_rel(out_path, cfg.book_dir))
