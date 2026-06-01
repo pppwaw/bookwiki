@@ -33,6 +33,7 @@ DEFAULT_GENERATION = {
     "visionCaption": {
         "mode": "auto",
         "maxImagesPerSource": 20,
+        "maxConcurrent": 10,
     },
 }
 

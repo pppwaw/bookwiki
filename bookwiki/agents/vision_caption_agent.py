@@ -18,17 +18,18 @@ class VisionCaptionAgent:
         body="""You describe one source image for a textbook-style learning site.
 
 Return a concise source-grounded caption and key points. Use the attached image,
-the heading-bounded section_context, nearby source text, image metadata, and
-source_ref. Do not invent details not supported by the available context. Keep
-caption_md short enough to place below the image.""",
+the heading-bounded section_context, nearby source text, any existing_caption,
+image metadata, and source_ref. Do not invent details not supported by the
+available context. Keep caption_md short enough to place below the image.""",
     )
 
     async def run(
         self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime
     ) -> VisionCaptionResult:
         image_path = _image_path(inp)
+        draft_caption = inp.get("existing_caption") or inp.get("nearby_text")
         draft = VisionCaptionResult(
-            caption_md=str(inp.get("nearby_text") or "Source figure."),
+            caption_md=str(draft_caption or "Source figure."),
             key_points=[],
             source_ref=str(inp.get("source_ref") or ""),
             confidence=0.0,

@@ -30,6 +30,10 @@ class ChapterSplitResult(VersionedModel):
     report_md: str
 
 
+class ChapterSplitAuditResult(VersionedModel):
+    report_md: str
+
+
 class RepairResult(VersionedModel):
     owner_task_id: str
     action: str

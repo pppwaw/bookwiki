@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shutil
@@ -916,6 +917,7 @@ async def caption_node(state: State, cfg: BookConfig) -> State:
     md_by_source_id = {Path(path).stem: str(path) for path in source_mds}
     caption_results: list[dict[str, Any]] = []
     cache_results: list[CacheResult] = []
+    caption_failures: list[str] = []
     settings = _vision_caption_settings(cfg)
 
     for manifest_rel in manifests:
@@ -944,18 +946,21 @@ async def caption_node(state: State, cfg: BookConfig) -> State:
             continue
 
         normalized = NormalizedSource(markdown=md_text, manifest=manifest)
-        for candidate in _image_caption_candidates(normalized)[: settings["max_images"]]:
-            candidate_input = dict(candidate)
-            section_context = _section_context_for_book_figure(
-                md_text, candidate["block_id"]
-            )
-            if section_context:
-                candidate_input["section_context"] = section_context
-            try:
-                result = await _run_vision_caption(candidate_input, cfg)
-            except Exception as exc:  # noqa: BLE001 - captioning is best-effort enrichment
-                warnings.append(f"vision caption failed for {candidate['block_id']}: {exc}")
+        candidates = _image_caption_candidates(normalized)[: settings["max_images"]]
+        jobs = [_vision_caption_job(candidate, md_text) for candidate in candidates]
+        outcomes = await _run_vision_caption_jobs(
+            jobs,
+            cfg,
+            max_concurrent=settings["max_concurrent"],
+        )
+        for job, outcome in zip(jobs, outcomes, strict=False):
+            candidate = job["candidate"]
+            if isinstance(outcome, Exception):
+                warning = f"vision caption failed for {candidate['block_id']}: {outcome}"
+                warnings.append(warning)
+                caption_failures.append(warning)
                 continue
+            result = outcome
 
             block = _set_manifest_block_caption(
                 manifest,
@@ -989,6 +994,15 @@ async def caption_node(state: State, cfg: BookConfig) -> State:
         write_json(manifest_path, manifest)
         if md_path and md_text:
             write_text(md_path, md_text)
+
+    if caption_failures:
+        count = len(caption_failures)
+        noun = "image" if count == 1 else "images"
+        details = "; ".join(caption_failures[:3])
+        if count > 3:
+            details += f"; ... {count - 3} more"
+        msg = f"caption failed for {count} {noun}: {details}"
+        raise RuntimeError(msg)
 
     return {
         "sources_md": source_mds,
@@ -1120,6 +1134,99 @@ def _safe_asset_filename(filename: str, index: int) -> str:
     return clean
 
 
+def _vision_caption_job(candidate: dict[str, Any], md_text: str) -> dict[str, Any]:
+    candidate_input = dict(candidate)
+    section_window = _section_context_window_for_book_figure(
+        md_text, candidate["block_id"]
+    )
+    section_span = None
+    if section_window is not None:
+        candidate_input["section_context"] = section_window["text"]
+        section_span = section_window["span"]
+    return {
+        "candidate": candidate,
+        "input": candidate_input,
+        "section_span": section_span,
+        "source_ref": str(candidate.get("source_ref") or ""),
+    }
+
+
+async def _run_vision_caption_jobs(
+    jobs: list[dict[str, Any]], cfg: BookConfig, *, max_concurrent: int
+) -> list[CacheResult | Exception]:
+    outcomes: list[CacheResult | Exception | None] = [None] * len(jobs)
+    indexed_jobs = [{**job, "index": index} for index, job in enumerate(jobs)]
+    groups = _caption_conflict_groups(indexed_jobs)
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def run_one(job: dict[str, Any]) -> CacheResult | Exception:
+        async with semaphore:
+            try:
+                return await _run_vision_caption(job["input"], cfg)
+            except Exception as exc:  # noqa: BLE001 - captioning is best-effort enrichment
+                return exc
+
+    async def run_group(group: dict[str, Any]) -> None:
+        for job in sorted(group["jobs"], key=lambda item: int(item["index"])):
+            outcomes[int(job["index"])] = await run_one(job)
+
+    await asyncio.gather(*(run_group(group) for group in groups))
+    return [
+        item if item is not None else RuntimeError("caption job did not run")
+        for item in outcomes
+    ]
+
+
+def _caption_conflict_groups(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    for job in jobs:
+        span = job.get("section_span")
+        if span is None:
+            groups.append(
+                {
+                    "section_span": None,
+                    "source_ref": str(job.get("source_ref") or ""),
+                    "jobs": [job],
+                }
+            )
+            continue
+        span = tuple(span)
+        source_ref = str(job.get("source_ref") or "")
+        merged_jobs = [job]
+        remaining = groups
+        changed = True
+        while changed:
+            changed = False
+            next_remaining = []
+            for group in remaining:
+                group_span = group.get("section_span")
+                same_source_ref = str(group.get("source_ref") or "") == source_ref
+                if (
+                    group_span is not None
+                    and same_source_ref
+                    and _spans_overlap(span, tuple(group_span))
+                ):
+                    span = _union_spans(span, tuple(group_span))
+                    merged_jobs.extend(group["jobs"])
+                    changed = True
+                else:
+                    next_remaining.append(group)
+            remaining = next_remaining
+        groups = [
+            *remaining,
+            {"section_span": span, "source_ref": source_ref, "jobs": merged_jobs},
+        ]
+    return groups
+
+
+def _spans_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
+    return left[0] < right[1] and right[0] < left[1]
+
+
+def _union_spans(left: tuple[int, int], right: tuple[int, int]) -> tuple[int, int]:
+    return min(left[0], right[0]), max(left[1], right[1])
+
+
 async def _run_vision_caption(candidate: dict[str, Any], cfg: BookConfig) -> CacheResult:
     agent_input = _vision_caption_agent_input(candidate, cfg)
     return await run_with_cache(
@@ -1164,9 +1271,16 @@ def _replace_book_figure(markdown: str, block: dict[str, Any]) -> tuple[str, boo
 
 
 def _section_context_for_book_figure(markdown: str, block_id: str) -> str:
+    window = _section_context_window_for_book_figure(markdown, block_id)
+    return str(window["text"]) if window is not None else ""
+
+
+def _section_context_window_for_book_figure(
+    markdown: str, block_id: str
+) -> dict[str, Any] | None:
     match = _book_figure_pattern(block_id).search(markdown)
     if not match:
-        return ""
+        return None
     start = 0
     end = len(markdown)
     for heading in re.finditer(r"(?m)^#{1,6}\s+\S.*$", markdown):
@@ -1175,7 +1289,10 @@ def _section_context_for_book_figure(markdown: str, block_id: str) -> str:
             continue
         end = heading.start()
         break
-    return markdown[start:end].strip()
+    return {
+        "text": markdown[start:end].strip(),
+        "span": (start, end),
+    }
 
 
 def _book_figure_pattern(block_id: str) -> re.Pattern[str]:
@@ -1211,13 +1328,17 @@ def _image_caption_candidates(normalized: NormalizedSource) -> list[dict[str, An
                 continue
             if block.get("type") not in {"image", "chart"}:
                 continue
-            if block.get("caption") or not block.get("asset_path"):
+            if not block.get("asset_path"):
                 continue
+            if str(block.get("caption_source") or "").lower() == "vision":
+                continue
+            existing_caption = str(block.get("caption") or "").strip()
             candidates.append(
                 {
                     "block_id": str(block.get("block_id") or ""),
                     "source_ref": str(block.get("page_ref") or page.get("source_ref") or ""),
                     "asset_path": str(block.get("asset_path") or ""),
+                    "existing_caption": existing_caption,
                     "nearby_text": nearby_text,
                     "bbox": block.get("bbox"),
                 }
@@ -1245,6 +1366,7 @@ def _vision_caption_settings(cfg: BookConfig) -> dict[str, Any]:
     return {
         "mode": mode,
         "max_images": _int_setting(settings.get("maxImagesPerSource"), 20),
+        "max_concurrent": _int_setting(settings.get("maxConcurrent"), 10),
     }
 
 

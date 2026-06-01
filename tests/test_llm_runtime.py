@@ -118,7 +118,7 @@ async def test_litellm_runtime_requires_kimi_api_key(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
-async def test_litellm_runtime_uses_instructor_client_with_context(
+async def test_litellm_runtime_revalidates_with_context_after_client_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
@@ -139,7 +139,7 @@ async def test_litellm_runtime_uses_instructor_client_with_context(
         model="deepseek-v4-pro",
         output_model=ChapterResult,
         system="system",
-        user="user",
+        user="source contains {{ not_a_template _ }}",
         context={"allowed_citation_refs": {"Week-10-p001"}},
         max_retries=2,
     )
@@ -148,12 +148,12 @@ async def test_litellm_runtime_uses_instructor_client_with_context(
     assert len(client.calls) == 1
     assert client.calls[0]["model"] == "deepseek-v4-pro"
     assert client.calls[0]["response_model"] is ChapterResult
-    assert client.calls[0]["context"] == {"allowed_citation_refs": {"Week-10-p001"}}
+    assert "context" not in client.calls[0]
     assert client.calls[0]["max_retries"] == 2
     assert client.calls[0]["temperature"] == 0
     assert client.calls[0]["messages"] == [
         {"role": "system", "content": "system"},
-        {"role": "user", "content": "user"},
+        {"role": "user", "content": "source contains {{ not_a_template _ }}"},
     ]
 
 

@@ -18,6 +18,80 @@ from tests.fakes import RecordingRuntime
 
 
 @pytest.mark.asyncio
+async def test_chapter_split_agent_audits_without_sending_full_source_bodies(tmp_path) -> None:
+    source = tmp_path / "Week-10.md"
+    body_marker = "UNIQUE_SPLIT_BODY_MARKER "
+    source.write_text(
+        "# Chapter 6 The point estimation\n\n"
+        "<!-- source_ref: Week-10-p001 -->\n\n"
+        f"{body_marker * 1000}",
+        encoding="utf-8",
+    )
+
+    class SplitAuditRuntime:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def generate(
+            self,
+            *,
+            model,
+            output_model,
+            system,
+            user,
+            context=None,
+            image_paths=None,
+            max_retries=2,
+        ):
+            self.calls.append(
+                {
+                    "model": model,
+                    "output_model": output_model,
+                    "system": system,
+                    "user": user,
+                    "context": context,
+                    "image_paths": image_paths,
+                    "max_retries": max_retries,
+                }
+            )
+            if output_model.__name__ == "ChapterSplitAuditResult":
+                return output_model.model_validate(
+                    {"report_md": "# Split Audit\n\nLLM reviewed compact split metadata."}
+                )
+            return output_model.model_validate(
+                {
+                    "chapters": {"chapter-6": "# Chapter 6 Point Estimation"},
+                    "chapter_titles": {"chapter-6": "Point Estimation"},
+                    "alignment": [],
+                    "coverage": {"total_fragments": 0, "assigned_ratio": 1.0},
+                    "report_md": "# Split Audit\n\nLLM reviewed deterministic split.",
+                }
+            )
+
+    runtime = SplitAuditRuntime()
+    result = await ChapterSplitAgent().run(
+        {
+            "source_paths": [str(source)],
+            "approved_structure": (
+                "chapters:\n"
+                "  - title: Chapter 6 Point Estimation\n"
+                "    topics:\n"
+                "      - Method of moments\n"
+                "    source_refs:\n"
+                "      - Week-10-p001\n"
+            ),
+        },
+        model="deepseek-v4-flash",
+        runtime=runtime,
+    )
+
+    assert runtime.calls
+    assert body_marker not in str(runtime.calls[0]["user"])
+    assert body_marker in result.chapters["chapter-6"]
+    assert result.report_md == "# Split Audit\n\nLLM reviewed compact split metadata."
+
+
+@pytest.mark.asyncio
 async def test_all_agents_call_llm_runtime(tmp_path) -> None:
     source = tmp_path / "Week-10.md"
     source.write_text(

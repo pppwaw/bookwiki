@@ -70,11 +70,10 @@ class LiteLLMRuntime:
             response_model=output_model,
             messages=_messages(system=system, user=user, image_paths=image_paths),
             max_retries=max_retries,
-            context=context,
             temperature=_temperature_for_model(model),
         )
         if isinstance(result, output_model):
-            return result
+            return output_model.model_validate(result.model_dump(mode="json"), context=context)
         return output_model.model_validate(result, context=context)
 
 
