@@ -56,15 +56,6 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "notFound()" in docs_page
 
 
-def test_home_page_renders_generated_book_index() -> None:
-    home_page = (SITE / "app" / "(home)" / "page.tsx").read_text(encoding="utf-8")
-
-    assert "Hello World" not in home_page
-    assert "getSourcePage(undefined)" in home_page
-    assert "page.data.body" in home_page
-    assert "getMDXComponents" in home_page
-
-
 def test_site_template_wires_bookwiki_components_and_server_only_data_paths() -> None:
     mdx_components = (SITE / "components" / "mdx.tsx").read_text(encoding="utf-8")
     sqlite = (SITE / "lib" / "sqlite.ts").read_text(encoding="utf-8")
@@ -104,9 +95,9 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "createFromSource" in search_route
     assert "searchChunks" not in search_route
     assert "searchChunks" in chat_route
-    assert "useChat" in chat_box
-    assert "DefaultChatTransport" in chat_box
-    assert "fetch(\"/api/chat\"" not in chat_box
+    assert "fetch('/api/chat'" in chat_box
+    assert "useChat" not in chat_box
+    assert "DefaultChatTransport" not in chat_box
     assert "Markdown" not in quiz_block
     assert "Markdown" not in anki_deck
     assert "children" in quiz_block
@@ -170,53 +161,48 @@ def test_official_ai_panel_is_backed_by_bookwiki_chat_api() -> None:
     assert "@openrouter/ai-sdk-provider" in package["dependencies"]
     assert "AISearchPanel" in panel
     assert "AISearchTrigger" in panel
-    assert "useChat" in panel
-    assert "DefaultChatTransport" in panel
-    assert "prepareSendMessagesRequest" in panel
-    assert "fetch(\"/api/chat\"" not in panel
+    assert "fetch('/api/chat'" in panel
+    assert "useChat" not in panel
+    assert "DefaultChatTransport" not in panel
+    assert "prepareSendMessagesRequest" not in panel
     assert "usePathname" in panel
     assert "pagePath" in panel
-    assert "@ai-sdk/react" in panel
-    assert "createOpenRouter" in chat_route
-    assert "streamText" in chat_route
-    assert "toUIMessageStreamResponse" in chat_route
+    assert "@ai-sdk/react" not in panel
+    assert "createOpenRouter" not in chat_route
+    assert "streamText" not in chat_route
+    assert "toUIMessageStreamResponse" not in chat_route
     assert "generateText" not in chat_route
-    assert "providerOptions" in chat_route
-    assert "reasoning: {" in chat_route
-    assert "effort: 'low'" in chat_route
-    assert "exclude: false" in chat_route
-    assert "stepCountIs" in chat_route
-    assert "tool(" in chat_route
+    assert "providerOptions" not in chat_route
+    assert "reasoning: {" not in chat_route
+    assert "effort: 'low'" not in chat_route
+    assert "exclude: false" not in chat_route
+    assert "stepCountIs" not in chat_route
+    assert "tool(" not in chat_route
     assert "OPENROUTER_API_KEY" not in chat_route
     assert "BOOKWIKI_CHAT_API_KEY" in chat_route
     assert "BOOKWIKI_CHAT_BASE_URL" in chat_route
     assert "BOOKWIKI_CHAT_MODEL" in chat_route
-    assert "google/gemma-4-31b-it" in chat_route
-    assert "search_book" in chat_route
-    assert "get_current_article" in chat_route
-    assert "chatFormatInstructions" in chat_route
+    assert "local-model" in chat_route
+    assert "searchChunks(question, 6, chapterId)" in chat_route
+    assert "answerWithChatModel" in chat_route
     assert "[^Week-10-p008]" in chat_route
     assert "promptFromQuestion" in chat_route
     assert "<current_article>" in chat_route
-    assert "answerText += part.text" in chat_route
-    assert "citedSourcesFromText" in chat_route
     assert "searchChunks" in chat_route
-    assert "answerWithChatModel" not in chat_route
+    assert "citedSourcesFromText" not in chat_route
     assert "currentArticleFromPath" in rag
 
 
-def test_ai_chat_surfaces_reasoning_and_tool_parts() -> None:
+def test_ai_chat_surfaces_markdown_answers_and_sources() -> None:
     panel = (SITE / "components" / "ai" / "search.tsx").read_text(encoding="utf-8")
     chat_box = (SITE / "components" / "ChatBox.tsx").read_text(encoding="utf-8")
 
     for component in (panel, chat_box):
-        assert "part.type === 'reasoning'" in component
-        assert "part.type.startsWith('tool-')" in component
-        assert "Reasoning" in component
-        assert "Tool" in component
-        assert "summarizeToolOutput" in component
         assert "Markdown" in component
-        assert component.count("<Markdown text={part.text}") >= 2
+        assert "parseSources" in component
+        assert "source.ref_id" in component
+        assert "reasoning" not in component
+        assert "part.type.startsWith('tool-')" not in component
         assert "<pre>{part.text}</pre>" not in component
         assert "whitespace-pre-wrap\">{part.text}</p>" not in component
 

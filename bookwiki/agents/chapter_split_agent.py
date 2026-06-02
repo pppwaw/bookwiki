@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, ClassVar
 
 from bookwiki.agents.llm import generate_with_llm
@@ -37,6 +38,8 @@ Do not request, reproduce, or summarize full chapter source text.""",
             coverage=result.coverage,
             report_md=result.report_md,
         )
+        if _uses_bookwiki_runtime(runtime) and not _env_flag("BOOKWIKI_SPLIT_USE_LLM", default=True):
+            return deterministic
         audit = await generate_with_llm(
             runtime=runtime,
             model=model,
@@ -55,6 +58,17 @@ Do not request, reproduce, or summarize full chapter source text.""",
             coverage=deterministic.coverage,
             report_md=audited.report_md or deterministic.report_md,
         )
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _uses_bookwiki_runtime(runtime: LLMRuntime) -> bool:
+    return runtime.__class__.__module__.startswith("bookwiki.scheduler.llm")
 
 
 def _audit_input(inp: dict[str, Any], result: SplitResult) -> dict[str, Any]:

@@ -362,60 +362,25 @@ def _frontmatter(data: dict[str, Any]) -> str:
     return f"---\n{body}\n---\n\n"
 
 
-def _book_homepage_mdx(
-    title: str,
-    chapter_entries: list[dict[str, str]],
-    concept_entries: list[tuple[str, str]],
-) -> str:
-    lines = [
-        _frontmatter(
-            {
-                "title": title,
-                "description": f"{title} learning home, table of contents, and study tools.",
-            }
-        ).rstrip(),
-        "",
-        f"# {title}",
-        "",
-        "这页汇总本书的章节目录、核心概念和问答工具。",
-        "",
-        "## 目录",
-        "",
-    ]
-    if chapter_entries:
-        lines.append("<Cards>")
-        for entry in chapter_entries:
-            props = [
-                _jsx_prop("title", entry["title"]),
-                _jsx_prop("href", entry["href"]),
-            ]
-            if entry.get("description"):
-                props.append(_jsx_prop("description", entry["description"]))
-            lines.append(f"  <Card {' '.join(props)} />")
-        lines.append("</Cards>")
-    else:
-        lines.append("暂无章节内容。")
-
-    lines.extend(["", "## 概念", ""])
-    if concept_entries:
-        for name, stem in sorted(concept_entries, key=lambda item: item[0].casefold()):
-            lines.append(f"- [{_markdown_link_label(name)}](/docs/concepts/{stem})")
-    else:
-        lines.append("暂无概念页。")
-
-    lines.extend(["", "## 问答", "", "<ChatBox />"])
-    return "\n".join(lines) + "\n"
+def _index_cards_mdx(items: list[dict[str, str]]) -> str:
+    cards = "\n".join(
+        "  "
+        + "<Card "
+        + f"title={{{_mdx_prop(item['title'])}}} "
+        + f"href={{{_mdx_prop(item['href'])}}} "
+        + f"description={{{_mdx_prop(item.get('description', ''))}}} "
+        + "/>"
+        for item in items
+    )
+    return f"<Cards>\n{cards}\n</Cards>"
 
 
-def _homepage_summary(value: Any) -> str:
-    paragraphs = [part.strip() for part in str(value or "").split("\n\n") if part.strip()]
-    if not paragraphs:
-        return ""
-    return re.sub(r"\s+", " ", paragraphs[0]).strip()
-
-
-def _markdown_link_label(value: str) -> str:
-    return _markdown_text(value).replace("[", r"\[").replace("]", r"\]")
+def _index_concepts_mdx(state: State) -> str:
+    lines = []
+    for name, rel_path in state.get("concept_pages", {}).items():
+        stem = Path(rel_path).stem or _safe_file_stem(str(name), fallback_prefix="concept")
+        lines.append(f"- [{name}](/docs/concepts/{stem})")
+    return "\n".join(lines)
 
 
 def _quiz_block_mdx(
@@ -906,7 +871,10 @@ def _replace_invalid_citation_refs(value: Any, allowed_refs: set[str], replaceme
 
 
 async def convert_node(state: State, cfg: BookConfig) -> State:
-    input_files = sorted(path for path in cfg.input_dir.iterdir() if path.is_file())
+    input_files = sorted(
+        (path for path in cfg.input_dir.rglob("*") if path.is_file()),
+        key=lambda path: path.relative_to(cfg.input_dir).as_posix().lower(),
+    )
     if not input_files:
         msg = f"no input files found in {cfg.input_dir}"
         raise FileNotFoundError(msg)
@@ -916,7 +884,8 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
     outputs: list[str] = []
     manifests: list[str] = []
     for path in input_files:
-        source_id = source_id_from_stem(path.stem)
+        source_stem = path.relative_to(cfg.input_dir).with_suffix("").as_posix()
+        source_id = source_id_from_stem(source_stem)
         out_path = out_dir / f"{source_id}.md"
         manifest_path = manifest_dir / f"{source_id}.json"
         source_sha256 = sha256_file(path)
@@ -942,7 +911,7 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
             normalized = normalize_structured_source(raw_md=body, source_id=source_id)
             manifest = normalized.manifest
         else:
-            msg = f"unsupported source file type: {path.name}"
+            msg = f"unsupported source file type: {path.relative_to(cfg.input_dir).as_posix()}"
             raise ValueError(msg)
         manifest = _attach_convert_metadata(
             manifest,
@@ -1749,8 +1718,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     _clear_generated_files(chapters_dir, "*.mdx")
     _clear_generated_files(concepts_dir, "*.mdx")
     chapter_outputs: list[str] = []
-    chapter_home_entries: list[dict[str, str]] = []
-    concept_home_entries: list[tuple[str, str]] = []
+    chapter_index_items: list[dict[str, str]] = []
     concept_backlinks: dict[str, list[dict[str, str]]] = {}
     alias_map = _load_alias_map(state, cfg)
     concept_previews: dict[str, dict[str, str]] = {}
@@ -1824,11 +1792,11 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             ),
         )
         chapter_outputs.append(_rel(path, cfg.book_dir))
-        chapter_home_entries.append(
+        chapter_index_items.append(
             {
                 "title": display_title,
-                "href": f"/docs/chapters/{path.stem}",
-                "description": _homepage_summary(summary.get("summary_md", "")),
+                "href": f"/docs/chapters/{ch_id}",
+                "description": str(summary["summary_md"]),
             }
         )
 
@@ -1853,11 +1821,25 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             + normalize_mdx_math(str(concept["body_md"]))
             + referenced_by,
         )
-        concept_home_entries.append((str(concept["name"]), safe_name))
 
     index_path = write_text(
         content_dir / "index.mdx",
-        _book_homepage_mdx(cfg.title, chapter_home_entries, concept_home_entries),
+        _frontmatter(
+            {
+                "title": cfg.title,
+                "description": f"{cfg.title} learning home, table of contents, and study tools.",
+            }
+        )
+        + f"# {cfg.title}\n\n"
+        + "这页汇总本书的章节目录、核心概念和问答工具。\n\n"
+        + "## 目录\n\n"
+        + _index_cards_mdx(chapter_index_items)
+        + "\n\n"
+        + "## 概念\n\n"
+        + _index_concepts_mdx(state)
+        + "\n\n"
+        + "## 问答\n\n"
+        + "<ChatBox />\n",
     )
     chapter_stems = [Path(path).stem for path in chapter_outputs]
     concept_stem_list = sorted(

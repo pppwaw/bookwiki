@@ -8,12 +8,9 @@ import {
   use,
   useEffect,
   useEffectEvent,
-  useMemo,
   useRef,
   useState,
 } from 'react';
-import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport, type ChatStatus, type UIMessage } from 'ai';
 import { Loader2, MessageCircleIcon, RefreshCw, SearchIcon, Send, X } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { Presence } from '@radix-ui/react-presence';
@@ -31,9 +28,22 @@ type ChatMetadata = {
   sources?: ChatSource[];
 };
 
-type BookWikiChatMessage = UIMessage<ChatMetadata>;
+type ChatStatus = 'idle' | 'submitted';
+
+type BookWikiChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  parts: Array<{ type: 'text'; text: string }>;
+  metadata?: ChatMetadata;
+};
+
 type BookWikiChatPart = BookWikiChatMessage['parts'][number];
-type ToolMessagePart = BookWikiChatPart & { type: `tool-${string}` };
+
+type ChatResponse = {
+  answer?: unknown;
+  sources?: unknown;
+  error?: unknown;
+};
 
 const Context = createContext<{
   open: boolean;
@@ -50,55 +60,57 @@ export function AISearch({ children }: { children: ReactNode }) {
   const pagePath = usePathname();
   const [open, setOpen] = useState(false);
   const [lastQuestion, setLastQuestion] = useState('');
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport<BookWikiChatMessage>({
-        api: '/api/chat',
-        prepareSendMessagesRequest: ({ id, messages }) => ({
-          body: {
-            id,
-            message: messages.at(-1),
-            pagePath,
-          },
-        }),
-      }),
-    [pagePath],
-  );
-  const {
-    clearError,
-    error,
-    messages,
-    regenerate,
-    sendMessage: sendChatMessage,
-    setMessages,
-    status,
-  } = useChat<BookWikiChatMessage>({
-    id: `bookwiki:${pagePath}`,
-    transport,
-  });
+  const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<BookWikiChatMessage[]>([]);
+  const [status, setStatus] = useState<ChatStatus>('idle');
 
   async function sendMessage(question: string) {
     const trimmed = question.trim();
     if (!trimmed || isBusy(status)) return;
 
     setLastQuestion(trimmed);
-    clearError();
-    await sendChatMessage({ text: trimmed });
+    setError(null);
+    setMessages((current) => [
+      ...current,
+      { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: trimmed }] },
+    ]);
+    setStatus('submitted');
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: trimmed, pagePath }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as ChatResponse;
+      if (!response.ok) throw new Error(messageFromPayload(payload, `Chat request failed: HTTP ${response.status}`));
+
+      const answer = typeof payload.answer === 'string' ? payload.answer : 'No answer returned.';
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          parts: [{ type: 'text', text: answer }],
+          metadata: { sources: parseSources(payload.sources) },
+        },
+      ]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'chat request failed');
+    } finally {
+      setStatus('idle');
+    }
   }
 
   async function retry() {
     if (isBusy(status)) return;
 
-    if (messages.at(-1)?.role === 'assistant') {
-      await regenerate();
-    } else if (lastQuestion) {
-      await sendChatMessage({ text: lastQuestion });
-    }
+    if (lastQuestion) await sendMessage(lastQuestion);
   }
 
   function clear() {
     setMessages([]);
-    clearError();
+    setError(null);
     setLastQuestion('');
   }
 
@@ -106,7 +118,7 @@ export function AISearch({ children }: { children: ReactNode }) {
     <Context
       value={{
         clear,
-        error: error ? messageFromError(error) : null,
+        error,
         messages,
         open,
         retry,
@@ -309,26 +321,11 @@ function Input(props: ComponentProps<'textarea'>) {
 }
 
 function isBusy(status: ChatStatus) {
-  return status === 'submitted' || status === 'streaming';
-}
-
-function messageFromError(error: Error) {
-  try {
-    const payload = JSON.parse(error.message) as { error?: unknown };
-    if (typeof payload.error === 'string') return payload.error;
-  } catch {
-    // The transport may already expose a plain text error.
-  }
-
-  return error.message;
+  return status === 'submitted';
 }
 
 function isVisiblePart(part: BookWikiChatPart) {
-  return part.type === 'text' || part.type === 'reasoning' || isToolPart(part);
-}
-
-function isToolPart(part: BookWikiChatPart): part is ToolMessagePart {
-  return part.type.startsWith('tool-');
+  return part.type === 'text';
 }
 
 function MessagePart({ part }: { part: BookWikiChatPart }) {
@@ -340,86 +337,21 @@ function MessagePart({ part }: { part: BookWikiChatPart }) {
     );
   }
 
-  if (part.type === 'reasoning') {
-    if (!part.text) return null;
-
-    return (
-      <details className="rounded-lg border bg-fd-secondary/60 p-2 text-xs text-fd-muted-foreground">
-        <summary className="cursor-pointer font-medium text-fd-foreground">Reasoning</summary>
-        <div className="mt-2">
-          <Markdown text={part.text} />
-        </div>
-      </details>
-    );
-  }
-
-  if (isToolPart(part)) {
-    return <ToolPart part={part} />;
-  }
-
   return null;
 }
 
-function ToolPart({ part }: { part: ToolMessagePart }) {
-  const toolName = part.type.slice('tool-'.length);
-  const title = 'title' in part && typeof part.title === 'string' ? part.title : toolName;
-  const state = 'state' in part && typeof part.state === 'string' ? part.state : 'pending';
-  const input = 'input' in part ? compactJson(part.input) : null;
-  const output = 'output' in part ? summarizeToolOutput(part.output) : null;
-  const errorText = 'errorText' in part && typeof part.errorText === 'string' ? part.errorText : null;
-
-  return (
-    <div className="rounded-lg border bg-fd-secondary/60 p-2 text-xs text-fd-muted-foreground">
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-medium text-fd-foreground">Tool: {title}</p>
-        <code>{state}</code>
-      </div>
-      {input ? (
-        <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">Input: {input}</pre>
-      ) : null}
-      {output ? (
-        <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">Output: {output}</pre>
-      ) : null}
-      {errorText ? <p className="mt-2 text-fd-error">{errorText}</p> : null}
-    </div>
-  );
+function parseSources(value: unknown): ChatSource[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is ChatSource => {
+    return typeof item === 'object' && item !== null && typeof (item as ChatSource).ref_id === 'string';
+  });
 }
 
-function summarizeToolOutput(value: unknown) {
-  if (value === undefined || value === null) return null;
-
-  if (typeof value === 'object' && value !== null) {
-    const record = value as Record<string, unknown>;
-
-    if (Array.isArray(record.chunks)) {
-      return compactJson({ chunks: record.chunks.length });
-    }
-
-    if ('slug' in record || 'sourceRefs' in record || 'found' in record) {
-      return compactJson({
-        found: record.found,
-        slug: record.slug,
-        title: record.title,
-        sourceRefs: record.sourceRefs,
-      });
-    }
-  }
-
-  return compactJson(value);
-}
-
-function compactJson(value: unknown) {
-  try {
-    const json = JSON.stringify(value, null, 2);
-    if (!json) return null;
-    return json.length > 800 ? `${json.slice(0, 800)}...` : json;
-  } catch {
-    return String(value);
-  }
+function messageFromPayload(payload: ChatResponse, fallback: string) {
+  return typeof payload.error === 'string' ? payload.error : fallback;
 }
 
 const roleName: Record<BookWikiChatMessage['role'], string> = {
-  system: 'system',
   user: 'you',
   assistant: 'bookwiki',
 };
