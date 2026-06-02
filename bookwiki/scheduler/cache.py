@@ -82,6 +82,7 @@ async def run_with_cache(
     except Exception:
         LOGGER.exception("agent error agent=%s model=%s key=%s", agent_name, model, key)
         raise
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(
             {

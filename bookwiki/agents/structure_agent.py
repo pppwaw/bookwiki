@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
@@ -54,6 +55,10 @@ The YAML should reflect the real source content, not generic boilerplate.""",
     ) -> StructureResult:
         summaries = inp.get("summaries", []) if isinstance(inp, dict) else inp
         draft = _draft_structure(summaries)
+        if _uses_bookwiki_runtime(runtime) and not _env_flag(
+            "BOOKWIKI_STRUCTURE_USE_LLM", default=True
+        ):
+            return draft
         result = await generate_with_llm(
             runtime=runtime,
             model=model,
@@ -65,6 +70,17 @@ The YAML should reflect the real source content, not generic boilerplate.""",
             draft=draft,
         )
         return StructureResult.model_validate(result)
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _uses_bookwiki_runtime(runtime: LLMRuntime) -> bool:
+    return runtime.__class__.__module__.startswith("bookwiki.scheduler.llm")
 
 
 def _draft_structure(summaries: list[dict[str, Any]]) -> StructureResult:
