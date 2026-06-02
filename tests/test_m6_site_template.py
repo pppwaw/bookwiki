@@ -56,6 +56,15 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "notFound()" in docs_page
 
 
+def test_home_page_renders_generated_book_index() -> None:
+    home_page = (SITE / "app" / "(home)" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "Hello World" not in home_page
+    assert "getSourcePage(undefined)" in home_page
+    assert "page.data.body" in home_page
+    assert "getMDXComponents" in home_page
+
+
 def test_site_template_wires_bookwiki_components_and_server_only_data_paths() -> None:
     mdx_components = (SITE / "components" / "mdx.tsx").read_text(encoding="utf-8")
     sqlite = (SITE / "lib" / "sqlite.ts").read_text(encoding="utf-8")

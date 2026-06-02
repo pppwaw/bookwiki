@@ -362,6 +362,62 @@ def _frontmatter(data: dict[str, Any]) -> str:
     return f"---\n{body}\n---\n\n"
 
 
+def _book_homepage_mdx(
+    title: str,
+    chapter_entries: list[dict[str, str]],
+    concept_entries: list[tuple[str, str]],
+) -> str:
+    lines = [
+        _frontmatter(
+            {
+                "title": title,
+                "description": f"{title} learning home, table of contents, and study tools.",
+            }
+        ).rstrip(),
+        "",
+        f"# {title}",
+        "",
+        "这页汇总本书的章节目录、核心概念和问答工具。",
+        "",
+        "## 目录",
+        "",
+    ]
+    if chapter_entries:
+        lines.append("<Cards>")
+        for entry in chapter_entries:
+            props = [
+                _jsx_prop("title", entry["title"]),
+                _jsx_prop("href", entry["href"]),
+            ]
+            if entry.get("description"):
+                props.append(_jsx_prop("description", entry["description"]))
+            lines.append(f"  <Card {' '.join(props)} />")
+        lines.append("</Cards>")
+    else:
+        lines.append("暂无章节内容。")
+
+    lines.extend(["", "## 概念", ""])
+    if concept_entries:
+        for name, stem in sorted(concept_entries, key=lambda item: item[0].casefold()):
+            lines.append(f"- [{_markdown_link_label(name)}](/docs/concepts/{stem})")
+    else:
+        lines.append("暂无概念页。")
+
+    lines.extend(["", "## 问答", "", "<ChatBox />"])
+    return "\n".join(lines) + "\n"
+
+
+def _homepage_summary(value: Any) -> str:
+    paragraphs = [part.strip() for part in str(value or "").split("\n\n") if part.strip()]
+    if not paragraphs:
+        return ""
+    return re.sub(r"\s+", " ", paragraphs[0]).strip()
+
+
+def _markdown_link_label(value: str) -> str:
+    return _markdown_text(value).replace("[", r"\[").replace("]", r"\]")
+
+
 def _quiz_block_mdx(
     title: str,
     items: list[dict[str, Any]],
@@ -1693,6 +1749,8 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     _clear_generated_files(chapters_dir, "*.mdx")
     _clear_generated_files(concepts_dir, "*.mdx")
     chapter_outputs: list[str] = []
+    chapter_home_entries: list[dict[str, str]] = []
+    concept_home_entries: list[tuple[str, str]] = []
     concept_backlinks: dict[str, list[dict[str, str]]] = {}
     alias_map = _load_alias_map(state, cfg)
     concept_previews: dict[str, dict[str, str]] = {}
@@ -1766,6 +1824,13 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             ),
         )
         chapter_outputs.append(_rel(path, cfg.book_dir))
+        chapter_home_entries.append(
+            {
+                "title": display_title,
+                "href": f"/docs/chapters/{path.stem}",
+                "description": _homepage_summary(summary.get("summary_md", "")),
+            }
+        )
 
     for name, rel_path in state.get("concept_pages", {}).items():
         concept = read_json(cfg.book_dir / rel_path)
@@ -1788,16 +1853,11 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             + normalize_mdx_math(str(concept["body_md"]))
             + referenced_by,
         )
+        concept_home_entries.append((str(concept["name"]), safe_name))
 
     index_path = write_text(
         content_dir / "index.mdx",
-        _frontmatter({"title": cfg.title})
-        + f"# {cfg.title}\n\n"
-        + "\n".join(
-            f"- [chapters/{Path(path).stem}](/docs/chapters/{Path(path).stem})"
-            for path in chapter_outputs
-        )
-        + "\n",
+        _book_homepage_mdx(cfg.title, chapter_home_entries, concept_home_entries),
     )
     chapter_stems = [Path(path).stem for path in chapter_outputs]
     concept_stem_list = sorted(

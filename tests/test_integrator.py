@@ -262,10 +262,25 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         """\
         ---
         title: Book
+        description: Book learning home, table of contents, and study tools.
         ---
 
         # Book
 
-        - [chapters/chapter-1](/docs/chapters/chapter-1)
+        这页汇总本书的章节目录、核心概念和问答工具。
+
+        ## 目录
+
+        <Cards>
+          <Card title={"Chapter 1 Search"} href={"/docs/chapters/chapter-1"} description={"Search summary."} />
+        </Cards>
+
+        ## 概念
+
+        - [state space](/docs/concepts/state-space)
+
+        ## 问答
+
+        <ChatBox />
         """
     )

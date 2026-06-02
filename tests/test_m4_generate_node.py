@@ -313,8 +313,17 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert result["content_ready"] is True
     assert result["content_index"] == "content/docs/index.mdx"
     index_text = (book_dir / "content" / "docs" / "index.mdx").read_text(encoding="utf-8")
-    assert index_text.startswith("---\ntitle: Book\n---\n\n# Book")
-    assert "[chapters/chapter-6](/docs/chapters/chapter-6)" in index_text
+    assert index_text.startswith(
+        "---\ntitle: Book\n"
+        "description: Book learning home, table of contents, and study tools.\n"
+        "---\n\n# Book"
+    )
+    assert (
+        '<Card title={"Chapter 6 Point Estimation"} href={"/docs/chapters/chapter-6"} '
+        'description={"Point estimation summary."} />'
+    ) in index_text
+    assert "- [Point Estimation](/docs/concepts/Point-Estimation)" in index_text
+    assert "<ChatBox />" in index_text
     assert "(./chapters/chapter-6)" not in index_text
     assert not (book_dir / "content" / "docs" / "chapters" / "stale.mdx").exists()
     assert not (book_dir / "content" / "docs" / "concepts" / "stale.mdx").exists()
