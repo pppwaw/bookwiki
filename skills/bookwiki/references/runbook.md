@@ -39,6 +39,7 @@ Run one focused stage:
 
 ```bash
 python scripts/convert.py books/<id>
+python scripts/caption.py books/<id>
 python scripts/structure.py books/<id>
 python scripts/split.py books/<id>
 python scripts/generate.py books/<id>
@@ -80,19 +81,21 @@ Use `--resume` when a run paused or was interrupted:
 python scripts/run.py books/<id> --resume
 ```
 
-Use `--force-from <stage>` when upstream artifacts are valid but downstream outputs should be regenerated:
+Use `--from <stage> --force` when upstream artifacts are valid but downstream outputs should be regenerated (both flags are required together):
 
 ```bash
-python scripts/run.py books/<id> --force-from generate
+python scripts/run.py books/<id> --from generate --force
 ```
 
 Useful cases:
 
-- `--force-from structure`: converted source Markdown is valid; rebuild structure and downstream stages.
-- `--force-from generate`: split chapter sources are valid; regenerate agent content and downstream stages.
-- `--force-from check`: MDX content is valid; rerun check and downstream routing.
+- `--from structure --force`: converted source Markdown is valid; rebuild structure and downstream stages.
+- `--from generate --force`: split chapter sources are valid; regenerate agent content and downstream stages.
+- `--from check --force`: MDX content is valid; rerun check and downstream routing.
 
-Do not use `--force-from split` unless `approved-structure.yaml` is already reviewed and marked.
+Stop entry/exit points with `--to <stage>` or `--pause-after <stage>`, and preview without executing using `--dry-run`.
+
+Do not use `--from split --force` unless `approved-structure.yaml` is already reviewed and marked.
 
 ## Check and Repair
 
@@ -120,6 +123,6 @@ Decision rules:
 
 - Missing API key: set `DEEPSEEK_API_KEY` or `MOONSHOT_API_KEY`; do not switch to fake runtime outside tests.
 - Structure gate failure: add the exact approval marker after user review.
-- Stale content after changing generation settings: use `--force-from generate`.
+- Stale content after changing generation settings: use `--from generate --force`.
 - SQLite missing: run `python scripts/index.py books/<id>` after content exists and check passes.
 - Site has old docs: rerun `python scripts/site.py books/<id>` when preview is requested.

@@ -1,5 +1,42 @@
 # BookWiki Artifact Contracts
 
+## Source Ref Manifests
+
+Path (one per source, written by `convert`, mutated in place by `caption`):
+
+```text
+books/<id>/work/source_refs/<source_id>.json
+```
+
+Shape:
+
+```json
+{
+  "source_id": "ai-intro",
+  "ref_granularity": "page",
+  "pages": [
+    {
+      "page_idx": 0,
+      "page_number": 1,
+      "source_ref": "ai-intro-p001",
+      "blocks": [
+        {
+          "block_id": "ai-intro-p001-b001",
+          "type": "image",
+          "asset_path": "work/assets/ai-intro/asset-001.png",
+          "caption": "Figure 1: search tree",
+          "caption_source": "vision",
+          "caption_model": "kimi-k2.6"
+        }
+      ]
+    }
+  ],
+  "vision_warnings": []
+}
+```
+
+`source_ref` values (e.g. `ai-intro-p001`) are the citation anchors that approved structure, agents, and MDX reference. The `caption` stage fills `caption`/`caption_source`/`caption_model` on image and chart blocks that have an `asset_path`, appends `vision_warnings`, and fails loudly if any image caption errors.
+
 ## Approved Structure
 
 Path:

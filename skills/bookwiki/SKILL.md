@@ -9,10 +9,10 @@ BookWiki turns one book's source materials into an Obsidian-style vault, a SQLit
 
 ## Standard Flow
 
-1. Run stages in this order: `convert -> structure -> approve -> split -> generate -> check/repair -> index -> site`.
+1. Run stages in this order: `convert -> caption -> structure -> approve -> split -> generate -> check/repair -> index -> site`. The full graph also runs `reconcile_concepts -> concept_pages -> integrate` between `generate` and `check`.
 2. Use `python scripts/run.py books/<id>` for the full pipeline through `index`.
 3. Use `python scripts/run.py books/<id> --resume` after the structure review gate or after an interrupted run.
-4. Use thin stage scripts for focused work: `scripts/convert.py`, `scripts/structure.py`, `scripts/split.py`, `scripts/generate.py`, `scripts/check.py`, `scripts/repair.py`, `scripts/index.py`.
+4. Use thin stage scripts for focused work: `scripts/convert.py`, `scripts/caption.py`, `scripts/structure.py`, `scripts/split.py`, `scripts/generate.py`, `scripts/check.py`, `scripts/repair.py`, `scripts/index.py`.
 5. Do not start `scripts/site.py` unless the user asks for site preview or verification.
 
 ## Hard Gate
@@ -30,7 +30,8 @@ If that marker is missing, stop and ask for review instead of bypassing the gate
 Agents return Pydantic models. Cache misses call the configured real LLM through `bookwiki.scheduler.llm`.
 
 - Configure `DEEPSEEK_API_KEY` for `deepseek-*` models.
-- Configure `MOONSHOT_API_KEY` for `kimi-*` models.
+- Configure `MOONSHOT_API_KEY` for `kimi-*` models, including the `kimi-k2.6` vision captioner used by the `caption` stage.
+- The site's `/api/chat` route uses `BOOKWIKI_CHAT_API_KEY` (OpenRouter).
 - Keep keys in the environment or repo root `.env`; existing environment variables take precedence.
 - Missing keys should fail loudly. Do not silently fall back to stub content.
 - Tests may use `BOOKWIKI_TEST_LLM=1` for the explicit fake runtime.
@@ -49,5 +50,5 @@ If `check-report.json` has error or critical `repair_targets`, run `python scrip
 
 ## References
 
-- Read `references/runbook.md` for stage commands, `--force-from`, resume, site materialization, and common failures.
+- Read `references/runbook.md` for stage commands, `--from <stage> --force`, resume, site materialization, and common failures.
 - Read `references/contracts.md` for the key artifact contracts: approved structure, reconciled concepts, check report, run manifest, and SQLite schema.
