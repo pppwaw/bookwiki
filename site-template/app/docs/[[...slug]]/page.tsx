@@ -7,7 +7,7 @@ import {
   MarkdownCopyButton,
   ViewOptionsPopover,
 } from 'fumadocs-ui/layouts/docs/page';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { getMDXComponents } from '@/components/mdx';
 import { ChapterSummary } from '@/components/ChapterSummary';
 import { Markdown } from '@/components/markdown';
@@ -15,8 +15,22 @@ import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import { gitConfig } from '@/lib/shared';
 
+const MAX_ORDER = Number.MAX_SAFE_INTEGER;
+
+function firstChapterHref(): string | undefined {
+  const chapters = source
+    .getPages()
+    .filter((page) => page.data.type === 'chapter')
+    .sort((a, b) => (a.data.order_index ?? MAX_ORDER) - (b.data.order_index ?? MAX_ORDER));
+  return chapters[0]?.url;
+}
+
 export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const params = await props.params;
+  if (!params.slug?.length) {
+    const firstChapter = firstChapterHref();
+    if (firstChapter) redirect(firstChapter);
+  }
   const page = getSourcePage(params.slug);
   if (!page) notFound();
 

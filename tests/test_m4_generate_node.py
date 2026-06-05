@@ -315,15 +315,16 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     index_text = (book_dir / "content" / "docs" / "index.mdx").read_text(encoding="utf-8")
     assert index_text.startswith(
         "---\ntitle: Book\n"
-        "description: Book learning home, table of contents, and study tools.\n"
-        "---\n\n# Book"
+        "description: Book 的互动学习指南：章节目录与核心概念。\n"
+        "---\n\n## 目录"
     )
     assert (
         '<Card title={"Chapter 6 Point Estimation"} href={"/docs/chapters/chapter-6"} '
         'description={"Point estimation summary."} />'
     ) in index_text
-    assert "- [Point Estimation](/docs/concepts/Point-Estimation)" in index_text
-    assert "<ChatBox />" in index_text
+    assert (
+        '<Card title={"Point Estimation"} href={"/docs/concepts/Point-Estimation"}'
+    ) in index_text
     assert "(./chapters/chapter-6)" not in index_text
     assert not (book_dir / "content" / "docs" / "chapters" / "stale.mdx").exists()
     assert not (book_dir / "content" / "docs" / "concepts" / "stale.mdx").exists()

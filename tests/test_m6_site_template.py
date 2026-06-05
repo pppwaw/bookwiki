@@ -47,9 +47,9 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "docsRoute = '/docs'" in shared
     assert "DocsLayout" in docs_layout
     assert "source.getPageTree()" in docs_layout
-    assert "AISearch" in docs_layout
-    assert "AISearchPanel" in docs_layout
-    assert "AISearchTrigger" in docs_layout
+    assert "AISearch" in root_layout
+    assert "AISearchPanel" in root_layout
+    assert "AISearchTrigger" in root_layout
     assert "generateStaticParams" in docs_page
     assert "getSourcePage(params.slug)" in docs_page
     assert "DocsPage" in docs_page
@@ -61,8 +61,8 @@ def test_home_page_renders_generated_book_index() -> None:
 
     assert "Hello World" not in home_page
     assert "getSourcePage(undefined)" in home_page
-    assert "page.data.body" in home_page
-    assert "getMDXComponents" in home_page
+    assert "source.getPages()" in home_page
+    assert "chapters[0]" in home_page
 
 
 def test_site_template_wires_bookwiki_components_and_server_only_data_paths() -> None:

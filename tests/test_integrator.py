@@ -262,12 +262,8 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         """\
         ---
         title: Book
-        description: Book learning home, table of contents, and study tools.
+        description: Book 的互动学习指南：章节目录与核心概念。
         ---
-
-        # Book
-
-        这页汇总本书的章节目录、核心概念和问答工具。
 
         ## 目录
 
@@ -277,10 +273,8 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
 
         ## 概念
 
-        - [state space](/docs/concepts/state-space)
-
-        ## 问答
-
-        <ChatBox />
+        <Cards>
+          <Card title={"state space"} href={"/docs/concepts/state-space"} description={"State space is the reachable-state set."} />
+        </Cards>
         """
     )

@@ -362,48 +362,53 @@ def _frontmatter(data: dict[str, Any]) -> str:
     return f"---\n{body}\n---\n\n"
 
 
+def _homepage_description(title: str, language: str | None) -> str:
+    if str(language or "").lower().startswith("en"):
+        return f"{title} learning home, table of contents, and key concepts."
+    return f"{title} 的互动学习指南：章节目录与核心概念。"
+
+
+def _home_cards_mdx(entries: list[dict[str, str]]) -> list[str]:
+    lines = ["<Cards>"]
+    for entry in entries:
+        props = [
+            _jsx_prop("title", entry["title"]),
+            _jsx_prop("href", entry["href"]),
+        ]
+        if entry.get("description"):
+            props.append(_jsx_prop("description", entry["description"]))
+        lines.append(f"  <Card {' '.join(props)} />")
+    lines.append("</Cards>")
+    return lines
+
+
 def _book_homepage_mdx(
     title: str,
+    description: str,
     chapter_entries: list[dict[str, str]],
-    concept_entries: list[tuple[str, str]],
+    concept_entries: list[dict[str, str]],
 ) -> str:
     lines = [
-        _frontmatter(
-            {
-                "title": title,
-                "description": f"{title} learning home, table of contents, and study tools.",
-            }
-        ).rstrip(),
-        "",
-        f"# {title}",
-        "",
-        "这页汇总本书的章节目录、核心概念和问答工具。",
+        _frontmatter({"title": title, "description": description}).rstrip(),
         "",
         "## 目录",
         "",
     ]
     if chapter_entries:
-        lines.append("<Cards>")
-        for entry in chapter_entries:
-            props = [
-                _jsx_prop("title", entry["title"]),
-                _jsx_prop("href", entry["href"]),
-            ]
-            if entry.get("description"):
-                props.append(_jsx_prop("description", entry["description"]))
-            lines.append(f"  <Card {' '.join(props)} />")
-        lines.append("</Cards>")
+        lines.extend(_home_cards_mdx(chapter_entries))
     else:
         lines.append("暂无章节内容。")
 
     lines.extend(["", "## 概念", ""])
     if concept_entries:
-        for name, stem in sorted(concept_entries, key=lambda item: item[0].casefold()):
-            lines.append(f"- [{_markdown_link_label(name)}](/docs/concepts/{stem})")
+        lines.extend(
+            _home_cards_mdx(
+                sorted(concept_entries, key=lambda entry: entry["title"].casefold())
+            )
+        )
     else:
         lines.append("暂无概念页。")
 
-    lines.extend(["", "## 问答", "", "<ChatBox />"])
     return "\n".join(lines) + "\n"
 
 
@@ -412,10 +417,6 @@ def _homepage_summary(value: Any) -> str:
     if not paragraphs:
         return ""
     return re.sub(r"\s+", " ", paragraphs[0]).strip()
-
-
-def _markdown_link_label(value: str) -> str:
-    return _markdown_text(value).replace("[", r"\[").replace("]", r"\]")
 
 
 def _quiz_block_mdx(
@@ -1750,7 +1751,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     _clear_generated_files(concepts_dir, "*.mdx")
     chapter_outputs: list[str] = []
     chapter_home_entries: list[dict[str, str]] = []
-    concept_home_entries: list[tuple[str, str]] = []
+    concept_home_entries: list[dict[str, str]] = []
     concept_backlinks: dict[str, list[dict[str, str]]] = {}
     alias_map = _load_alias_map(state, cfg)
     concept_previews: dict[str, dict[str, str]] = {}
@@ -1853,11 +1854,26 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             + normalize_mdx_math(str(concept["body_md"]))
             + referenced_by,
         )
-        concept_home_entries.append((str(concept["name"]), safe_name))
+        concept_name = str(concept["name"])
+        concept_preview = concept_previews.get(concept_name) or concept_previews.get(
+            str(name), {}
+        )
+        concept_home_entries.append(
+            {
+                "title": concept_name,
+                "href": f"/docs/concepts/{safe_name}",
+                "description": concept_preview.get("summary", ""),
+            }
+        )
 
     index_path = write_text(
         content_dir / "index.mdx",
-        _book_homepage_mdx(cfg.title, chapter_home_entries, concept_home_entries),
+        _book_homepage_mdx(
+            cfg.title,
+            _homepage_description(cfg.title, cfg.language),
+            chapter_home_entries,
+            concept_home_entries,
+        ),
     )
     chapter_stems = [Path(path).stem for path in chapter_outputs]
     concept_stem_list = sorted(

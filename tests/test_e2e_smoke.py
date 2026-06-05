@@ -71,7 +71,7 @@ def test_mini_book_pipeline_reaches_sqlite_and_serves_materialized_site(
 
     site_dir = materialize_site(book_dir)
     response_text = serve_once(site_dir, "/content/docs/index.mdx")
-    assert "# Mini" in response_text
+    assert "title: Mini" in response_text
 
 
 def serve_once(site_dir: Path, path: str) -> str:
