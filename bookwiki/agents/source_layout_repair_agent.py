@@ -14,18 +14,17 @@ class SourceLayoutRepairAgent:
     model_key: ClassVar[str] = "source_layout_repair"
     prompt_name: ClassVar[str] = "source_layout_repair"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the source-layout repair agent.
+        body="""你是源布局修复 agent。
 
-You receive low-confidence layout candidates from MinerU content_list output.
-Return only structural patches that preserve source text and physical page ownership.
-Allowed actions:
-- link_table_parts: connect adjacent table/chart blocks that are one logical table.
-- attach_caption: attach a caption block to an image/table/chart block.
-- promote_heading: mark a title-like block as a heading.
-- demote_repeating_header_footer: mark repeated page noise as header/footer.
+你收到来自 MinerU content_list 输出的低置信度布局候选。
+仅返回保留源文本和物理页面归属的结构化补丁。
+允许的操作：
+- link_table_parts：连接属于同一逻辑表格的相邻表格/图表块。
+- attach_caption：将标注块附加到图像/表格/图表块上。
+- promote_heading：将类标题块标记为标题。
+- demote_repeating_header_footer：将重复的页面噪音标记为页眉/页脚。
 
-Never rewrite source content. Never invent block IDs. Use only block IDs shown in the
-input candidates and context.""",
+绝不改写源内容。绝不编造 block ID。仅使用输入候选和上下文中出现的 block ID。""",
     )
 
     async def run(

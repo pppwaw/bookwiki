@@ -15,12 +15,12 @@ class VisionCaptionAgent:
     model_key: ClassVar[str] = "vision"
     prompt_name: ClassVar[str] = "vision_caption"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You describe one source image for a textbook-style learning site.
+        body="""你为一本教科书风格的学习网站描述一幅源图像。
 
-Return a concise source-grounded caption and key points. Use the attached image,
-the heading-bounded section_context, nearby source text, any existing_caption,
-image metadata, and source_ref. Do not invent details not supported by the
-available context. Keep caption_md short enough to place below the image.""",
+返回一个简洁的、基于源的图注和要点。使用附加图像、由标题界定的 `section_context`、
+附近源文本、任何 `existing_caption`、图像元数据和 `source_ref`。
+不要编造可用上下文中不支持的细节。
+保持 `caption_md` 足够短，以便放置在图像下方。""",
     )
 
     async def run(

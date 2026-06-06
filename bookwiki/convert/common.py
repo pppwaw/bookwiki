@@ -15,3 +15,17 @@ def clean_markdown(text: str) -> str:
 def source_id_from_stem(stem: str) -> str:
     source_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", stem).strip("-")
     return source_id or "source"
+
+
+BOOK_FIGURE_TAG_RE = re.compile(r"<BookFigure\b[^>]*/>")
+_BOOK_FIGURE_ATTR_RE = re.compile(r'([A-Za-z_][\w-]*)="([^"]*)"')
+
+
+def parse_book_figure_tag(tag: str) -> dict[str, str]:
+    """Parse a self-closing ``<BookFigure .../>`` tag into its attribute map.
+
+    Attribute values are returned exactly as they appear in the tag (the
+    renderer HTML-escapes them via ``html.escape(..., quote=True)``), so callers
+    are responsible for ``html.unescape`` on the fields they consume.
+    """
+    return dict(_BOOK_FIGURE_ATTR_RE.findall(tag))

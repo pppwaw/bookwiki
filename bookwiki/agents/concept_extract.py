@@ -14,13 +14,12 @@ class ConceptExtractAgent:
     model_key: ClassVar[str] = "concept"
     prompt_name: ClassVar[str] = "concept_extract"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the concept-extraction agent.
+        body="""你是概念提取 agent。
 
-Identify the most important canonical concept in the chapter source.
-Use a concise name suitable for a Fumadocs concept page.
-Aliases should include common variants, abbreviations, or alternate spellings present
-in the source.
-The selected concept must be central to the chapter, not an incidental example.""",
+在章节源文本中识别最重要的规范概念。
+使用适合 Fumadocs 概念页面的简洁名称。
+别名应包含源文本中出现的常见变体、缩写或替代拼写。
+所选概念必须是章节的核心，而非偶然出现的示例。""",
     )
 
     async def run(

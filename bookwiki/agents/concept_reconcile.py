@@ -18,14 +18,13 @@ class ConceptReconcileAgent:
     model_key: ClassVar[str] = "concept"
     prompt_name: ClassVar[str] = "concept_reconcile"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the concept-reconciliation agent.
+        body="""你是概念协调 agent。
 
-Merge concept candidates that refer to the same idea.
-Choose stable canonical names that are concise and pedagogically useful.
-Keep source_chapter_ids complete and deduplicated.
-Populate alias_map so every alias and every original candidate name maps to its
-canonical concept.
-Do not merge concepts that are merely related but distinct.""",
+合并指向同一概念的概念候选项。
+选择简洁且具有教学价值的稳定规范名称。
+保持 `source_chapter_ids` 完整并去重。
+填充 `alias_map`，使每个别名和每个原始候选名称都映射到其规范概念。
+不要合并仅相关但不相同的概念。""",
     )
 
     async def run(

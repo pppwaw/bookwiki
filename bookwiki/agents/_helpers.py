@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
-from html import escape
+from html import escape, unescape
 from typing import Any
 
+from bookwiki.convert.common import BOOK_FIGURE_TAG_RE, parse_book_figure_tag
 from bookwiki.schemas.common import Citation
 
 SOURCE_REF_RE = re.compile(r"<!--\s*source_ref:\s*([A-Za-z0-9_.:-]+)\s*-->")
@@ -40,6 +41,28 @@ def citation(inp: dict[str, Any]) -> Citation:
     return Citation(ref_id=source_ref(inp), quote=quote[:240] or "stub source text")
 
 
+def _placeholder_figures(text: str) -> str:
+    """Replace raw ``<BookFigure .../>`` tags with readable text placeholders.
+
+    The chapter document is HTML-escaped before being handed to the LLM, which
+    would turn figure tags into ``&lt;BookFigure&gt;`` noise. Converting them to
+    ``[Figure <id>: <caption>]`` first keeps the figure visible and prompts the
+    model to reference it by id in its draft.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        attrs = parse_book_figure_tag(match.group(0))
+        figure_id = unescape(attrs.get("id", "")).strip()
+        if not figure_id:
+            return match.group(0)
+        caption = unescape(attrs.get("caption", "")).strip()
+        if caption:
+            return f"[Figure {figure_id}: {caption}]"
+        return f"[Figure {figure_id}]"
+
+    return BOOK_FIGURE_TAG_RE.sub(_replace, text)
+
+
 def chapter_document(inp: dict[str, Any]) -> str:
     md = source_md(inp)
     matches = list(SOURCE_REF_RE.finditer(md))
@@ -56,6 +79,7 @@ def chapter_document(inp: dict[str, Any]) -> str:
         body = md[start:end].strip()
         if index == 0 and prefix:
             body = f"{prefix}\n\n{body}".strip()
+        body = _placeholder_figures(body)
         chunks.append(
             f'  <chunk ref="{escape(ref_id, quote=True)}">'
             f"{escape(body)}"

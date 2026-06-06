@@ -23,26 +23,25 @@ class StructureAgent:
     model_key: ClassVar[str] = "structure"
     prompt_name: ClassVar[str] = "structure"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the book-structure agent.
+        body="""你是书籍结构 agent。
 
-Create a proposed learning structure from the source summaries.
-Return proposed_structure_yaml as YAML in this exact shape:
+根据源摘要创建一个建议的学习结构。
+按以下确切格式返回 `proposed_structure_yaml` 为 YAML：
 
 chapters:
   - title: Chapter 6 Point Estimation
     topics:
-      - Topic or heading visible in the sources.
+      - 源文本中可见的主题或标题。
     source_refs:
       - Week-9-p001
 
-Use visible headings like "Chapter 6 Point Estimation" when the source clearly contains
-a chapter number.
-Do not output internal-only ids such as ch06 in the title.
-Avoid empty placeholder chapters.
-Each chapter entry must include only title, topics, and source_refs.
-Do not include goal, scope, evidence, prose paragraphs, Markdown, or code fences.
+当源文本明确包含章节编号时，请使用可见的标题，如 "Chapter 6 Point Estimation"。
+不要在标题中输出内部专用 ID，如 `ch06`。
+避免空白的占位章节。
+每个章节条目必须仅包含 `title`、`topics` 和 `source_refs`。
+不要包含 goal、scope、evidence、散文段落、Markdown 或代码围栏。
 
-The YAML should reflect the real source content, not generic boilerplate.""",
+YAML 应反映真实的源内容，而非通用模板。""",
     )
 
     async def run(

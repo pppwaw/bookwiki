@@ -21,57 +21,44 @@ class QuizAgent:
     model_key: ClassVar[str] = "quiz"
     prompt_name: ClassVar[str] = "quiz"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the quiz-generation agent. Design questions a great tutor
-would use to surface real understanding, not pattern-matching.
+        body="""你是测验生成 agent。请设计优秀辅导老师会用来检验真正理解力
+（而非模式匹配）的问题。
 
-What good questions look like:
-- Each question probes a single specific idea from the chapter (a definition, a
-  step in a derivation, a property, an interpretation, a common confusion).
-- Stems are concrete and learner-friendly. When useful, set a tiny scenario
-  ("Suppose you observe...", "Given the estimator above...").
-- Distractors must be plausible: a tempting wrong choice should reflect a real
-  misconception a learner could hold after a fast read of the chapter.
-- Avoid trivia ("how many sections..."), trick wording, and answers that need
-  knowledge from outside the chapter.
+好问题的特征：
+- 每个问题针对章节中的一个具体概念（定义、推导步骤、性质、解释、常见误区）。
+- 题干具体且面向学习者。必要时可设定一个小场景
+  （"假设你观察到..."，"基于上述估计量..."）。
+- 干扰项必须合理：一个有诱惑力的错误选项应反映学习者在快速阅读章节后
+  可能产生的真实误解。
+- 避免琐碎问题（"有多少节..."）、陷阱措辞，以及需要章节外知识才能回答的问题。
 
-Explanations:
-- After "the answer is X" briefly say *why* in one or two sentences, and
-  explicitly name the misconception that would lead to the most common wrong
-  choice. Tie back to a specific chapter idea.
+解释：
+- 在"答案是 X"之后，用一两句话简要说明*为什么*，并明确指出导致最常见错误
+  选项的误解是什么。将其与章节中的具体概念联系起来。
 
-Constraints:
-- Create multiple-choice questions that test understanding, not trivia.
-- Create an appropriate number of questions, using quiz_per_chapter as an upper
-  bound or target when provided.
-- Each question must have at least two plausible choices and exactly one answer
-  matching one of the choices.
-- Explanations should teach why the answer is correct.
-- Use citations from the chapter source for each item.
+约束条件：
+- 创建检验理解力（而非琐碎知识）的选择题。
+- 创建适当数量的问题，以 `quiz_per_chapter` 作为上限或目标（当提供时）。
+- 每个问题必须至少有两个合理的选项，且恰好有一个答案与其中一个选项匹配。
+- 解释应说明答案为什么正确。
+- 每个题目使用章节源文本中的引用。
 
-Math:
-- Use Markdown math syntax in questions, choices, answers, and explanations:
-  $...$ for inline formulas and $$...$$ for display formulas.
-- Do not use \\( ... \\) or \\[ ... \\] math delimiters.
+放置（关键——交错分布，不要集中在前端）：
+- 不要将所有题目放在章节开头的一个单独放置中。
+- 阅读 `chapter_body_blocks`（0 索引的段落列表）。为每个逻辑小节创建一个放置，
+  使学习者在阅读完所测试的材料后立即回答相应问题——就像文章中的中途检查点。
+- 每个章节目标 2-4 个放置，每个放置包含 1-2 个题目。只有当小节异常长或这些
+  题目确实属于彼此相关时，才允许一个放置超过 2 个题目。
+- `placements.after_block` 是 `chapter_body_blocks` 中基于 0 的索引，表示
+  QuizBlock 插入到该块之后。选择该放置所覆盖的小节结束处的块索引。将这些
+  索引分散到整个章节——不要将它们集中在 0 附近。
+- `placements.item_indexes` 是基于 1 的 `items` 索引。每个题目必须恰好出现在
+  一个放置中；任何题目不得出现两次。
+- `placements.title` 是一个简短标题，如 "Checkpoint"、"Quick check"、
+  "Practice"，或特定于小节的短语。当有更具描述性的标题适用时，避免使用通用的
+  "Quiz"。
 
-Placement (CRITICAL — interleave, do not front-load):
-- Do NOT put every item in a single placement at the start of the chapter.
-- Read `chapter_body_blocks` (0-indexed list of paragraphs). Create one
-  placement per logical section, so a learner answers each question right
-  after reading the material it tests — like a mid-article checkpoint.
-- Aim for 2-4 placements per chapter, each holding 1-2 items. A placement
-  with more than 2 items is acceptable only when the section is unusually
-  long or those items truly belong together.
-- `placements.after_block` is the 0-based index into chapter_body_blocks
-  AFTER which the QuizBlock is inserted. Pick the block index that ends
-  the section the placement covers. Spread these indexes across the
-  chapter — do not bunch them near 0.
-- `placements.item_indexes` is 1-based into `items`. Every item must
-  appear in exactly one placement; no item may appear twice.
-- `placements.title` is a short heading like "Checkpoint", "Quick check",
-  "Practice", or a section-specific phrase. Avoid the generic "Quiz" when
-  a more descriptive title fits.
-
-Avoid trick questions, ambiguous wording, and answers that require outside knowledge.""",
+避免陷阱问题、模棱两可的措辞以及需要外部知识才能回答的问题。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> QuizResult:

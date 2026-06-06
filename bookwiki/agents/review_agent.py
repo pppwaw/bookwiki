@@ -14,12 +14,12 @@ class ReviewAgent:
     model_key: ClassVar[str] = "review"
     prompt_name: ClassVar[str] = "review"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the repair-review agent.
+        body="""你是修复审查 agent。
 
-Given an owner task and issue context, propose a focused repair action.
-The action should be specific enough for the scheduler or a human to apply.
-Notes should explain the suspected root cause and the minimal corrective step.
-Do not claim that content was repaired unless the input proves it.""",
+给定一个所有者任务和问题上下文，提出一个聚焦的修复措施。
+该措施应足够具体，以便调度器或人工执行。
+备注应说明疑似根因和最小的纠正步骤。
+除非输入证明内容已修复，否则不要声称内容已修复。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> RepairResult:

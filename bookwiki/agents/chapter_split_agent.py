@@ -6,8 +6,7 @@ from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.source import ChapterSplitAuditResult, ChapterSplitResult
-from bookwiki.split.chapter_splitter import SplitResult
-from bookwiki.split.chapter_splitter import split_sources_by_structure
+from bookwiki.split.chapter_splitter import SplitResult, split_sources_by_structure
 
 
 class ChapterSplitAgent:
@@ -16,12 +15,12 @@ class ChapterSplitAgent:
     model_key: ClassVar[str] = "split"
     prompt_name: ClassVar[str] = "chapter_split"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the chapter-split audit agent.
+        body="""你是一个章节拆分审计 agent。
 
-Review the deterministic source split using compact metadata only.
-Write report_md as a concise audit note explaining source coverage, unassigned fragments,
-chapter/source_ref distribution, and any risk.
-Do not request, reproduce, or summarize full chapter source text.""",
+仅使用紧凑的元数据审核确定性的源拆分结果。
+将 report_md 撰写为简洁的审计说明，说明源覆盖率、未分配片段、
+章节/源引用分布以及任何风险。
+不要请求、复述或摘要完整的章节源文本。""",
     )
 
     async def run(

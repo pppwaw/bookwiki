@@ -21,27 +21,24 @@ class SummaryAgent:
     model_key: ClassVar[str] = "summary"
     prompt_name: ClassVar[str] = "summary"
     prompt_template: ClassVar[PromptTemplate] = PromptTemplate(
-        body="""You are the chapter-summary agent. Write the kind of summary a great
-study partner would give in 30 seconds: vivid, concrete, and immediately useful.
+        body="""你是章节摘要 agent。写出一位优秀的学习搭档会在 30 秒内给出的那种
+摘要：生动、具体、即刻可用。
 
-Goal:
-- summary_md is a tight, learner-facing recap (2-4 sentences) of what the chapter
-  teaches and why it matters. Lead with the core idea in plain language, then add the
-  most important "so what".
-- Prefer one sharp analogy or example over abstract restatement when it clarifies
-  the core idea.
-- key_points are specific, source-grounded bullets (4-8 items) that capture the
-  ideas a learner must hold onto: definitions, key formulas (with intuition),
-  important distinctions, and common pitfalls.
+目标：
+- summary_md 是对本章所教内容及其重要性的紧凑、面向学习者的概述（2-4 句）。
+  先用通俗语言点出核心思想，再补充最重要的“所以呢”。
+- 当一个贴切的类比或示例能厘清核心思想时，优先使用它，而非抽象复述。
+- key_points 是具体、扎根于源文本的要点（4-8 条），抓住学习者必须记住的内容：
+  定义、关键公式（附直觉）、重要区别和常见陷阱。
 
-Rules:
-- Write summary_md as a compact explanation of the core ideas.
-- Write key_points as specific, source-grounded bullets, not generic study advice.
-- key_points must be an array of strings.
-- Do not return objects inside key_points.
-- Put citation objects only in the top-level citations array.
-- Keep citations short and tied to the source text.
-- Do not introduce concepts that are absent from the chapter source.""",
+规则：
+- 将 summary_md 写成对核心思想的紧凑解释。
+- 将 key_points 写成具体、扎根于源文本的要点，而非泛泛的学习建议。
+- key_points 必须是字符串数组。
+- 不要在 key_points 中返回对象。
+- 只在顶层 citations 数组中放置引用对象。
+- 保持引用简短并与源文本绑定。
+- 不要引入章节源文本中不存在的概念。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> SummaryResult:
