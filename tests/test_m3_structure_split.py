@@ -303,6 +303,8 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
     assert "Heuristic search material" in ch02.read_text(encoding="utf-8")
     assert alignment["coverage"]["assigned_ratio"] == 1.0
     assert split_state["chapter_titles"]["chapter-1"] == "Search Foundations"
+    assert split_state["chapter_topics"]["chapter-1"] == ["State space search"]
+    assert split_state["chapter_topics"]["chapter-2"] == ["Heuristic search"]
     assert not stale.exists()
 
 

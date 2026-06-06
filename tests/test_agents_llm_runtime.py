@@ -251,7 +251,7 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
     )
 
     assert len(runtime.calls) == 8
-    assert all("Return valid JSON" in call["system"] for call in runtime.calls)
+    assert all("只返回合法的 JSON" in call["system"] for call in runtime.calls)
 
 
 @pytest.mark.asyncio

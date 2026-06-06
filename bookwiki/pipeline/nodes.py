@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import shutil
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,11 @@ from bookwiki.agents import (
     SummaryAgent,
     VisionCaptionAgent,
 )
-from bookwiki.convert.common import source_id_from_stem
+from bookwiki.convert.common import (
+    BOOK_FIGURE_TAG_RE,
+    parse_book_figure_tag,
+    source_id_from_stem,
+)
 from bookwiki.convert.mineru_client import convert_document_to_source
 from bookwiki.convert.source_normalizer import (
     NormalizedSource,
@@ -80,6 +85,36 @@ def _chapter_titles(approved_structure: str) -> list[tuple[str, str]]:
         (chapter.chapter_id, chapter.title)
         for chapter in parse_approved_structure(approved_structure)
     ]
+
+
+def _chapter_topics(approved_structure: str) -> dict[str, list[str]]:
+    try:
+        chapters = parse_approved_structure(approved_structure)
+    except ValueError:
+        return {}
+    return {chapter.chapter_id: list(chapter.topics) for chapter in chapters}
+
+
+def _source_figures(source_md: str) -> list[dict[str, str]]:
+    """Extract the de-duplicated ``<BookFigure/>`` references found in ``source_md``.
+
+    Figures are returned in first-seen order keyed by ``id``; captions are
+    ``html.unescape``-d so the agent prompt receives human-readable text.
+    """
+    figures: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for tag in BOOK_FIGURE_TAG_RE.findall(source_md):
+        attrs = parse_book_figure_tag(tag)
+        figure_id = unescape(attrs.get("id", ""))
+        if not figure_id or figure_id in seen:
+            continue
+        seen.add(figure_id)
+        figure: dict[str, str] = {"id": figure_id}
+        caption = attrs.get("caption")
+        if caption:
+            figure["caption"] = unescape(caption)
+        figures.append(figure)
+    return figures
 
 
 def _pending_approved_structure_text(proposed_structure: str) -> str:
@@ -1567,6 +1602,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     return {
         "chapter_sources": chapter_sources,
         "chapter_titles": titles,
+        "chapter_topics": _chapter_topics(approved_structure),
         "chapter_alignment": _rel(alignment_path, cfg.book_dir),
         "chapter_split_report": _rel(report_path, cfg.book_dir),
         "cache_hit": split.cache_hit,
@@ -1587,6 +1623,7 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
     chapter_results: dict[str, dict[str, str]] = {}
     cache_results: list[CacheResult] = []
     titles = state.get("chapter_titles", {})
+    topics_by_chapter = state.get("chapter_topics", {})
 
     for ch_id, rel_source in state.get("chapter_sources", {}).items():
         source_path = cfg.book_dir / rel_source
@@ -1602,13 +1639,18 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             "quiz_per_chapter": cfg.quiz_per_chapter,
             "cards_per_chapter": cfg.cards_per_chapter,
         }
+        lesson_payload = {
+            **payload,
+            "topics": list(topics_by_chapter.get(ch_id, [])),
+            "figures": _source_figures(source_md),
+        }
         chapter_model = cfg.model_for("chapter")
         summary_model = cfg.model_for("summary")
         card_model = cfg.model_for("card")
         lesson_model = cfg.model_for("lesson")
         lesson = await run_with_cache(
             LessonAgent,
-            payload,
+            lesson_payload,
             model=lesson_model,
             cache_dir=_cache_dir(cfg),
             runtime=cfg.llm_runtime,
@@ -1743,6 +1785,49 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
     return {"concept_pages": outputs, "cache_hit": _stage_cache_hit(cache_results)}
 
 
+def _chapter_figure_index(state: State, cfg: BookConfig, ch_id: str) -> dict[str, str]:
+    """Map ``figure_id -> canonical <BookFigure/> tag`` for one chapter's source.
+
+    The chapter source markdown produced by ``split`` carries the fully-rendered
+    figure tags verbatim. Returns an empty mapping when the chapter has no source
+    (e.g. older states), but a declared-yet-missing source file fails loudly.
+    """
+    rel_source = state.get("chapter_sources", {}).get(ch_id)
+    if not rel_source:
+        return {}
+    source_md = (cfg.book_dir / rel_source).read_text(encoding="utf-8")
+    index: dict[str, str] = {}
+    for tag in BOOK_FIGURE_TAG_RE.findall(source_md):
+        figure_id = unescape(parse_book_figure_tag(tag).get("id", ""))
+        if figure_id and figure_id not in index:
+            index[figure_id] = tag
+    return index
+
+
+def _resolve_chapter_figures(body: str, index: dict[str, str]) -> tuple[str, str]:
+    """Resolve inline ``<BookFigure/>`` references against the chapter figure index.
+
+    Known references are rewritten to their canonical (src/caption-bearing) tag and
+    marked used; unknown references are dropped so hallucinated ids never reach the
+    page. Figures present in the source but never referenced are returned as a
+    trailing ``## Figures`` section so no asset is silently lost.
+    """
+    used: set[str] = set()
+
+    def _replace(match: re.Match[str]) -> str:
+        figure_id = unescape(parse_book_figure_tag(match.group(0)).get("id", ""))
+        canonical = index.get(figure_id)
+        if canonical is None:
+            return ""
+        used.add(figure_id)
+        return canonical
+
+    resolved = BOOK_FIGURE_TAG_RE.sub(_replace, body)
+    unused = [tag for figure_id, tag in index.items() if figure_id not in used]
+    figures_md = "\n\n## Figures\n\n" + "\n\n".join(unused) if unused else ""
+    return resolved, figures_md
+
+
 def integrate_node(state: State, cfg: BookConfig) -> State:
     content_dir = ensure_dir(cfg.content_dir)
     chapters_dir = ensure_dir(content_dir / "chapters")
@@ -1799,6 +1884,13 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                     "summary": str(summary["summary_md"]),
                 }
             )
+        rendered_body = _insert_quiz_blocks(
+            normalize_mdx_math(_normalize_concept_links(body_md, alias_map, concept_previews)),
+            quiz,
+        )
+        resolved_body, figures_md = _resolve_chapter_figures(
+            rendered_body, _chapter_figure_index(state, cfg, ch_id)
+        )
         path = write_text(
             chapters_dir / f"{ch_id}.mdx",
             (
@@ -1811,14 +1903,8 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                         "concepts": concept_names,
                     }
                 )
-                + _insert_quiz_blocks(
-                    normalize_mdx_math(
-                        _normalize_concept_links(
-                            body_md, alias_map, concept_previews
-                        )
-                    ),
-                    quiz,
-                )
+                + resolved_body
+                + figures_md
                 + "\n\n"
                 + f"## Sources\n\n{citation_md}\n\n"
                 + f"## Anki Cards\n\n{card_mdx}\n"

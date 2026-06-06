@@ -278,3 +278,118 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         </Cards>
         """
     )
+
+
+def test_integrate_node_resolves_chapter_figures_from_source(tmp_path: Path) -> None:
+    book_dir = tmp_path / "book"
+    result_dir = book_dir / "work" / "agent_results"
+    source_md = (
+        "# Chapter 1 source\n\n"
+        '<BookFigure id="paper-p001-b001" src="/bookwiki-assets/paper-p001-b001.png" '
+        'caption="Search tree diagram" />\n\n'
+        "Body prose.\n\n"
+        '<BookFigure id="paper-p001-b002" src="/bookwiki-assets/paper-p001-b002.png" '
+        'caption="Heuristic comparison" />\n'
+    )
+    source_path = book_dir / "work" / "chapter-sources" / "chapter-1.md"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(source_md, encoding="utf-8")
+
+    body_md = (
+        "# Search\n\n"
+        "Intro paragraph.\n\n"
+        '<BookFigure id="paper-p001-b001" />\n\n'
+        "Bridge text.\n\n"
+        '<BookFigure id="paper-p999-b001" />\n\n'
+        "Closing paragraph."
+    )
+    write_json(
+        result_dir / "chapter-1.chapter.json",
+        agent_payload(
+            {
+                "chapter_id": "chapter-1",
+                "title": "Search",
+                "body_md": body_md,
+                "concepts": [],
+                "citations": [{"ref_id": "source-p001", "quote": "State space search"}],
+                "owner_task_id": "chapter-1:chapter",
+            }
+        ),
+    )
+    write_json(
+        result_dir / "chapter-1.summary.json",
+        agent_payload(
+            {
+                "chapter_id": "chapter-1",
+                "summary_md": "Search summary.",
+                "key_points": [],
+                "citations": [],
+                "owner_task_id": "chapter-1:summary",
+            }
+        ),
+    )
+    write_json(
+        result_dir / "chapter-1.quiz.json",
+        agent_payload(
+            {
+                "chapter_id": "chapter-1",
+                "items": [],
+                "placements": [],
+                "owner_task_id": "chapter-1:quiz",
+            }
+        ),
+    )
+    write_json(
+        result_dir / "chapter-1.card.json",
+        agent_payload(
+            {
+                "chapter_id": "chapter-1",
+                "items": [],
+                "owner_task_id": "chapter-1:card",
+            }
+        ),
+    )
+    write_json(
+        book_dir / "work" / "concepts" / "reconciled.json",
+        {"concepts": [], "alias_map": {}},
+    )
+    cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+    state = {
+        "agent_results": {
+            "chapter-1": {
+                "chapter": "work/agent_results/chapter-1.chapter.json",
+                "summary": "work/agent_results/chapter-1.summary.json",
+                "quiz": "work/agent_results/chapter-1.quiz.json",
+                "card": "work/agent_results/chapter-1.card.json",
+            }
+        },
+        "reconciled_concepts": "work/concepts/reconciled.json",
+        "concept_pages": {},
+        "chapter_sources": {"chapter-1": "work/chapter-sources/chapter-1.md"},
+    }
+
+    result = integrate_node(state, cfg)
+
+    assert result == {"content_ready": True, "content_index": "content/docs/index.mdx"}
+    chapter_mdx = (book_dir / "content" / "docs" / "chapters" / "chapter-1.mdx").read_text(
+        encoding="utf-8"
+    )
+
+    canonical_b001 = (
+        '<BookFigure id="paper-p001-b001" src="/bookwiki-assets/paper-p001-b001.png" '
+        'caption="Search tree diagram" />'
+    )
+    canonical_b002 = (
+        '<BookFigure id="paper-p001-b002" src="/bookwiki-assets/paper-p001-b002.png" '
+        'caption="Heuristic comparison" />'
+    )
+    # Inline reference is rewritten to the source-backed canonical tag.
+    assert canonical_b001 in chapter_mdx
+    assert '<BookFigure id="paper-p001-b001" />' not in chapter_mdx
+    # Hallucinated reference (absent from source) is dropped entirely.
+    assert "paper-p999-b001" not in chapter_mdx
+    # Unreferenced source figure is preserved in a trailing Figures section.
+    assert "## Figures" in chapter_mdx
+    assert canonical_b002 in chapter_mdx
+    assert chapter_mdx.index("## Figures") < chapter_mdx.index("## Sources")
+    assert "## Anki Cards" in chapter_mdx
