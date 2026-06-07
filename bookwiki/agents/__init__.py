@@ -6,6 +6,7 @@ from bookwiki.agents.concept_extract import ConceptExtractAgent
 from bookwiki.agents.concept_reconcile import ConceptReconcileAgent
 from bookwiki.agents.lesson_agent import LessonAgent
 from bookwiki.agents.review_agent import ReviewAgent
+from bookwiki.agents.skeleton_agent import SkeletonAgent
 from bookwiki.agents.source_layout_repair_agent import SourceLayoutRepairAgent
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
 from bookwiki.agents.structure_agent import StructureAgent
@@ -19,6 +20,7 @@ __all__ = [
     "ConceptReconcileAgent",
     "LessonAgent",
     "ReviewAgent",
+    "SkeletonAgent",
     "SourceLayoutRepairAgent",
     "SourceSummaryAgent",
     "StructureAgent",

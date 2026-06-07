@@ -43,6 +43,9 @@ class PipelineState(TypedDict, total=False):
     chapter_alignment: str
     chapter_split_report: str
 
+    # --- build_skeleton ---
+    skeleton: str
+
     # --- generate ---
     agent_results: dict[str, dict[str, str]]
 

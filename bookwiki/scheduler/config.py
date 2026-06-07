@@ -13,6 +13,7 @@ DEFAULT_MODELS = {
     "source_layout_repair": "deepseek-v4-flash",
     "structure": "deepseek-v4-pro",
     "split": "deepseek-v4-flash",
+    "skeleton": "deepseek-v4-pro",
     "lesson": "deepseek-v4-pro",
     "chapter": "deepseek-v4-pro",
     "summary": "deepseek-v4-flash",

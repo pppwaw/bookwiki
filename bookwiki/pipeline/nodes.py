@@ -17,6 +17,7 @@ from bookwiki.agents import (
     ConceptReconcileAgent,
     LessonAgent,
     ReviewAgent,
+    SkeletonAgent,
     SourceLayoutRepairAgent,
     SourceSummaryAgent,
     StructureAgent,
@@ -41,6 +42,7 @@ from bookwiki.integrator.markdown_renderers import normalize_mdx_math
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
+from bookwiki.schemas.concept import ConceptReconciledItem, ConceptReconcileResult
 from bookwiki.schemas.report import CheckReport, Issue
 from bookwiki.split.chapter_splitter import parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
@@ -291,8 +293,7 @@ def _normalize_chapter_body_heading(body_md: str, display_title: str) -> str:
 def _escape_mdx_text_outside_math(markdown: str) -> str:
     parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|```[\s\S]*?```|`[^`\n]*`)", markdown)
     return "".join(
-        part if part.startswith(("`", "$")) else _escape_mdx_text_segment(part)
-        for part in parts
+        part if part.startswith(("`", "$")) else _escape_mdx_text_segment(part) for part in parts
     )
 
 
@@ -437,9 +438,7 @@ def _book_homepage_mdx(
     lines.extend(["", "## 概念", ""])
     if concept_entries:
         lines.extend(
-            _home_cards_mdx(
-                sorted(concept_entries, key=lambda entry: entry["title"].casefold())
-            )
+            _home_cards_mdx(sorted(concept_entries, key=lambda entry: entry["title"].casefold()))
         )
     else:
         lines.append("暂无概念页。")
@@ -522,9 +521,7 @@ def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
             )
         )
 
-    unassigned_indexes = [
-        index for index in range(1, len(items) + 1) if index not in used_indexes
-    ]
+    unassigned_indexes = [index for index in range(1, len(items) + 1) if index not in used_indexes]
     unassigned = [items[index - 1] for index in unassigned_indexes]
     if unassigned:
         after = max(chunks_by_after, default=max(0, (len(blocks) - 1) // 2))
@@ -860,9 +857,7 @@ def _artifact_owner_task_id(ch_id: str, kind: str, payload: dict[str, Any]) -> s
     return str(owner) if owner else f"{ch_id}:{kind}"
 
 
-def _concept_contexts(
-    item: dict[str, Any], state: State, cfg: BookConfig
-) -> list[dict[str, Any]]:
+def _concept_contexts(item: dict[str, Any], state: State, cfg: BookConfig) -> list[dict[str, Any]]:
     contexts: list[dict[str, Any]] = []
     for ch_id in item.get("source_chapter_ids", []):
         chapter_id_text = str(ch_id)
@@ -1228,9 +1223,7 @@ def _safe_asset_filename(filename: str, index: int) -> str:
 
 def _vision_caption_job(candidate: dict[str, Any], md_text: str) -> dict[str, Any]:
     candidate_input = dict(candidate)
-    section_window = _section_context_window_for_book_figure(
-        md_text, candidate["block_id"]
-    )
+    section_window = _section_context_window_for_book_figure(md_text, candidate["block_id"])
     section_span = None
     if section_window is not None:
         candidate_input["section_context"] = section_window["text"]
@@ -1264,8 +1257,7 @@ async def _run_vision_caption_jobs(
 
     await asyncio.gather(*(run_group(group) for group in groups))
     return [
-        item if item is not None else RuntimeError("caption job did not run")
-        for item in outcomes
+        item if item is not None else RuntimeError("caption job did not run") for item in outcomes
     ]
 
 
@@ -1367,9 +1359,7 @@ def _section_context_for_book_figure(markdown: str, block_id: str) -> str:
     return str(window["text"]) if window is not None else ""
 
 
-def _section_context_window_for_book_figure(
-    markdown: str, block_id: str
-) -> dict[str, Any] | None:
+def _section_context_window_for_book_figure(markdown: str, block_id: str) -> dict[str, Any] | None:
     match = _book_figure_pattern(block_id).search(markdown)
     if not match:
         return None
@@ -1615,6 +1605,142 @@ def _clear_chapter_source_dirs(out_dir: Path) -> None:
             shutil.rmtree(child)
 
 
+async def build_skeleton_node(state: State, cfg: BookConfig) -> State:
+    """Produce the read-only book-wide skeleton consumed by ``generate``.
+
+    Sits between ``split`` and ``generate``: gathers each chapter's title,
+    curated topics, and source markdown, then asks ``SkeletonAgent`` to
+    produce a canonical glossary, alias map, one-line chapter briefs, and
+    chapter order. The skeleton is written to ``work/skeleton.json`` and the
+    relative path is stored in state under ``skeleton``.
+    """
+    if not state.get("chapter_sources"):
+        msg = "build_skeleton requires chapter_sources; run split before build_skeleton"
+        raise ValueError(msg)
+
+    chapter_sources: dict[str, str] = state["chapter_sources"]
+    titles = state.get("chapter_titles", {})
+    topics_by_chapter = state.get("chapter_topics", {})
+
+    chapters_payload: list[dict[str, Any]] = []
+    for ch_id in chapter_sources:
+        rel_source = chapter_sources[ch_id]
+        source_md = (cfg.book_dir / rel_source).read_text(encoding="utf-8")
+        chapters_payload.append(
+            {
+                "chapter_id": ch_id,
+                "title": _display_chapter_title(ch_id, str(titles.get(ch_id, ch_id))),
+                "topics": list(topics_by_chapter.get(ch_id, [])),
+                "source_refs": _extract_source_refs(source_md),
+                "source_md": source_md,
+            }
+        )
+
+    payload: dict[str, Any] = {
+        "chapters": chapters_payload,
+        "language": cfg.language,
+        "book_notes": cfg.book_notes,
+    }
+
+    skeleton = await run_with_cache(
+        SkeletonAgent,
+        payload,
+        model=cfg.model_for("skeleton"),
+        cache_dir=_cache_dir(cfg),
+        runtime=cfg.llm_runtime,
+    )
+    out_path = write_json(
+        cfg.work_dir / "skeleton.json",
+        _agent_result_payload(SkeletonAgent, cfg.model_for("skeleton"), skeleton.result),
+    )
+    return {
+        "skeleton": _rel(out_path, cfg.book_dir),
+        "cache_hit": skeleton.cache_hit,
+    }
+
+
+def _extract_source_refs(source_md: str) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"<!--\s*source_ref:\s*([^\s>]+)\s*-->", source_md):
+        ref = match.group(1).strip()
+        if ref and ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+    return refs
+
+
+def _load_skeleton(state: State, cfg: BookConfig) -> dict[str, Any] | None:
+    """Load the skeleton produced by ``build_skeleton_node`` if present.
+
+    Returns the inner ``BookSkeleton`` payload (without the ``_agent`` wrapper),
+    or ``None`` when the state has no ``skeleton`` key (e.g. old runs that
+    pre-date M2 or partial reruns).
+    """
+    rel_path = state.get("skeleton")
+    if not rel_path:
+        return None
+    payload = read_json(cfg.book_dir / rel_path, default={})
+    return _agent_result(payload) or None
+
+
+def _skeleton_payload(skeleton: dict[str, Any] | None, ch_id: str) -> dict[str, Any]:
+    """Project the skeleton into the per-chapter LessonAgent payload.
+
+    LessonAgent receives:
+
+    - ``glossary``: full canonical concept list (every chapter sees the same
+      table so terminology converges).
+    - ``alias_map``: every variant → canonical, so the LLM rewrites raw
+      mentions into canonical names.
+    - ``chapter_owns``: concepts whose ``first_chapter_id`` equals ``ch_id``;
+      this chapter owns the definition.
+    - ``chapter_uses``: concepts owned by other chapters; only reference
+      them, do not redefine.
+    - ``prev_brief`` / ``next_brief``: neighbouring chapter one-liners so the
+      author can write transitions without seeing the actual generated body.
+    """
+    if not skeleton:
+        return {}
+    glossary = skeleton.get("glossary", []) or []
+    alias_map = skeleton.get("alias_map", {}) or {}
+    chapter_briefs = skeleton.get("chapter_briefs", {}) or {}
+    chapter_order: list[str] = list(skeleton.get("chapter_order", []) or [])
+
+    owns: list[dict[str, Any]] = []
+    uses: list[dict[str, Any]] = []
+    for entry in glossary:
+        if not isinstance(entry, dict):
+            continue
+        first = str(entry.get("first_chapter_id") or "")
+        bucket = owns if first == ch_id else uses
+        bucket.append(
+            {
+                "canonical": entry.get("canonical"),
+                "aliases": entry.get("aliases", []),
+                "first_chapter_id": first,
+            }
+        )
+
+    prev_brief = ""
+    next_brief = ""
+    if ch_id in chapter_order:
+        position = chapter_order.index(ch_id)
+        if position > 0:
+            prev_brief = chapter_briefs.get(chapter_order[position - 1], "")
+        if position + 1 < len(chapter_order):
+            next_brief = chapter_briefs.get(chapter_order[position + 1], "")
+
+    return {
+        "glossary": glossary,
+        "alias_map": alias_map,
+        "chapter_owns": owns,
+        "chapter_uses": uses,
+        "prev_brief": prev_brief,
+        "next_brief": next_brief,
+    }
+
+
 async def generate_node(state: State, cfg: BookConfig) -> State:
     if not state.get("chapter_sources"):
         msg = "generate requires chapter_sources; run split before generate"
@@ -1624,6 +1750,7 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
     cache_results: list[CacheResult] = []
     titles = state.get("chapter_titles", {})
     topics_by_chapter = state.get("chapter_topics", {})
+    skeleton_data = _load_skeleton(state, cfg)
 
     for ch_id, rel_source in state.get("chapter_sources", {}).items():
         source_path = cfg.book_dir / rel_source
@@ -1643,6 +1770,7 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             **payload,
             "topics": list(topics_by_chapter.get(ch_id, [])),
             "figures": _source_figures(source_md),
+            **_skeleton_payload(skeleton_data, ch_id),
         }
         chapter_model = cfg.model_for("chapter")
         summary_model = cfg.model_for("summary")
@@ -1697,8 +1825,7 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
 async def reconcile_node(state: State, cfg: BookConfig) -> State:
     candidates = []
     agent_results = {
-        str(ch_id): dict(paths)
-        for ch_id, paths in state.get("agent_results", {}).items()
+        str(ch_id): dict(paths) for ch_id, paths in state.get("agent_results", {}).items()
     }
     result_dir = ensure_dir(cfg.work_dir / "agent_results")
     cache_results: list[CacheResult] = []
@@ -1725,34 +1852,122 @@ async def reconcile_node(state: State, cfg: BookConfig) -> State:
         agent_results.setdefault(str(ch_id), dict(paths))["concepts"] = _rel(
             concepts_path, cfg.book_dir
         )
-        candidates.extend(
-            item.model_dump(mode="json") for item in extract_result.result.concepts
+        candidates.extend(item.model_dump(mode="json") for item in extract_result.result.concepts)
+
+    skeleton = _load_skeleton(state, cfg)
+    if skeleton is not None:
+        reconciled_model = _merge_candidates_with_skeleton(skeleton, candidates)
+    else:
+        # Fallback to the legacy LLM-driven reconcile when no skeleton exists
+        # (e.g. partial reruns that skipped build_skeleton).
+        reconcile = await run_with_cache(
+            ConceptReconcileAgent,
+            {
+                "candidates": candidates,
+                "language": cfg.language,
+                "book_notes": cfg.book_notes,
+            },
+            model=cfg.model_for("concept"),
+            cache_dir=_cache_dir(cfg),
+            runtime=cfg.llm_runtime,
         )
-    result = await run_with_cache(
-        ConceptReconcileAgent,
-        {
-            "candidates": candidates,
-            "language": cfg.language,
-            "book_notes": cfg.book_notes,
-        },
-        model=cfg.model_for("concept"),
-        cache_dir=_cache_dir(cfg),
-        runtime=cfg.llm_runtime,
-    )
-    cache_results.append(result)
+        cache_results.append(reconcile)
+        reconciled_model = reconcile.result
+
     out_dir = ensure_dir(cfg.work_dir / "concepts")
-    reconciled = write_json(out_dir / "reconciled.json", _json_model(result.result))
+    reconciled = write_json(out_dir / "reconciled.json", _json_model(reconciled_model))
     write_json(
         cfg.work_dir / "agent_results" / "concepts.reconciled.json",
-        _json_model(result.result),
+        _json_model(reconciled_model),
     )
-    alias_map = write_json(out_dir / "alias_map.json", result.result.alias_map)
+    alias_map = write_json(out_dir / "alias_map.json", reconciled_model.alias_map)
     return {
         "reconciled_concepts": _rel(reconciled, cfg.book_dir),
         "alias_map": _rel(alias_map, cfg.book_dir),
         "agent_results": agent_results,
         "cache_hit": _stage_cache_hit(cache_results),
     }
+
+
+def _merge_candidates_with_skeleton(
+    skeleton: dict[str, Any], candidates: list[dict[str, Any]]
+) -> ConceptReconcileResult:
+    """Use the skeleton glossary as the pre-merged base and add any new candidates.
+
+    Skeleton's glossary is already LLM-canonicalised at the ``build_skeleton``
+    stage, so this step is purely deterministic: each candidate's normalised
+    name is looked up in the skeleton's ``alias_map``; matches attach
+    ``source_chapter_id`` to the existing canonical entry; non-matches are
+    accumulated as new canonical concepts (rare — these are concepts the
+    LessonAgent invented beyond the skeleton).
+    """
+    from bookwiki.agents.concept_reconcile import _concept_key
+
+    by_key: dict[str, ConceptReconciledItem] = {}
+    alias_to_key: dict[str, str] = {}
+
+    for entry in skeleton.get("glossary", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        canonical = str(entry.get("canonical") or "").strip()
+        if not canonical:
+            continue
+        first_chapter = str(entry.get("first_chapter_id") or "").strip()
+        aliases = [str(a) for a in entry.get("aliases", []) if str(a).strip()]
+        key = _concept_key(canonical)
+        item = ConceptReconciledItem(
+            canonical=canonical,
+            aliases=aliases,
+            source_chapter_ids=[first_chapter] if first_chapter else [],
+        )
+        by_key[key] = item
+        alias_to_key[key] = key
+        for alias in aliases:
+            alias_to_key[_concept_key(alias)] = key
+
+    skeleton_alias_map = dict(skeleton.get("alias_map", {}) or {})
+    for variant, canonical in skeleton_alias_map.items():
+        key = _concept_key(canonical)
+        if key in by_key:
+            alias_to_key[_concept_key(variant)] = key
+
+    for cand in candidates:
+        canonical = str(cand.get("name") or "").strip()
+        if not canonical:
+            continue
+        aliases = [str(a) for a in cand.get("aliases", []) if str(a).strip()]
+        chapter_id = str(cand.get("source_chapter_id", "ch01"))
+        names = [canonical, *aliases]
+        matched_key = next(
+            (alias_to_key[_concept_key(n)] for n in names if _concept_key(n) in alias_to_key),
+            None,
+        )
+        key = matched_key or _concept_key(canonical)
+        existing = by_key.get(key)
+        if existing is None:
+            existing = ConceptReconciledItem(
+                canonical=canonical,
+                aliases=[],
+                source_chapter_ids=[chapter_id],
+            )
+            by_key[key] = existing
+        elif chapter_id and chapter_id not in existing.source_chapter_ids:
+            existing.source_chapter_ids.append(chapter_id)
+        for name in names:
+            normalized = _concept_key(name)
+            alias_to_key[normalized] = key
+            if name != existing.canonical and name not in existing.aliases:
+                existing.aliases.append(name)
+
+    alias_map: dict[str, str] = dict(skeleton_alias_map)
+    for item in by_key.values():
+        alias_map[item.canonical] = item.canonical
+        alias_map[_concept_key(item.canonical)] = item.canonical
+        for alias in item.aliases:
+            alias_map[alias] = item.canonical
+            alias_map[_concept_key(alias)] = item.canonical
+
+    return ConceptReconcileResult(concepts=list(by_key.values()), alias_map=alias_map)
 
 
 async def concept_pages_node(state: State, cfg: BookConfig) -> State:
@@ -1777,9 +1992,7 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
             runtime=cfg.llm_runtime,
         )
         cache_results.append(result)
-        safe_name = _unique_file_stem(
-            result.result.name, used_stems, fallback_prefix="concept"
-        )
+        safe_name = _unique_file_stem(result.result.name, used_stems, fallback_prefix="concept")
         path = write_json(out_dir / f"{safe_name}.json", _json_model(result.result))
         outputs[result.result.name] = _rel(path, cfg.book_dir)
     return {"concept_pages": outputs, "cache_hit": _stage_cache_hit(cache_results)}
@@ -1867,9 +2080,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             for index, item in enumerate(card_items, start=1)
         ]
         display_title = _display_chapter_title(ch_id, str(chapter["title"]))
-        body_md = _normalize_chapter_body_heading(
-            str(chapter["body_md"]), display_title
-        )
+        body_md = _normalize_chapter_body_heading(str(chapter["body_md"]), display_title)
         card_mdx = (
             f"<AnkiDeck {_jsx_prop('cardIds', card_ids)}>\n"
             f"{_card_items_mdx(card_items)}\n"
@@ -1927,9 +2138,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         )
         backlink_md = "\n".join(
             "- "
-            + _preview_link_mdx(
-                item["href"], item["title"], item.get("summary", ""), item["title"]
-            )
+            + _preview_link_mdx(item["href"], item["title"], item.get("summary", ""), item["title"])
             for item in backlinks
         )
         referenced_by = f"\n\n## Referenced By\n\n{backlink_md}\n" if backlink_md else ""
@@ -1941,9 +2150,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             + referenced_by,
         )
         concept_name = str(concept["name"])
-        concept_preview = concept_previews.get(concept_name) or concept_previews.get(
-            str(name), {}
-        )
+        concept_preview = concept_previews.get(concept_name) or concept_previews.get(str(name), {})
         concept_home_entries.append(
             {
                 "title": concept_name,
@@ -2170,6 +2377,7 @@ NODE_FUNCTIONS = {
     "caption": caption_node,
     "structure": structure_node,
     "split": split_node,
+    "build_skeleton": build_skeleton_node,
     "generate": generate_node,
     "reconcile_concepts": reconcile_node,
     "concept_pages": concept_pages_node,

@@ -34,6 +34,7 @@ _NODE_OUTPUTS: dict[str, dict[str, Any]] = {
         "chapter_alignment": "work/chapter_sources/_alignment.json",
         "chapter_split_report": "work/logs/split.json",
     },
+    "build_skeleton": {"skeleton": "work/skeleton.json"},
     "generate": {"agent_results": {"chapter-1": {"chapter": "x.json"}}},
     "reconcile_concepts": {"reconciled_concepts": "r.json", "alias_map": "m.json"},
     "concept_pages": {"concept_pages": []},
