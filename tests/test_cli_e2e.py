@@ -121,12 +121,12 @@ def test_completed_checkpoint_is_not_reused_after_language_change(tmp_path) -> N
 
     assert "completed checkpoint found" not in result.stdout
     assert "stage complete: structure" in result.stdout
-    checkpoint = json.loads(
-        (book_dir / "work" / ".cache" / "checkpoint.json").read_text(encoding="utf-8")
+    manifest = json.loads(
+        (book_dir / "work" / "logs" / "run-manifest.json").read_text(encoding="utf-8")
     )
-    assert checkpoint["status"] == "paused"
-    assert checkpoint["next_node"] == "split"
-    assert checkpoint["config_hash"]
+    assert manifest["status"] == "paused"
+    assert manifest["next_node"] == "split"
+    assert manifest["config_hash"]
 
 
 def test_caption_stage_script_runs_after_convert(tmp_path) -> None:
@@ -139,11 +139,11 @@ def test_caption_stage_script_runs_after_convert(tmp_path) -> None:
     result = run_script("scripts/caption.py", str(book_dir))
 
     assert "stage complete: caption" in result.stdout
-    checkpoint = json.loads(
-        (book_dir / "work" / ".cache" / "checkpoint.json").read_text(encoding="utf-8")
+    manifest = json.loads(
+        (book_dir / "work" / "logs" / "run-manifest.json").read_text(encoding="utf-8")
     )
-    assert checkpoint["status"] == "paused"
-    assert checkpoint["next_node"] == "structure"
+    assert manifest["status"] == "paused"
+    assert manifest["next_node"] == "structure"
 
 
 def test_dry_run_prints_mermaid_and_estimate(tmp_path) -> None:
@@ -174,11 +174,11 @@ def test_structure_then_split_allows_manual_approved_structure_edit(tmp_path) ->
     run_script("scripts/convert.py", str(book_dir))
     run_script("scripts/structure.py", str(book_dir))
 
-    checkpoint = json.loads(
-        (book_dir / "work" / ".cache" / "checkpoint.json").read_text(encoding="utf-8")
+    manifest = json.loads(
+        (book_dir / "work" / "logs" / "run-manifest.json").read_text(encoding="utf-8")
     )
-    assert checkpoint["status"] == "paused"
-    assert checkpoint["next_node"] == "split"
+    assert manifest["status"] == "paused"
+    assert manifest["next_node"] == "split"
 
     approved = book_dir / "work" / "structure" / "approved-structure.yaml"
     approved.write_text(

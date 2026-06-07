@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bookwiki.scheduler.config import load_config  # noqa: E402
-from bookwiki.scheduler.graph import build_graph, resume_or_start  # noqa: E402
+from bookwiki.scheduler.lg_runner import run_pipeline  # noqa: E402
 
 
 def book_arg_parser(description: str) -> argparse.ArgumentParser:
@@ -20,6 +20,5 @@ def book_arg_parser(description: str) -> argparse.ArgumentParser:
 
 def run_stage(book_dir: str, *, stop_after: str, resume: bool = True) -> None:
     cfg = load_config(book_dir)
-    graph = build_graph(cfg, stop_after=stop_after)
-    resume_or_start(graph, cfg.book_id, resume=resume)
+    run_pipeline(cfg, stop_after=stop_after, resume=resume)
     print(f"stage complete: {stop_after}")

@@ -237,3 +237,5 @@ __marimo__/
 .omo/*
 !.omo/rules/
 !.omo/rules/**
+# Local pipeline regression snapshots (regenerable via scripts/dev/dump_snapshot.py)
+gold/

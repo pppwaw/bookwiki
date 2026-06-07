@@ -3,7 +3,8 @@ from __future__ import annotations
 from _common import book_arg_parser
 
 from bookwiki.scheduler.config import load_config
-from bookwiki.scheduler.graph import NODE_ORDER, build_graph, resume_or_start
+from bookwiki.scheduler.lg_runner import run_pipeline
+from bookwiki.scheduler.resume import NODE_ORDER
 
 
 def build_parser():
@@ -49,14 +50,16 @@ def main() -> None:
 
     cfg = load_config(args.book_dir)
     cfg.force_from = resolve_force_from(args, parser)
-    graph = build_graph(
+    state = run_pipeline(
         cfg,
         stop_after=args.to_node,
         pause_after=parse_pause_after(args.pause_after),
         dry_run=args.dry_run,
+        resume=args.resume,
     )
-    state = resume_or_start(graph, cfg.book_id, resume=args.resume)
-    if not args.dry_run:
+    if state.get("dry_run"):
+        print(state["report"])
+    else:
         print(f"run status: {state.get('book_id', cfg.book_id)}")
 
 

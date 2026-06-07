@@ -1,0 +1,220 @@
+"""Unit tests for the LangGraph runner's control surface.
+
+These exercise ``run_pipeline`` with monkeypatched fake nodes (fast, no real
+LLM) to lock in the resume / stop / force-from / interrupt behaviour that the
+slower subprocess CLI tests cover only end-to-end. They mirror the legacy
+``test_graph_logging`` coverage but target the LangGraph engine, so the eventual
+removal of ``BookGraph`` does not leave the control logic untested.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from bookwiki.pipeline import nodes as nodes_module
+from bookwiki.scheduler.config import default_config
+from bookwiki.scheduler.lg_runner import run_pipeline
+
+_NODE_OUTPUTS: dict[str, dict[str, Any]] = {
+    "convert": {"sources_md": ["work/sources_md/a.md"], "source_ref_manifests": []},
+    "caption": {"caption_results": []},
+    "structure": {
+        "proposed_structure": "work/structure/proposed-structure.yaml",
+        "approved_structure": "work/structure/approved-structure.yaml",
+    },
+    "split": {
+        "chapter_sources": {"chapter-1": "work/chapter_sources/chapter-1/source.md"},
+        "chapter_titles": {"chapter-1": "Intro"},
+        "chapter_topics": {"chapter-1": ["t"]},
+        "chapter_alignment": "work/chapter_sources/_alignment.json",
+        "chapter_split_report": "work/logs/split.json",
+    },
+    "generate": {"agent_results": {"chapter-1": {"chapter": "x.json"}}},
+    "reconcile_concepts": {"reconciled_concepts": "r.json", "alias_map": "m.json"},
+    "concept_pages": {"concept_pages": []},
+    "integrate": {"content_ready": True, "content_index": "content/docs/index.mdx"},
+    "check": {"check_report": "work/logs/check-report.json", "repair_targets": []},
+    "repair": {"repairs": [], "repair_targets": []},
+    "index": {"sqlite": "site/.bookwiki/bookwiki.sqlite"},
+}
+
+
+def _register_fakes(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
+    for name, output in _NODE_OUTPUTS.items():
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg: Any) -> dict[str, Any]:
+                calls.append(node_name)
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+
+def _manifest(cfg: Any) -> dict[str, Any]:
+    return json.loads((cfg.work_dir / "logs" / "run-manifest.json").read_text(encoding="utf-8"))
+
+
+def test_fresh_run_pauses_before_split(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    run_pipeline(cfg, resume=False)
+
+    assert calls == ["convert", "caption", "structure"]
+    assert "split" not in calls
+    manifest = _manifest(cfg)
+    assert manifest["status"] == "paused"
+    assert manifest["next_node"] == "split"
+
+
+def test_stop_after_runs_only_up_to_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    run_pipeline(cfg, stop_after="convert", resume=False)
+
+    assert calls == ["convert"]
+    manifest = _manifest(cfg)
+    assert manifest["status"] == "paused"
+    assert manifest["next_node"] == "caption"
+
+
+def test_pause_after_halts_after_listed_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    run_pipeline(cfg, pause_after=["caption"], resume=False)
+
+    assert calls == ["convert", "caption"]
+    assert _manifest(cfg)["next_node"] == "structure"
+
+
+def test_resume_completes_pipeline_past_split(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    run_pipeline(cfg, resume=False)  # pauses before split
+    calls.clear()
+    state = run_pipeline(cfg, resume=True)  # continues to index
+
+    assert calls[0] == "split"
+    assert calls[-1] == "index"
+    assert state["sqlite"] == "site/.bookwiki/bookwiki.sqlite"
+    assert _manifest(cfg)["status"] == "completed"
+
+
+def test_completed_checkpoint_short_circuits_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    run_pipeline(cfg, resume=False)
+    run_pipeline(cfg, resume=True)
+    calls.clear()
+    capsys.readouterr()
+
+    state = run_pipeline(cfg, resume=True)
+
+    assert calls == []
+    assert state["sqlite"] == "site/.bookwiki/bookwiki.sqlite"
+    assert "completed checkpoint found" in capsys.readouterr().out
+
+
+def test_force_from_reruns_from_target_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    run_pipeline(cfg, resume=False)
+    run_pipeline(cfg, resume=True)
+    calls.clear()
+
+    cfg.force_from = "integrate"
+    run_pipeline(cfg, resume=False)
+
+    assert "convert" not in calls
+    assert "generate" not in calls
+    assert calls[0] == "integrate"
+    assert "index" in calls
+
+
+def test_repair_loop_reintegrates_until_check_is_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    check_state = {"count": 0}
+
+    def fake_check(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        calls.append("check")
+        check_state["count"] += 1
+        targets = ["chapter-1:quiz"] if check_state["count"] == 1 else []
+        return {"check_report": "work/logs/check-report.json", "repair_targets": targets}
+
+    def fake_repair(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        calls.append("repair")
+        return {"repairs": ["work/repairs/chapter-1-quiz.json"], "repair_targets": []}
+
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "check", fake_check)
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "repair", fake_repair)
+
+    run_pipeline(cfg, resume=False)
+    calls.clear()
+    run_pipeline(cfg, resume=True)
+
+    assert calls.count("repair") == 1
+    assert calls.count("check") == 2
+    assert calls.count("integrate") == 2  # initial + re-integrate after repair
+    assert calls[-1] == "index"
+
+
+def test_logs_node_start_and_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    with caplog.at_level(logging.INFO):
+        run_pipeline(cfg, stop_after="convert", resume=False)
+
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "node start name=convert book_id=mini" in messages
+    assert "node done name=convert book_id=mini cache_hit=False" in messages
+
+
+def test_resume_with_stop_target_behind_runs_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    run_pipeline(cfg, resume=False)  # pause before split
+    run_pipeline(cfg, resume=True, pause_after=["integrate"])  # pause with next=check
+    calls.clear()
+
+    run_pipeline(cfg, resume=True, stop_after="convert")  # stop target already behind
+
+    assert calls == []

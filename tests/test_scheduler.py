@@ -8,8 +8,7 @@ from pydantic import BaseModel
 
 from bookwiki.pipeline.nodes import generate_node
 from bookwiki.scheduler.cache import run_with_cache
-from bookwiki.scheduler.config import BookConfig, default_config
-from bookwiki.scheduler.graph import NODE_ORDER, BookGraph, build_graph, resume_or_start
+from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import LLMRuntime, TestLLMRuntime
 
 
@@ -22,28 +21,9 @@ class EchoAgent:
     output_model: ClassVar[type[EchoResult]] = EchoResult
     calls: ClassVar[int] = 0
 
-    async def run(
-        self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime
-    ) -> EchoResult:
+    async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> EchoResult:
         self.__class__.calls += 1
         return EchoResult(value=f"{inp['value']}:{model}")
-
-
-def test_build_graph_exposes_pipeline_topology(tmp_path: Path) -> None:
-    graph = build_graph(default_config(tmp_path / "books" / "mini"))
-
-    mermaid = graph.get_graph().draw_mermaid()
-
-    assert mermaid.startswith("graph TD")
-    assert "START --> convert" in mermaid
-    assert "convert --> caption" in mermaid
-    assert "caption --> structure" in mermaid
-    assert "check -->|issues| repair" in mermaid
-    assert "check -->|clean| index" in mermaid
-    assert "repair --> integrate" in mermaid
-    assert "index --> END" in mermaid
-    for node in NODE_ORDER:
-        assert node in mermaid
 
 
 @pytest.mark.asyncio
@@ -109,26 +89,3 @@ async def test_run_with_cache_reports_cache_miss_then_hit(tmp_path: Path) -> Non
     assert first.key == second.key
     assert first.result == second.result == EchoResult(value="one:stub")
     assert EchoAgent.calls == 1
-
-
-def test_resume_or_start_returns_completed_checkpoint_without_rerun(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cfg = default_config(tmp_path / "books" / "mini")
-    graph = BookGraph(cfg=cfg)
-    completed_state = {
-        "book_id": cfg.book_id,
-        "sqlite": "site/.bookwiki/bookwiki.sqlite",
-    }
-    graph._write_checkpoint(completed_state, [], status="completed", next_index=None)
-
-    def fail_convert(state: dict[str, Any], cfg_arg: BookConfig) -> dict[str, Any]:
-        raise AssertionError("completed resume must not rerun convert")
-
-    from bookwiki.scheduler import graph as graph_module
-
-    monkeypatch.setitem(graph_module.NODE_FUNCTIONS, "convert", fail_convert)
-
-    state = resume_or_start(graph, cfg.book_id, resume=True)
-
-    assert state == completed_state
