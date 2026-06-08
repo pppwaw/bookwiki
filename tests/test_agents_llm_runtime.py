@@ -7,8 +7,9 @@ from bookwiki.agents import (
     ConceptAgent,
     ConceptExtractAgent,
     ConceptReconcileAgent,
-    LessonAgent,
+    QuizCardAgent,
     ReviewAgent,
+    SectionAgent,
     SourceSummaryAgent,
     StructureAgent,
     SummaryAgent,
@@ -131,14 +132,16 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
             },
             {
                 "chapter_id": "chapter-6",
-                "chapter": {
-                    "chapter_id": "chapter-6",
-                    "title": "Point Estimation",
-                    "body_md": "# Point Estimation\n\nGenerated chapter.",
-                    "concepts": ["point estimation"],
-                    "citations": [{"ref_id": "Week-10-p001", "quote": "method of moments"}],
-                    "owner_task_id": "chapter-6:chapter",
-                },
+                "section_index": 0,
+                "title": "Point Estimation",
+                "body_md": "State space search explains reachable states.",
+                "concepts": ["point estimation"],
+                "citations": [{"ref_id": "Week-10-p001", "quote": "method of moments"}],
+                "figure_requests": [],
+                "owner_task_id": "chapter-6:section:000",
+            },
+            {
+                "chapter_id": "chapter-6",
                 "quiz": {
                     "chapter_id": "chapter-6",
                     "items": [
@@ -174,7 +177,7 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
                     ],
                     "owner_task_id": "chapter-6:card",
                 },
-                "owner_task_id": "chapter-6:lesson",
+                "owner_task_id": "chapter-6:quizcard",
             },
             {
                 "chapter_id": "chapter-6",
@@ -231,7 +234,12 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         model="deepseek-v4-flash",
         runtime=runtime,
     )
-    await LessonAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
+    await SectionAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
+    await QuizCardAgent().run(
+        {**chapter_payload, "chapter_body_md": "# Point Estimation\n\nMethod of moments."},
+        model="deepseek-v4-pro",
+        runtime=runtime,
+    )
     await SummaryAgent().run(chapter_payload, model="deepseek-v4-flash", runtime=runtime)
     await ConceptExtractAgent().run(chapter_payload, model="deepseek-v4-flash", runtime=runtime)
     await ConceptReconcileAgent().run(
@@ -250,26 +258,27 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         runtime=runtime,
     )
 
-    assert len(runtime.calls) == 8
+    assert len(runtime.calls) == 9
     assert all("只返回合法的 JSON" in call["system"] for call in runtime.calls)
 
 
 @pytest.mark.asyncio
-async def test_lesson_agent_seeds_requested_counts_from_config() -> None:
+async def test_quiz_card_agent_seeds_requested_counts_from_config() -> None:
     payload = {
         "chapter_id": "chapter-1",
         "title": "Search",
         "source_md": "<!-- source_ref: source-p001 -->\nState space search.",
         "source_path": "work/chapter_sources/chapter-1/source.md",
         "language": "en-US",
+        "chapter_body_md": "# Search\n\nState space search.",
         "quiz_per_chapter": 3,
         "cards_per_chapter": 4,
     }
 
-    lesson = await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=TestLLMRuntime())
+    result = await QuizCardAgent().run(payload, model="deepseek-v4-pro", runtime=TestLLMRuntime())
 
-    assert len(lesson.quiz.items) == 3
-    assert len(lesson.card.items) == 4
+    assert len(result.quiz.items) == 3
+    assert len(result.card.items) == 4
 
 
 @pytest.mark.asyncio
@@ -285,31 +294,18 @@ async def test_content_agents_pass_allowed_refs_in_validation_context() -> None:
         [
             {
                 "chapter_id": "chapter-1",
-                "chapter": {
-                    "chapter_id": "chapter-1",
-                    "title": "Search",
-                    "body_md": "# Search\n\nBody.",
-                    "concepts": ["state space"],
-                    "citations": [{"ref_id": "source-p001", "quote": "State"}],
-                    "owner_task_id": "chapter-1:chapter",
-                },
-                "quiz": {
-                    "chapter_id": "chapter-1",
-                    "items": [],
-                    "placements": [],
-                    "owner_task_id": "chapter-1:quiz",
-                },
-                "card": {
-                    "chapter_id": "chapter-1",
-                    "items": [],
-                    "owner_task_id": "chapter-1:card",
-                },
-                "owner_task_id": "chapter-1:lesson",
+                "section_index": 0,
+                "title": "Search",
+                "body_md": "Body.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                "figure_requests": [],
+                "owner_task_id": "chapter-1:section:000",
             }
         ]
     )
 
-    await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+    await SectionAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
     assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"source-p001"}}
     assert runtime.calls[0]["max_retries"] == 2
@@ -330,9 +326,7 @@ async def test_concept_agent_allows_all_context_source_refs() -> None:
                     "<!-- source_ref: Week-10-p021 -->\n"
                     "Unbiased estimator context."
                 ),
-                "citations": [
-                    {"ref_id": "Week-10-p020", "quote": "Mean square error definition."}
-                ],
+                "citations": [{"ref_id": "Week-10-p020", "quote": "Mean square error definition."}],
             }
         ],
     }
@@ -342,18 +336,14 @@ async def test_concept_agent_allows_all_context_source_refs() -> None:
                 "name": "mean square error",
                 "body_md": "MSE relates estimator error to variance.",
                 "related": [],
-                "citations": [
-                    {"ref_id": "Week-10-p021", "quote": "Unbiased estimator context."}
-                ],
+                "citations": [{"ref_id": "Week-10-p021", "quote": "Unbiased estimator context."}],
                 "owner_task_id": "concept:mean square error",
             },
             {
                 "name": "mean square error",
                 "body_md": "MSE relates estimator error to variance.",
                 "related": [],
-                "citations": [
-                    {"ref_id": "Week-10-p021", "quote": "Unbiased estimator context."}
-                ],
+                "citations": [{"ref_id": "Week-10-p021", "quote": "Unbiased estimator context."}],
                 "owner_task_id": "concept:mean square error",
             },
         ]
@@ -368,7 +358,7 @@ async def test_concept_agent_allows_all_context_source_refs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lesson_agent_wraps_source_as_document_chunks() -> None:
+async def test_section_agent_wraps_source_as_document_chunks() -> None:
     payload = {
         "chapter_id": "chapter-1",
         "title": "Search",
@@ -386,31 +376,18 @@ async def test_lesson_agent_wraps_source_as_document_chunks() -> None:
         [
             {
                 "chapter_id": "chapter-1",
-                "chapter": {
-                    "chapter_id": "chapter-1",
-                    "title": "Search",
-                    "body_md": "# Search\n\nBody.",
-                    "concepts": ["state space"],
-                    "citations": [{"ref_id": "source-p001", "quote": "State"}],
-                    "owner_task_id": "chapter-1:chapter",
-                },
-                "quiz": {
-                    "chapter_id": "chapter-1",
-                    "items": [],
-                    "placements": [],
-                    "owner_task_id": "chapter-1:quiz",
-                },
-                "card": {
-                    "chapter_id": "chapter-1",
-                    "items": [],
-                    "owner_task_id": "chapter-1:card",
-                },
-                "owner_task_id": "chapter-1:lesson",
+                "section_index": 0,
+                "title": "Search",
+                "body_md": "Body.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                "figure_requests": [],
+                "owner_task_id": "chapter-1:section:000",
             }
         ]
     )
 
-    await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+    await SectionAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
     user_prompt = runtime.calls[0]["user"]
     assert "<document>" in user_prompt
@@ -432,60 +409,33 @@ async def test_agent_retries_when_llm_invents_citation_ref_id() -> None:
         [
             {
                 "chapter_id": "chapter-1",
-                "chapter": {
-                    "chapter_id": "chapter-1",
-                    "title": "Search",
-                    "body_md": "# Search\n\nBody.",
-                    "concepts": ["state space"],
-                    "citations": [{"ref_id": "invented-p999", "quote": "State"}],
-                    "owner_task_id": "chapter-1:chapter",
-                },
-                "quiz": {
-                    "chapter_id": "chapter-1",
-                    "items": [],
-                    "placements": [],
-                    "owner_task_id": "chapter-1:quiz",
-                },
-                "card": {
-                    "chapter_id": "chapter-1",
-                    "items": [],
-                    "owner_task_id": "chapter-1:card",
-                },
-                "owner_task_id": "chapter-1:lesson",
+                "section_index": 0,
+                "title": "Search",
+                "body_md": "Body.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "invented-p999", "quote": "State"}],
+                "figure_requests": [],
+                "owner_task_id": "chapter-1:section:000",
             },
             {
                 "chapter_id": "chapter-1",
-                "chapter": {
-                    "chapter_id": "chapter-1",
-                    "title": "Search",
-                    "body_md": "# Search\n\nBody.",
-                    "concepts": ["state space"],
-                    "citations": [{"ref_id": "source-p001", "quote": "State"}],
-                    "owner_task_id": "chapter-1:chapter",
-                },
-                "quiz": {
-                    "chapter_id": "chapter-1",
-                    "items": [],
-                    "placements": [],
-                    "owner_task_id": "chapter-1:quiz",
-                },
-                "card": {
-                    "chapter_id": "chapter-1",
-                    "items": [],
-                    "owner_task_id": "chapter-1:card",
-                },
-                "owner_task_id": "chapter-1:lesson",
+                "section_index": 0,
+                "title": "Search",
+                "body_md": "Body.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "source-p001", "quote": "State"}],
+                "figure_requests": [],
+                "owner_task_id": "chapter-1:section:000",
             },
         ]
     )
 
-    result = await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+    result = await SectionAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
-    assert result.chapter.citations[0].ref_id == "source-p001"
+    assert result.citations[0].ref_id == "source-p001"
     assert len(runtime.calls) == 2
     assert all(
-        call["context"] == {"allowed_citation_refs": {"source-p001"}}
-        for call in runtime.calls
+        call["context"] == {"allowed_citation_refs": {"source-p001"}} for call in runtime.calls
     )
 
 
@@ -500,30 +450,17 @@ async def test_agent_raises_after_repeated_invalid_citation_ref_ids() -> None:
     }
     bad_response = {
         "chapter_id": "chapter-1",
-        "chapter": {
-            "chapter_id": "chapter-1",
-            "title": "Search",
-            "body_md": "# Search\n\nBody.",
-            "concepts": ["state space"],
-            "citations": [{"ref_id": "invented-p999", "quote": "State"}],
-            "owner_task_id": "chapter-1:chapter",
-        },
-        "quiz": {
-            "chapter_id": "chapter-1",
-            "items": [],
-            "placements": [],
-            "owner_task_id": "chapter-1:quiz",
-        },
-        "card": {
-            "chapter_id": "chapter-1",
-            "items": [],
-            "owner_task_id": "chapter-1:card",
-        },
-        "owner_task_id": "chapter-1:lesson",
+        "section_index": 0,
+        "title": "Search",
+        "body_md": "Body.",
+        "concepts": ["state space"],
+        "citations": [{"ref_id": "invented-p999", "quote": "State"}],
+        "figure_requests": [],
+        "owner_task_id": "chapter-1:section:000",
     }
     runtime = RecordingRuntime([bad_response, bad_response])
 
     with pytest.raises(ValueError, match="invented-p999"):
-        await LessonAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
+        await SectionAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
     assert len(runtime.calls) == 2

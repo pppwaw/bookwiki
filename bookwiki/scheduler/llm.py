@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import mimetypes
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel
+
+# A tool executor maps ``(tool_name, arguments)`` to a JSON-serialisable result.
+# It may be sync or async; ``generate_with_tools`` awaits awaitable results.
+ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]] | dict[str, Any]]
 
 
 class LLMRuntime(Protocol):
@@ -25,6 +30,22 @@ class LLMRuntime(Protocol):
         max_retries: int = 2,
     ) -> BaseModel:
         """Return a validated structured result from a real or explicitly injected LLM."""
+
+    async def generate_with_tools(
+        self,
+        *,
+        model: str,
+        output_model: type[BaseModel],
+        system: str,
+        user: str,
+        tools: Sequence[dict[str, Any]],
+        tool_executor: ToolExecutor,
+        context: dict[str, Any] | None = None,
+        image_paths: Sequence[str | Path] | None = None,
+        max_tool_rounds: int = 4,
+        max_retries: int = 2,
+    ) -> BaseModel:
+        """Run an OpenAI-style tool-calling loop, then coerce a structured result."""
 
 
 class MissingLLMApiKey(RuntimeError):
@@ -42,6 +63,17 @@ class UnsupportedLLMModel(RuntimeError):
 
 class LLMRuntimeUnavailable(RuntimeError):
     """Raised when the real runtime dependencies are not installed."""
+
+
+class ToolLoopExceeded(RuntimeError):
+    """Raised when a tool-calling loop never converges to a final answer."""
+
+    def __init__(self, model: str, max_tool_rounds: int) -> None:
+        super().__init__(
+            f"model {model!r} kept calling tools after {max_tool_rounds} rounds; aborting"
+        )
+        self.model = model
+        self.max_tool_rounds = max_tool_rounds
 
 
 class LiteLLMRuntime:
@@ -76,6 +108,64 @@ class LiteLLMRuntime:
             return output_model.model_validate(result.model_dump(mode="json"), context=context)
         return output_model.model_validate(result, context=context)
 
+    async def generate_with_tools(
+        self,
+        *,
+        model: str,
+        output_model: type[BaseModel],
+        system: str,
+        user: str,
+        tools: Sequence[dict[str, Any]],
+        tool_executor: ToolExecutor,
+        context: dict[str, Any] | None = None,
+        image_paths: Sequence[str | Path] | None = None,
+        max_tool_rounds: int = 4,
+        max_retries: int = 2,
+    ) -> BaseModel:  # pragma: no cover - exercised only against a real LiteLLM router
+        _ensure_api_key(model)
+        router = self.router if self.router is not None else build_router()
+        self.router = router
+        messages = _messages(system=system, user=user, image_paths=image_paths)
+        for _round in range(max_tool_rounds):
+            response = await router.acompletion(
+                model=model,
+                messages=messages,
+                tools=list(tools),
+                tool_choice="auto",
+                temperature=_temperature_for_model(model),
+            )
+            message = response.choices[0].message
+            tool_calls = getattr(message, "tool_calls", None)
+            if not tool_calls:
+                break
+            messages.append(_assistant_tool_message(message))
+            for call in tool_calls:
+                messages.append(await _run_tool_call(call, tool_executor))
+        else:
+            raise ToolLoopExceeded(model, max_tool_rounds)
+
+        client = self.client if self.client is not None else build_instructor_client(router)
+        self.client = client
+        result = await client.create(
+            model=model,
+            response_model=output_model,
+            messages=[
+                *messages,
+                {
+                    "role": "user",
+                    "content": (
+                        "Return the final answer as JSON matching the requested schema. "
+                        "Do not call tools."
+                    ),
+                },
+            ],
+            max_retries=max_retries,
+            temperature=_temperature_for_model(model),
+        )
+        if isinstance(result, output_model):
+            return output_model.model_validate(result.model_dump(mode="json"), context=context)
+        return output_model.model_validate(result, context=context)
+
 
 class TestLLMRuntime:
     """Explicit fake runtime for subprocess smoke tests."""
@@ -91,6 +181,27 @@ class TestLLMRuntime:
         image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
     ) -> BaseModel:
+        draft = _extract_draft_payload(user)
+        if draft is None:
+            msg = f"test runtime needs a Draft JSON block for {output_model.__name__}"
+            raise ValueError(msg)
+        return output_model.model_validate(draft, context=context)
+
+    async def generate_with_tools(
+        self,
+        *,
+        model: str,
+        output_model: type[BaseModel],
+        system: str,
+        user: str,
+        tools: Sequence[dict[str, Any]],
+        tool_executor: ToolExecutor,
+        context: dict[str, Any] | None = None,
+        image_paths: Sequence[str | Path] | None = None,
+        max_tool_rounds: int = 4,
+        max_retries: int = 2,
+    ) -> BaseModel:
+        # Deterministic offline path: echo the Draft JSON, never invoke tools.
         draft = _extract_draft_payload(user)
         if draft is None:
             msg = f"test runtime needs a Draft JSON block for {output_model.__name__}"
@@ -278,6 +389,41 @@ def _extract_draft_payload(user: str) -> Any | None:
     else:
         draft = draft.split("\n\nReturn only", 1)[0].strip()
     return json.loads(draft)
+
+
+def _assistant_tool_message(message: Any) -> dict[str, Any]:  # pragma: no cover - real API path
+    if hasattr(message, "model_dump"):
+        return message.model_dump()
+    tool_calls = [
+        {
+            "id": call.id,
+            "type": "function",
+            "function": {"name": call.function.name, "arguments": call.function.arguments},
+        }
+        for call in getattr(message, "tool_calls", None) or []
+    ]
+    return {
+        "role": "assistant",
+        "content": getattr(message, "content", "") or "",
+        "tool_calls": tool_calls,
+    }
+
+
+async def _run_tool_call(
+    call: Any, tool_executor: ToolExecutor
+) -> dict[str, Any]:  # pragma: no cover - real API path
+    try:
+        args = json.loads(call.function.arguments or "{}")
+    except (json.JSONDecodeError, TypeError):
+        args = {}
+    result = tool_executor(call.function.name, args)
+    if inspect.isawaitable(result):
+        result = await result
+    return {
+        "role": "tool",
+        "tool_call_id": call.id,
+        "content": json.dumps(result, ensure_ascii=False, default=str),
+    }
 
 
 def _messages(

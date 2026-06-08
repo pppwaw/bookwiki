@@ -93,7 +93,7 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
     chapter_payload = json.loads(chapter_results[0].read_text(encoding="utf-8"))
     assert chapter_payload["_schema_version"] == "llm.v1"
     assert "_prompt_version" not in chapter_payload
-    assert chapter_payload["_agent"] == "LessonAgent"
+    assert chapter_payload["_agent"] == "SectionAgent"
     assert chapter_payload["result"]["owner_task_id"].endswith(":chapter")
 
     with sqlite3.connect(db_path) as conn:

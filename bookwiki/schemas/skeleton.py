@@ -30,7 +30,7 @@ class BookSkeleton(VersionedModel):
       name and an explicit first-occurrence chapter (so later chapters reference
       rather than redefine).
     - ``alias_map``: any variant name (raw or normalised) → canonical, used by
-      ``LessonAgent`` and the integrator to converge term drift.
+      ``SectionAgent`` and the integrator to converge term drift.
     - ``chapter_briefs``: a one-line summary per chapter so neighbouring
       chapters can write transitions ("the previous chapter introduced X; here
       we build on Y") without seeing each other's full body.

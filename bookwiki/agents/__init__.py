@@ -4,8 +4,11 @@ from bookwiki.agents.chapter_split_agent import ChapterSplitAgent
 from bookwiki.agents.concept_agent import ConceptAgent
 from bookwiki.agents.concept_extract import ConceptExtractAgent
 from bookwiki.agents.concept_reconcile import ConceptReconcileAgent
-from bookwiki.agents.lesson_agent import LessonAgent
+from bookwiki.agents.quiz_card_agent import QuizCardAgent
+from bookwiki.agents.repair_section_agent import RepairSectionAgent
 from bookwiki.agents.review_agent import ReviewAgent
+from bookwiki.agents.section_agent import SectionAgent
+from bookwiki.agents.section_planner_agent import SectionPlannerAgent
 from bookwiki.agents.skeleton_agent import SkeletonAgent
 from bookwiki.agents.source_layout_repair_agent import SourceLayoutRepairAgent
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
@@ -18,8 +21,11 @@ __all__ = [
     "ConceptAgent",
     "ConceptExtractAgent",
     "ConceptReconcileAgent",
-    "LessonAgent",
+    "QuizCardAgent",
+    "RepairSectionAgent",
     "ReviewAgent",
+    "SectionAgent",
+    "SectionPlannerAgent",
     "SkeletonAgent",
     "SourceLayoutRepairAgent",
     "SourceSummaryAgent",

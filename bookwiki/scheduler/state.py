@@ -48,6 +48,8 @@ class PipelineState(TypedDict, total=False):
 
     # --- generate ---
     agent_results: dict[str, dict[str, str]]
+    generation_issues: list[Any]
+    generated_figures: dict[str, dict[str, str]]
 
     # --- reconcile_concepts (also re-emits agent_results) ---
     reconciled_concepts: str

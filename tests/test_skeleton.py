@@ -206,7 +206,7 @@ def test_merge_preserves_skeleton_glossary_when_no_new_candidates() -> None:
 
 def test_merge_attaches_candidate_chapter_to_existing_canonical() -> None:
     skeleton = _sample_skeleton()
-    # LessonAgent in chapter-2 mentioned "Bayes Rule" → should attach to "Bayes"
+    # ConceptExtractAgent in chapter-2 mentioned "Bayes Rule" → should attach to "Bayes"
     candidates = [
         {
             "name": "Bayes Rule",

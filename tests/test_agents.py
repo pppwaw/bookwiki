@@ -14,8 +14,9 @@ from bookwiki.agents import (
     ConceptAgent,
     ConceptExtractAgent,
     ConceptReconcileAgent,
-    LessonAgent,
+    QuizCardAgent,
     ReviewAgent,
+    SectionAgent,
     SourceLayoutRepairAgent,
     SourceSummaryAgent,
     StructureAgent,
@@ -104,14 +105,16 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
             },
             {
                 "chapter_id": "chapter-1",
-                "chapter": {
-                    "chapter_id": "chapter-1",
-                    "title": "Search",
-                    "body_md": "# Search\n\nState space search explains reachable states.",
-                    "concepts": ["state space"],
-                    "citations": [{"ref_id": "source-p001", "quote": "State space search"}],
-                    "owner_task_id": "chapter-1:chapter",
-                },
+                "section_index": 0,
+                "title": "Search",
+                "body_md": "State space search explains reachable states.",
+                "concepts": ["state space"],
+                "citations": [{"ref_id": "source-p001", "quote": "State space search"}],
+                "figure_requests": [],
+                "owner_task_id": "chapter-1:section:000",
+            },
+            {
+                "chapter_id": "chapter-1",
                 "quiz": {
                     "chapter_id": "chapter-1",
                     "items": [
@@ -137,7 +140,7 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
                     ],
                     "owner_task_id": "chapter-1:card",
                 },
-                "owner_task_id": "chapter-1:lesson",
+                "owner_task_id": "chapter-1:quizcard",
             },
             {
                 "chapter_id": "chapter-1",
@@ -213,12 +216,13 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
         model="deepseek-v4-flash",
         runtime=runtime,
     )
-    chapter = await LessonAgent().run(
-        chapter_payload, model="deepseek-v4-pro", runtime=runtime
+    section = await SectionAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
+    quizcard = await QuizCardAgent().run(
+        {**chapter_payload, "chapter_body_md": section.body_md},
+        model="deepseek-v4-pro",
+        runtime=runtime,
     )
-    summary = await SummaryAgent().run(
-        chapter_payload, model="deepseek-v4-flash", runtime=runtime
-    )
+    summary = await SummaryAgent().run(chapter_payload, model="deepseek-v4-flash", runtime=runtime)
     extracted = await ConceptExtractAgent().run(
         chapter_payload, model="deepseek-v4-flash", runtime=runtime
     )
@@ -232,17 +236,14 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
             "canonical": "state space",
             "source_chapter_ids": ["chapter-1"],
             "chapter_contexts": [
-                    {
-                        "chapter_id": "chapter-1",
-                        "title": "Search",
-                        "source_md": chapter_payload["source_md"],
-                        "citations": [
-                            item.model_dump(mode="json")
-                            for item in chapter.chapter.citations
-                        ],
-                    }
-                ],
-            },
+                {
+                    "chapter_id": "chapter-1",
+                    "title": "Search",
+                    "source_md": chapter_payload["source_md"],
+                    "citations": [item.model_dump(mode="json") for item in section.citations],
+                }
+            ],
+        },
         model="deepseek-v4-pro",
         runtime=runtime,
     )
@@ -278,9 +279,9 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert source_summary.source_refs == ["source-p001"]
     assert structure.chapters == ["Chapter 1 Search"]
     assert split.report_md == "# Split Audit\n\nMock audit."
-    assert chapter.chapter.owner_task_id == "chapter-1:chapter"
-    assert chapter.quiz.items[0].answer == "states"
-    assert chapter.card.items[0].front == "State space search"
+    assert section.owner_task_id == "chapter-1:section:000"
+    assert quizcard.quiz.items[0].answer == "states"
+    assert quizcard.card.items[0].front == "State space search"
     assert summary.key_points == ["States", "Goals"]
     assert extracted.concepts[0].name == "state space"
     assert reconciled.alias_map["states"] == "state space"
@@ -290,10 +291,11 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert layout.patches[0].action == "attach_caption"
     assert vision.caption_md == "A diagram showing state expansion."
     assert runtime.calls[-1]["image_paths"] == [str(figure)]
-    assert len(runtime.calls) == 10
+    assert len(runtime.calls) == 11
     assert runtime.responses == []
     assert {call["output_model"] for call in runtime.calls} >= {
-        "LessonResult",
+        "SectionResult",
+        "QuizCardResult",
         "SourceLayoutRepairResult",
         "VisionCaptionResult",
     }

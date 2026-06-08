@@ -46,7 +46,7 @@ NODE_OUTPUT_KEYS: dict[str, set[str]] = {
         "chapter_split_report",
     },
     "build_skeleton": {"skeleton"},
-    "generate": {"agent_results"},
+    "generate": {"agent_results", "generation_issues", "generated_figures"},
     "reconcile_concepts": {"reconciled_concepts", "alias_map"},
     "concept_pages": {"concept_pages"},
     "integrate": {"content_ready", "content_index"},

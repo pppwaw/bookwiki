@@ -14,10 +14,12 @@ DEFAULT_MODELS = {
     "structure": "deepseek-v4-pro",
     "split": "deepseek-v4-flash",
     "skeleton": "deepseek-v4-flash",
-    "lesson": "deepseek-v4-pro",
-    "chapter": "deepseek-v4-pro",
+    "section_planner": "deepseek-v4-pro",
+    "section": "deepseek-v4-pro",
+    "section_repair": "deepseek-v4-pro",
+    "quiz_card": "deepseek-v4-flash",
+    "supplement_image": "deepseek-v4-pro",
     "summary": "deepseek-v4-flash",
-    "card": "deepseek-v4-flash",
     "concept": "deepseek-v4-pro",
     "review": "deepseek-v4-pro",
     "vision": "kimi-k2.6",
@@ -26,6 +28,7 @@ DEFAULT_MODELS = {
 DEFAULT_GENERATION = {
     "quizPerChapter": 5,
     "cardsPerChapter": 8,
+    "maxChapterConcurrency": 4,
     "sourceLayoutRepair": {
         "mode": "auto",
         "minConfidence": 0.85,
@@ -97,6 +100,13 @@ class BookConfig:
     def cards_per_chapter(self) -> int:
         return _positive_int(
             self.generation.get("cardsPerChapter"), DEFAULT_GENERATION["cardsPerChapter"]
+        )
+
+    @property
+    def chapter_concurrency(self) -> int:
+        return _positive_int(
+            self.generation.get("maxChapterConcurrency"),
+            DEFAULT_GENERATION["maxChapterConcurrency"],
         )
 
     def to_json(self) -> dict[str, Any]:

@@ -22,6 +22,24 @@ it with a line exactly `# bookwiki: approved-structure`.
 
 Keep agent outputs as Pydantic models. Agents do not write final Markdown; scheduler nodes write intermediate JSON and the integrator renders the vault.
 
+The `generate` stage is agentic and runs per chapter: `SectionPlannerAgent` splits the chapter into
+teaching units, `SectionAgent` writes each section's prose (section-level validate/repair with a
+`maxSectionRepairRounds` fallback that logs a warning and keeps the imperfect section), `QuizCardAgent`
+produces the quiz and recall cards from the assembled body, and `SummaryAgent` writes the summary. When
+a section needs a figure the source PDF lacks, `SectionAgent` declares a `figure_request` and
+`SupplementImageAgent` fills it by writing matplotlib code through LiteLLM function-calling; generated
+figures land under `work/assets/generated/` and are merged into the chapter figure index so the
+integrator keeps them.
+
+`run_plot` (the figure tool) executes LLM-written matplotlib code via **host subprocess** behind three
+guardrails (AST import/call blacklist, chdir to an isolated tempdir with a scrubbed environment, and a
+wall-clock timeout plus POSIX rlimits), with deterministic output (Agg backend, seeded RNG, locked
+font) keyed by `sha256(code)`. This is deliberate host execution, not a hardened sandbox, because the
+**threat model is a single-user local tool**: the LLM is the user's own paid (semi-trusted) DeepSeek/
+Kimi model and output is rendered locally. If BookWiki is ever exposed as a multi-tenant web service,
+`run_plot` MUST be upgraded to a real sandbox (Docker hardening / gVisor / E2B) and re-reviewed against
+OWASP ASI05.
+
 Agent cache misses call the configured real LLM through `bookwiki.scheduler.llm`. Configure
 `DEEPSEEK_API_KEY` for `deepseek-*` models and `MOONSHOT_API_KEY` for `kimi-*` models (including the
 `kimi-k2.6` vision captioner) in the process environment or in the repo root `.env`; existing

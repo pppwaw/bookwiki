@@ -15,8 +15,9 @@ from bookwiki.agents import (
     ConceptAgent,
     ConceptExtractAgent,
     ConceptReconcileAgent,
-    LessonAgent,
+    QuizCardAgent,
     ReviewAgent,
+    SectionAgent,
     SkeletonAgent,
     SourceLayoutRepairAgent,
     SourceSummaryAgent,
@@ -37,6 +38,7 @@ from bookwiki.convert.source_normalizer import (
     normalize_structured_source,
 )
 from bookwiki.convert.text_to_md import convert_text_to_md
+from bookwiki.generate.sections import generate_chapter_sections
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
 from bookwiki.integrator.markdown_renderers import normalize_mdx_math
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
@@ -1685,9 +1687,9 @@ def _load_skeleton(state: State, cfg: BookConfig) -> dict[str, Any] | None:
 
 
 def _skeleton_payload(skeleton: dict[str, Any] | None, ch_id: str) -> dict[str, Any]:
-    """Project the skeleton into the per-chapter LessonAgent payload.
+    """Project the skeleton into the per-chapter section-generation payload.
 
-    LessonAgent receives:
+    Each section generator (``SectionPlannerAgent`` / ``SectionAgent``) receives:
 
     - ``glossary``: full canonical concept list (every chapter sees the same
       table so terminology converges).
@@ -1746,80 +1748,74 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
         msg = "generate requires chapter_sources; run split before generate"
         raise ValueError(msg)
     result_dir = ensure_dir(cfg.work_dir / "agent_results")
-    chapter_results: dict[str, dict[str, str]] = {}
-    cache_results: list[CacheResult] = []
     titles = state.get("chapter_titles", {})
     topics_by_chapter = state.get("chapter_topics", {})
     skeleton_data = _load_skeleton(state, cfg)
 
-    for ch_id, rel_source in state.get("chapter_sources", {}).items():
-        source_path = cfg.book_dir / rel_source
-        source_md = source_path.read_text(encoding="utf-8")
-        title = _display_chapter_title(ch_id, str(titles.get(ch_id, ch_id)))
-        payload = {
-            "chapter_id": ch_id,
-            "title": title,
-            "source_md": source_md,
-            "source_path": rel_source,
-            "language": cfg.language,
-            "book_notes": cfg.book_notes,
-            "quiz_per_chapter": cfg.quiz_per_chapter,
-            "cards_per_chapter": cfg.cards_per_chapter,
-        }
-        lesson_payload = {
-            **payload,
-            "topics": list(topics_by_chapter.get(ch_id, [])),
-            "figures": _source_figures(source_md),
-            **_skeleton_payload(skeleton_data, ch_id),
-        }
-        chapter_model = cfg.model_for("chapter")
-        summary_model = cfg.model_for("summary")
-        card_model = cfg.model_for("card")
-        lesson_model = cfg.model_for("lesson")
-        lesson = await run_with_cache(
-            LessonAgent,
-            lesson_payload,
-            model=lesson_model,
-            cache_dir=_cache_dir(cfg),
-            runtime=cfg.llm_runtime,
-        )
-        chapter_result = lesson.result.chapter
-        quiz_result = lesson.result.quiz
-        card_result = lesson.result.card
-        chapter_payload = {
-            **payload,
-            "chapter_result": _json_model(chapter_result),
-            "chapter_body_md": chapter_result.body_md,
-        }
-        summary = await run_with_cache(
-            SummaryAgent,
-            chapter_payload,
-            model=summary_model,
-            cache_dir=_cache_dir(cfg),
-            runtime=cfg.llm_runtime,
-        )
-        cache_results.extend([lesson, summary])
+    section_model = cfg.model_for("section")
+    quiz_card_model = cfg.model_for("quiz_card")
+    summary_model = cfg.model_for("summary")
+
+    chapter_items = list(state.get("chapter_sources", {}).items())
+    semaphore = asyncio.Semaphore(cfg.chapter_concurrency)
+
+    async def run_chapter(ch_id: str, rel_source: str):
+        async with semaphore:
+            source_md = (cfg.book_dir / rel_source).read_text(encoding="utf-8")
+            title = _display_chapter_title(ch_id, str(titles.get(ch_id, ch_id)))
+            return await generate_chapter_sections(
+                cfg=cfg,
+                chapter_id=ch_id,
+                title=title,
+                source_md=source_md,
+                source_path=rel_source,
+                topics=list(topics_by_chapter.get(ch_id, [])),
+                figures=_source_figures(source_md),
+                skeleton_payload=_skeleton_payload(skeleton_data, ch_id),
+            )
+
+    # Chapters generate in parallel (chapter-level fan-out, section-level serial),
+    # bounded by ``cfg.chapter_concurrency``. ``asyncio.gather`` preserves input
+    # order, so artifacts are written and aggregated deterministically below.
+    generated_list = await asyncio.gather(
+        *(run_chapter(ch_id, rel_source) for ch_id, rel_source in chapter_items)
+    )
+
+    chapter_results: dict[str, dict[str, str]] = {}
+    chapter_cache_hits: list[bool] = []
+    generation_issues: list[dict[str, Any]] = []
+    generated_figures: dict[str, dict[str, str]] = {}
+    for (ch_id, _rel_source), generated in zip(chapter_items, generated_list, strict=True):
+        chapter_cache_hits.append(generated.cache_hit)
+        generation_issues.extend(issue.model_dump(mode="json") for issue in generated.issues)
+        if generated.generated_figures:
+            generated_figures[ch_id] = dict(generated.generated_figures)
         paths = {
             "chapter": write_json(
                 result_dir / f"{ch_id}.chapter.json",
-                _agent_result_payload(LessonAgent, chapter_model, chapter_result),
+                _agent_result_payload(SectionAgent, section_model, generated.chapter),
             ),
             "summary": write_json(
                 result_dir / f"{ch_id}.summary.json",
-                _agent_result_payload(SummaryAgent, summary_model, summary.result),
+                _agent_result_payload(SummaryAgent, summary_model, generated.summary),
             ),
             "quiz": write_json(
                 result_dir / f"{ch_id}.quiz.json",
-                _agent_result_payload(LessonAgent, lesson_model, quiz_result),
+                _agent_result_payload(QuizCardAgent, quiz_card_model, generated.quiz),
             ),
             "card": write_json(
                 result_dir / f"{ch_id}.card.json",
-                _agent_result_payload(LessonAgent, card_model, card_result),
+                _agent_result_payload(QuizCardAgent, quiz_card_model, generated.card),
             ),
         }
         chapter_results[ch_id] = {name: _rel(path, cfg.book_dir) for name, path in paths.items()}
 
-    return {"agent_results": chapter_results, "cache_hit": _stage_cache_hit(cache_results)}
+    return {
+        "agent_results": chapter_results,
+        "generation_issues": generation_issues,
+        "generated_figures": generated_figures,
+        "cache_hit": bool(chapter_cache_hits) and all(chapter_cache_hits),
+    }
 
 
 async def reconcile_node(state: State, cfg: BookConfig) -> State:
@@ -1898,8 +1894,8 @@ def _merge_candidates_with_skeleton(
     stage, so this step is purely deterministic: each candidate's normalised
     name is looked up in the skeleton's ``alias_map``; matches attach
     ``source_chapter_id`` to the existing canonical entry; non-matches are
-    accumulated as new canonical concepts (rare — these are concepts the
-    LessonAgent invented beyond the skeleton).
+    accumulated as new canonical concepts (rare — these are concepts a
+    SectionAgent invented beyond the skeleton).
     """
     from bookwiki.agents.concept_reconcile import _concept_key
 
@@ -2014,6 +2010,12 @@ def _chapter_figure_index(state: State, cfg: BookConfig, ch_id: str) -> dict[str
         figure_id = unescape(parse_book_figure_tag(tag).get("id", ""))
         if figure_id and figure_id not in index:
             index[figure_id] = tag
+    # Merge figures generated during ``generate`` (run_plot output) so their
+    # inline <BookFigure/> references survive ``_resolve_chapter_figures``.
+    generated = state.get("generated_figures", {}).get(ch_id, {})
+    if isinstance(generated, dict):
+        for figure_id, tag in generated.items():
+            index.setdefault(str(figure_id), str(tag))
     return index
 
 
@@ -2202,6 +2204,9 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
 
 def check_node(state: State, cfg: BookConfig) -> State:
     issues: list[Issue] = []
+    for raw_issue in state.get("generation_issues", []):
+        if isinstance(raw_issue, dict):
+            issues.append(Issue.model_validate(raw_issue))
     if not (cfg.content_dir / "index.mdx").exists():
         issues.append(
             Issue(
