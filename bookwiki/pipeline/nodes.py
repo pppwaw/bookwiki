@@ -311,6 +311,30 @@ def _escape_mdx_text_segment(segment: str) -> str:
     )
 
 
+def _escape_mdx_braces_outside_math(markdown: str) -> str:
+    """Escape bare ``{`` / ``}`` in prose so MDX does not parse them as JSX expressions.
+
+    The chapter body is author-written markdown that may contain set notation such as
+    ``{z ≥ zα}`` outside math mode; MDX treats ``{...}`` as a JavaScript expression and
+    fails to parse (``Unexpected character``). Braces inside math (``$...$`` / ``$$...$$``
+    and the ``\(...\)`` / ``\[...\]`` forms, before they are normalised) and inline /
+    fenced code are preserved. ``<BookFigure/>`` placeholders contain no braces, so they
+    are unaffected; unlike :func:`_escape_mdx_text_segment` this does NOT touch ``<`` /
+    ``>``, keeping the figure tags intact.
+    """
+    parts = re.split(
+        r"(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]"
+        r"|```[\s\S]*?```|`[^`\n]*`)",
+        markdown,
+    )
+    return "".join(
+        part
+        if part.startswith(("`", "$", "\\(", "\\["))
+        else part.replace("{", "&#123;").replace("}", "&#125;")
+        for part in parts
+    )
+
+
 def _markdown_text(value: Any) -> str:
     return _escape_mdx_text_outside_math(normalize_mdx_math(str(value)))
 
@@ -2082,7 +2106,9 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             for index, item in enumerate(card_items, start=1)
         ]
         display_title = _display_chapter_title(ch_id, str(chapter["title"]))
-        body_md = _normalize_chapter_body_heading(str(chapter["body_md"]), display_title)
+        body_md = _escape_mdx_braces_outside_math(
+            _normalize_chapter_body_heading(str(chapter["body_md"]), display_title)
+        )
         card_mdx = (
             f"<AnkiDeck {_jsx_prop('cardIds', card_ids)}>\n"
             f"{_card_items_mdx(card_items)}\n"
