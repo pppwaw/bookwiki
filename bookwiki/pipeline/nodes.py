@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from bookwiki.agents import (
+    ChapterMdxRepairAgent,
     ChapterSplitAgent,
     ConceptAgent,
     ConceptExtractAgent,
@@ -25,6 +26,7 @@ from bookwiki.agents import (
     SummaryAgent,
     VisionCaptionAgent,
 )
+from bookwiki.checkers.mdx_validator import validate_mdx
 from bookwiki.convert.common import (
     BOOK_FIGURE_TAG_RE,
     parse_book_figure_tag,
@@ -2218,6 +2220,15 @@ def check_node(state: State, cfg: BookConfig) -> State:
         )
     for path in (cfg.content_dir / "chapters").glob("*.mdx"):
         text = path.read_text(encoding="utf-8")
+        for error in validate_mdx(text):
+            issues.append(
+                Issue(
+                    severity="error",
+                    code="MDX_PARSE_ERROR",
+                    message=f"{path.name} fails MDX compilation: {error}",
+                    owner_task_id=f"{path.stem}:chapter",
+                )
+            )
         if not text.startswith("---\n"):
             issues.append(
                 Issue(
@@ -2353,22 +2364,76 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
         target_issues = [
             issue for issue in report.get("issues", []) if issue.get("owner_task_id") == target
         ]
-        result = await run_with_cache(
-            ReviewAgent,
-            {
-                "owner_task_id": target,
-                "issues": target_issues,
-                "previous_output": _owner_output_payload(target, state, cfg),
-            },
-            model=cfg.model_for("review"),
-            cache_dir=_cache_dir(cfg),
-            force=True,
-            runtime=cfg.llm_runtime,
-        )
+        codes = {str(issue.get("code")) for issue in target_issues}
+        if "MDX_PARSE_ERROR" in codes:
+            repaired = await _repair_chapter_mdx(target, target_issues, state, cfg)
+            if repaired is not None:
+                path = write_json(
+                    out_dir / f"{target.replace(':', '-')}.json", _json_model(repaired)
+                )
+                outputs.append(_rel(path, cfg.book_dir))
+        else:
+            result = await run_with_cache(
+                ReviewAgent,
+                {
+                    "owner_task_id": target,
+                    "issues": target_issues,
+                    "previous_output": _owner_output_payload(target, state, cfg),
+                },
+                model=cfg.model_for("review"),
+                cache_dir=_cache_dir(cfg),
+                force=True,
+                runtime=cfg.llm_runtime,
+            )
+            path = write_json(
+                out_dir / f"{target.replace(':', '-')}.json", _json_model(result.result)
+            )
+            outputs.append(_rel(path, cfg.book_dir))
         _apply_repair(target, target_issues, state, cfg)
-        path = write_json(out_dir / f"{target.replace(':', '-')}.json", _json_model(result.result))
-        outputs.append(_rel(path, cfg.book_dir))
     return {"repairs": outputs, "repair_targets": [], "_repair_rounds": rounds}
+
+
+async def _repair_chapter_mdx(
+    target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
+) -> Any | None:
+    """Rewrite a chapter's body to fix MDX compilation errors via ``ChapterMdxRepairAgent``.
+
+    Reads the chapter artifact, feeds its ``body_md`` plus the ``MDX_PARSE_ERROR``
+    diagnostics to the LLM, and writes the repaired ``ChapterResult`` back so the next
+    ``integrate`` re-renders it and ``check`` re-compiles. Returns the repaired result
+    (or ``None`` if the chapter artifact is missing).
+    """
+    ch_id = target.partition(":")[0]
+    chapter_rel = state.get("agent_results", {}).get(ch_id, {}).get("chapter")
+    if not chapter_rel:
+        return None
+    chapter_path = cfg.book_dir / chapter_rel
+    chapter = _agent_result(read_json(chapter_path))
+    mdx_errors = [
+        str(issue.get("message"))
+        for issue in target_issues
+        if str(issue.get("code")) == "MDX_PARSE_ERROR"
+    ]
+    repair_input = {
+        **chapter,
+        "mdx_errors": mdx_errors,
+        "language": cfg.language,
+        "book_notes": cfg.book_notes,
+        "allowed_source_refs": sorted(_allowed_source_refs(state, cfg)),
+    }
+    result = await run_with_cache(
+        ChapterMdxRepairAgent,
+        repair_input,
+        model=cfg.model_for("mdx_repair"),
+        cache_dir=_cache_dir(cfg),
+        force=True,
+        runtime=cfg.llm_runtime,
+    )
+    write_json(
+        chapter_path,
+        _agent_result_payload(ChapterMdxRepairAgent, cfg.model_for("mdx_repair"), result.result),
+    )
+    return result.result
 
 
 def index_node(state: State, cfg: BookConfig) -> State:

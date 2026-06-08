@@ -1,0 +1,14 @@
+{
+  "name": "bookwiki-mdx-validate",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Compile-check a chapter's MDX with the same remark config as the site (remark-math), so generation-time validation matches what fumadocs-mdx will parse.",
+  "bin": {
+    "bookwiki-mdx-validate": "./validate.mjs"
+  },
+  "dependencies": {
+    "@mdx-js/mdx": "^3.1.1",
+    "remark-math": "^6.0.0"
+  }
+}

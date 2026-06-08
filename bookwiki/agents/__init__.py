@@ -1,5 +1,6 @@
 """BookWiki LLM-backed agents."""
 
+from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
 from bookwiki.agents.chapter_split_agent import ChapterSplitAgent
 from bookwiki.agents.concept_agent import ConceptAgent
 from bookwiki.agents.concept_extract import ConceptExtractAgent
@@ -17,6 +18,7 @@ from bookwiki.agents.summary_agent import SummaryAgent
 from bookwiki.agents.vision_caption_agent import VisionCaptionAgent
 
 __all__ = [
+    "ChapterMdxRepairAgent",
     "ChapterSplitAgent",
     "ConceptAgent",
     "ConceptExtractAgent",

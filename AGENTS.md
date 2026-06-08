@@ -31,6 +31,15 @@ a section needs a figure the source PDF lacks, `SectionAgent` declares a `figure
 figures land under `work/assets/generated/` and are merged into the chapter figure index so the
 integrator keeps them.
 
+The `check` stage compiles every rendered chapter `.mdx` with the bundled Node validator
+(`tools/mdx-validate`, using `@mdx-js/mdx` + remark-math — the same parser config as the fumadocs
+site) and raises a `MDX_PARSE_ERROR` issue for anything that would break the site build (bare `<`/`>`
+comparisons like `n<30`, bare `{...}` set notation — math that should be wrapped in `$...$`). `repair`
+routes those targets to `ChapterMdxRepairAgent` (model key `mdx_repair`), which wraps the offending
+math in LaTeX without touching teaching content, then re-integrates and re-checks until clean or
+`maxRepairRounds` is hit. The validator degrades gracefully (skips, never blocks) when Node or its
+deps are absent; run `pnpm install` in `tools/mdx-validate` to enable it.
+
 `run_plot` (the figure tool) executes LLM-written matplotlib code via **host subprocess** behind three
 guardrails (AST import/call blacklist, chdir to an isolated tempdir with a scrubbed environment, and a
 wall-clock timeout plus POSIX rlimits), with deterministic output (Agg backend, seeded RNG, locked
