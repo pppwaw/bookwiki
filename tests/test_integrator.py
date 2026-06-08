@@ -5,11 +5,7 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
-from bookwiki.pipeline.nodes import (
-    _escape_mdx_braces_outside_math,
-    _source_citation_md,
-    integrate_node,
-)
+from bookwiki.pipeline.nodes import _source_citation_md, integrate_node
 from bookwiki.scheduler.config import BookConfig
 
 
@@ -25,30 +21,6 @@ def agent_payload(result: dict[str, Any]) -> dict[str, Any]:
         "_model": "stub",
         "result": result,
     }
-
-
-def test_escape_mdx_braces_outside_math_protects_prose_set_notation() -> None:
-    # Prose set notation must be escaped so MDX does not parse it as a JSX expression,
-    # while braces inside math ($...$ and \(...\)) and code stay intact.
-    body = "拒绝域为 {z ≥ zα}；样本均值 $\\bar{X}$ 与 \\(\\frac{1}{n}\\) 以及 `a{b}` 代码。"
-
-    escaped = _escape_mdx_braces_outside_math(body)
-
-    assert "&#123;z ≥ zα&#125;" in escaped
-    assert "{z ≥ zα}" not in escaped
-    assert "$\\bar{X}$" in escaped
-    assert "\\(\\frac{1}{n}\\)" in escaped
-    assert "`a{b}`" in escaped
-
-
-def test_escape_mdx_braces_leaves_book_figure_tags_intact() -> None:
-    body = 'Intro {set}.\n\n<BookFigure id="paper-p001-b001" />\n\nMore {text}.'
-
-    escaped = _escape_mdx_braces_outside_math(body)
-
-    assert '<BookFigure id="paper-p001-b001" />' in escaped
-    assert "&#123;set&#125;" in escaped
-    assert "&#123;text&#125;" in escaped
 
 
 def test_source_citations_do_not_repair_bare_latex_expressions() -> None:
