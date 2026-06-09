@@ -12,6 +12,8 @@ DEFAULT_GENERATION_EXPECTED = {
     "cardsPerChapter": 8,
     "maxChapterConcurrency": 4,
     "maxRepairRounds": 3,
+    "qualityCheck": False,
+    "maxQualityRounds": 2,
     "sourceLayoutRepair": {
         "mode": "auto",
         "minConfidence": 0.85,

@@ -20,6 +20,8 @@ DEFAULT_MODELS = {
     "quiz_card": "deepseek-v4-flash",
     "supplement_image": "deepseek-v4-pro",
     "mdx_repair": "deepseek-v4-pro",
+    "quality_check": "deepseek-v4-flash",
+    "quality_rewrite": "deepseek-v4-pro",
     "summary": "deepseek-v4-flash",
     "concept": "deepseek-v4-pro",
     "review": "deepseek-v4-pro",
@@ -31,6 +33,8 @@ DEFAULT_GENERATION = {
     "cardsPerChapter": 8,
     "maxChapterConcurrency": 4,
     "maxRepairRounds": 3,
+    "qualityCheck": False,
+    "maxQualityRounds": 2,
     "sourceLayoutRepair": {
         "mode": "auto",
         "minConfidence": 0.85,

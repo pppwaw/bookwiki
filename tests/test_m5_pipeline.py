@@ -152,7 +152,7 @@ async def test_check_routes_bad_quiz_answer_and_repair_rewrites_agent_result(tmp
     }
 
     integrate_node(state, cfg)
-    checked = check_node(state, cfg)
+    checked = await check_node(state, cfg)
 
     assert checked["repair_targets"] == ["chapter-1:quiz"]
     report = json.loads((book_dir / "work" / "logs" / "check-report.json").read_text())
@@ -165,11 +165,12 @@ async def test_check_routes_bad_quiz_answer_and_repair_rewrites_agent_result(tmp
     assert repaired_payload["result"]["items"][0]["answer"] == "A"
 
     integrate_node(state, cfg)
-    passed = check_node(state, cfg)
+    passed = await check_node(state, cfg)
     assert passed["repair_targets"] == []
 
 
-def test_check_accepts_hyphenated_source_refs_from_sources_md(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_check_accepts_hyphenated_source_refs_from_sources_md(tmp_path) -> None:
     book_dir = tmp_path / "book"
     sources_dir = book_dir / "work" / "sources_md"
     result_dir = book_dir / "work" / "agent_results"
@@ -264,12 +265,13 @@ def test_check_accepts_hyphenated_source_refs_from_sources_md(tmp_path) -> None:
     }
 
     integrate_node(state, cfg)
-    result = check_node(state, cfg)
+    result = await check_node(state, cfg)
 
     assert result["repair_targets"] == []
 
 
-def test_check_accepts_custom_quiz_headings_when_quizblock_exists(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_check_accepts_custom_quiz_headings_when_quizblock_exists(tmp_path) -> None:
     book_dir = tmp_path / "book"
     result_dir = book_dir / "work" / "agent_results"
     result_dir.mkdir(parents=True)
@@ -354,7 +356,7 @@ def test_check_accepts_custom_quiz_headings_when_quizblock_exists(tmp_path) -> N
     }
 
     integrate_node(state, cfg)
-    result = check_node(state, cfg)
+    result = await check_node(state, cfg)
 
     assert result["repair_targets"] == []
 
@@ -690,12 +692,12 @@ async def test_check_routes_unknown_refs_for_concept_and_quiz_owners(tmp_path) -
     }
 
     integrate_node(state, cfg)
-    result = check_node(state, cfg)
+    result = await check_node(state, cfg)
 
     assert result["repair_targets"] == ["chapter-1:quiz", "concept:递归"]
 
     repaired = await repair_node({**state, **result}, cfg)
     assert repaired["repair_targets"] == []
     integrate_node(state, cfg)
-    passed = check_node(state, cfg)
+    passed = await check_node(state, cfg)
     assert passed["repair_targets"] == []

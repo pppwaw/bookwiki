@@ -48,6 +48,11 @@ math in LaTeX without touching teaching content, then re-integrates and re-check
 `maxRepairRounds` is hit. The validator degrades gracefully (skips, never blocks) when Node or its
 deps are absent; run `pnpm install` in `tools/mdx-validate` to enable it.
 
+The optional semantic quality loop is default-off (`generation.qualityCheck=false`). When enabled,
+`check` asks `QualityCheckAgent` to flag only high-confidence `language_leak` spans in chapter and
+concept artifacts, then `repair` routes those owners to the content rewrite agents, which rewrite only
+the flagged quotes and stop after `maxQualityRounds` by downgrading unresolved leaks to warnings.
+
 `run_plot` (the figure tool) executes LLM-written matplotlib code via **host subprocess** behind three
 guardrails (AST import/call blacklist, chdir to an isolated tempdir with a scrubbed environment, and a
 wall-clock timeout plus POSIX rlimits), with deterministic output (Agg backend, seeded RNG, locked
@@ -63,4 +68,3 @@ Agent cache misses call the configured real LLM through `bookwiki.scheduler.llm`
 environment variables take precedence. The site's `/api/chat` route uses `BOOKWIKI_CHAT_API_KEY`
 (OpenRouter). Missing keys should fail loudly rather than falling back to stub content. Tests may opt
 into the explicit `BOOKWIKI_TEST_LLM=1` fake runtime.
-

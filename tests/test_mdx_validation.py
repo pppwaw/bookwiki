@@ -89,7 +89,8 @@ def _write(path: Path, text: str) -> None:
 
 
 @needs_node
-def test_check_node_flags_uncompilable_chapter_mdx(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_check_node_flags_uncompilable_chapter_mdx(tmp_path: Path) -> None:
     book_dir = tmp_path / "book"
     docs = book_dir / "content" / "docs"
     _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
@@ -102,7 +103,7 @@ def test_check_node_flags_uncompilable_chapter_mdx(tmp_path: Path) -> None:
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
 
-    result = check_node({"agent_results": {}, "concept_pages": {}}, cfg)
+    result = await check_node({"agent_results": {}, "concept_pages": {}}, cfg)
 
     report = json.loads((book_dir / result["check_report"]).read_text(encoding="utf-8"))
     mdx_issues = [i for i in report["issues"] if i["code"] == "MDX_PARSE_ERROR"]
@@ -173,7 +174,8 @@ async def test_chapter_mdx_repair_agent_echoes_draft_offline() -> None:
 # Concept pages - check_node validates them too (not just chapters)
 # --------------------------------------------------------------------------- #
 @needs_node
-def test_check_node_flags_uncompilable_concept_mdx(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_check_node_flags_uncompilable_concept_mdx(tmp_path: Path) -> None:
     book_dir = tmp_path / "book"
     docs = book_dir / "content" / "docs"
     _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
@@ -185,7 +187,7 @@ def test_check_node_flags_uncompilable_concept_mdx(tmp_path: Path) -> None:
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
 
-    result = check_node({"agent_results": {}, "concept_pages": {}}, cfg)
+    result = await check_node({"agent_results": {}, "concept_pages": {}}, cfg)
 
     report = json.loads((book_dir / result["check_report"]).read_text(encoding="utf-8"))
     mdx_issues = [i for i in report["issues"] if i["code"] == "MDX_PARSE_ERROR"]
