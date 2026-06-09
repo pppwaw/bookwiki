@@ -1,6 +1,7 @@
 import { defineConfig, defineDocs } from "fumadocs-mdx/config";
 import { metaSchema, pageSchema } from "fumadocs-core/source/schema";
 import rehypeKatex from "rehype-katex";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkMath from "remark-math";
 import { z } from "zod";
 
@@ -34,7 +35,7 @@ export const docs = defineDocs({
 export default defineConfig({
   mdxOptions: {
     providerImportSource: "@/components/mdx",
-    remarkPlugins: [remarkMath],
+    remarkPlugins: [remarkCjkFriendly, remarkMath],
     rehypePlugins: (v) => [rehypeKatex, ...v],
   },
 });

@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// Compile-check MDX with the SAME remark config as the fumadocs site (remark-math),
-// so generation-time validation matches what the site's MDX parser will accept.
+// Compile-check MDX with the SAME remark config as the fumadocs site
+// (remark-cjk-friendly + remark-math), so generation-time validation matches what the
+// site's MDX parser will accept.
 //
 // Reads MDX from stdin, prints a JSON line: {"ok": bool, "errors": [{message,line,column}]}.
 // A non-zero exit code is reserved for internal failures (e.g. the toolchain itself broke),
 // NOT for invalid MDX — invalid MDX is a normal result reported via {"ok": false, ...}.
 import { compile } from "@mdx-js/mdx";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkMath from "remark-math";
 
 function readStdin() {
@@ -34,7 +36,7 @@ function diagnostic(err) {
 async function main() {
   const content = await readStdin();
   try {
-    await compile(content, { remarkPlugins: [remarkMath] });
+    await compile(content, { remarkPlugins: [remarkCjkFriendly, remarkMath] });
     process.stdout.write(JSON.stringify({ ok: true, errors: [] }));
   } catch (err) {
     process.stdout.write(JSON.stringify({ ok: false, errors: [diagnostic(err)] }));
