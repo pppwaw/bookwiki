@@ -18,6 +18,18 @@ importers:
       remark-cjk-friendly:
         specifier: ^2.0.1
         version: 2.0.1(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(unified@11.0.5)
+      remark-mdx:
+        specifier: ^3.1.1
+        version: 3.1.1
+      remark-parse:
+        specifier: ^11.0.0
+        version: 11.0.0
+      unified:
+        specifier: ^11.0.5
+        version: 11.0.5
+      unist-util-visit:
+        specifier: ^5.1.0
+        version: 5.1.0
 
 packages:
 

@@ -60,6 +60,22 @@ def test_validate_mdx_accepts_book_figure_tag() -> None:
     assert validate_mdx(body) == []
 
 
+@needs_node
+def test_validate_mdx_flags_bare_jsx_expression() -> None:
+    # An inline <cite> wrapping bare LaTeX `\bar{X}` compiles, but `{X}` renders as JS
+    # and throws `ReferenceError: X is not defined` at prerender. The scan must catch it.
+    errors = validate_mdx("统计量 <cite ref_id=\"p1\">Z = \\bar{X} / \\sqrt{n}</cite>。")
+    assert errors
+    assert any("bare JSX expression" in error for error in errors)
+
+
+@needs_node
+def test_validate_mdx_allows_braces_inside_math() -> None:
+    # The same braces are safe inside $...$ - remark-math consumes them as LaTeX, so they
+    # never become JSX expressions.
+    assert validate_mdx("统计量 $Z = \\bar{X} / \\sqrt{n}$。") == []
+
+
 def test_mdx_validator_available_returns_bool() -> None:
     assert isinstance(mdx_validator_available(), bool)
 
