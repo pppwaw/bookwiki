@@ -34,6 +34,26 @@ def test_render_prompt_uses_agent_local_prompt_template() -> None:
     assert '"chapter_id": "chapter-6"' in rendered.user
 
 
+def test_common_prompt_forbids_courseware_meta_references() -> None:
+    rendered = render_prompt(
+        prompt_name=SectionAgent.prompt_name,
+        prompt_template=SectionAgent.prompt_template,
+        agent_name="SectionAgent",
+        inp={"chapter_id": "chapter-6", "source_md": "method of moments"},
+        draft={"chapter_id": "chapter-6", "section_index": 0, "body_md": "draft"},
+    )
+    # Generated content must read as a standalone artifact: no "课件里有"-style
+    # meta-references, and no deferring/omitting content to the courseware.
+    assert "内容自洽" in rendered.system
+    assert "课件" in rendered.system
+    assert "citations" in rendered.system
+
+
+def test_quiz_prompt_requires_application_questions() -> None:
+    # The quiz must go beyond definitional recall into concept-based application.
+    assert "应用/计算题" in QuizCardAgent.prompt_template.body
+
+
 def test_prompt_cache_key_reflects_agent_local_prompt_changes(monkeypatch) -> None:
     original = prompt_cache_key(_PromptedAgent.prompt_template)
     monkeypatch.setattr(
