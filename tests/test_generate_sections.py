@@ -109,6 +109,24 @@ def _section_response(concepts: list[str]) -> dict[str, Any]:
     }
 
 
+def _section_response_with_body(body_md: str) -> dict[str, Any]:
+    payload = _section_response([])
+    payload["body_md"] = body_md
+    payload["concepts"] = []
+    return payload
+
+
+def _chapter_response_with_body(body_md: str) -> dict[str, Any]:
+    return {
+        "chapter_id": "chapter-1",
+        "title": "Search",
+        "body_md": body_md,
+        "concepts": [],
+        "citations": [{"ref_id": "src-p001", "quote": "content"}],
+        "owner_task_id": "chapter-1:chapter",
+    }
+
+
 def _quiz_card_response() -> dict[str, Any]:
     return {
         "chapter_id": "chapter-1",
@@ -180,6 +198,73 @@ async def test_generate_chapter_sections_records_fallback_warning(tmp_path: Path
     assert "## S0" in result.chapter.body_md
     # All four scripted responses after the plan were consumed (1 + 2 repairs).
     assert runtime.responses == []
+
+
+@pytest.mark.asyncio
+async def test_generate_chapter_sections_inline_repairs_bare_mdx_math(
+    tmp_path: Path,
+) -> None:
+    runtime = RecordingRuntime(
+        [
+            _plan_response([]),
+            _section_response_with_body("当 n<30 时使用 t 分布。"),
+            _chapter_response_with_body("# Search\n\n## S0\n\n当 $n < 30$ 时使用 t 分布。"),
+            _quiz_card_response(),
+            _summary_response(),
+        ]
+    )
+    cfg = _cfg(tmp_path / "book", runtime)
+
+    result = await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id="chapter-1",
+        title="Search",
+        source_md=SOURCE_MD,
+        source_path="work/chapter_sources/chapter-1/source.md",
+        topics=["t0"],
+        figures=[],
+        skeleton_payload={},
+    )
+
+    assert "$n < 30$" in result.chapter.body_md
+    assert "n<30" not in result.chapter.body_md
+    assert result.issues == []
+    assert runtime.calls[2]["output_model"].__name__ == "ChapterResult"
+
+
+@pytest.mark.asyncio
+async def test_generate_chapter_sections_inline_exhaustion_warns_and_completes(
+    tmp_path: Path,
+) -> None:
+    runtime = RecordingRuntime(
+        [
+            _plan_response([]),
+            _section_response_with_body("当 n<30 时使用 t 分布。"),
+            _chapter_response_with_body("# Search\n\n## S0\n\n当 n<30 时使用 t 分布。"),
+            _chapter_response_with_body("# Search\n\n## S0\n\n当 n<30 时使用 t 分布。"),
+            _quiz_card_response(),
+            _summary_response(),
+        ]
+    )
+    cfg = _cfg(tmp_path / "book", runtime)
+    cfg.generation["maxRepairRounds"] = 2
+
+    result = await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id="chapter-1",
+        title="Search",
+        source_md=SOURCE_MD,
+        source_path="work/chapter_sources/chapter-1/source.md",
+        topics=["t0"],
+        figures=[],
+        skeleton_payload={},
+    )
+
+    assert result.chapter.body_md.endswith("当 n<30 时使用 t 分布。")
+    issue = next(issue for issue in result.issues if issue.code == "CHAPTER_VALIDATION_UNRESOLVED")
+    assert issue.severity == "warning"
+    assert issue.owner_task_id == "chapter-1:chapter"
+    assert result.quiz.owner_task_id == "chapter-1:quiz"
 
 
 def _two_section_plan() -> dict[str, Any]:
@@ -260,4 +345,3 @@ async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path
     assert '"is_last": true' in section1
     # The summary is scoped by the same outline.
     assert '"chapter_outline"' in summary
-

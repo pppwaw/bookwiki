@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bookwiki.agents._helpers import SOURCE_REF_RE
+from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
+from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
 from bookwiki.agents.quiz_card_agent import QuizCardAgent, chapter_body_blocks
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
 from bookwiki.agents.section_agent import SectionAgent
@@ -42,6 +44,7 @@ from bookwiki.generate.figures import (
     run_plot,
     verify_figure,
 )
+from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import build_runtime
@@ -143,6 +146,15 @@ async def generate_chapter_sections(
         issues.extend(figure_issues)
 
     chapter = assemble_chapter_result(chapter_id=chapter_id, title=title, sections=sections)
+    chapter, chapter_cache, chapter_issue = await _validate_chapter_artifact_inline(
+        cfg=cfg,
+        base_payload=base_payload,
+        chapter=chapter,
+        allowed_refs=allowed_refs,
+    )
+    cache_results.extend(chapter_cache)
+    if chapter_issue is not None:
+        issues.append(chapter_issue)
 
     quiz_card = await run_with_cache(
         QuizCardAgent,
@@ -183,6 +195,102 @@ async def generate_chapter_sections(
         generated_figures=generated_figures,
         cache_hit=bool(cache_results) and all(item.cache_hit for item in cache_results),
     )
+
+
+async def _validate_chapter_artifact_inline(
+    *,
+    cfg: BookConfig,
+    base_payload: dict[str, Any],
+    chapter: ChapterResult,
+    allowed_refs: set[str],
+) -> tuple[ChapterResult, list[CacheResult], Issue | None]:
+    del base_payload
+    cache_results: list[CacheResult] = []
+    max_mdx_rounds = int(cfg.generation.get("maxRepairRounds", 1) or 1)
+    max_quality_rounds = int(cfg.generation.get("maxQualityRounds", 1) or 1)
+    mdx_rounds = 0
+    quality_rounds = 0
+    last_issues: list[ArtifactIssue] = []
+
+    while True:
+        last_issues = await validate_artifact(
+            body_md=chapter.body_md,
+            kind="chapter",
+            allowed_refs=allowed_refs,
+            cfg=cfg,
+        )
+        if not last_issues:
+            return chapter, cache_results, None
+
+        mdx_issues = [issue for issue in last_issues if issue.kind == "mdx"]
+        quality_issues = [issue for issue in last_issues if issue.kind == "quality"]
+        if mdx_issues:
+            if mdx_rounds >= max_mdx_rounds:
+                break
+            mdx_rounds += 1
+            repaired = await run_with_cache(
+                ChapterMdxRepairAgent,
+                {
+                    **chapter.model_dump(mode="json"),
+                    "mdx_errors": [issue.message for issue in mdx_issues],
+                    "language": cfg.language,
+                    "book_notes": cfg.book_notes,
+                    "allowed_source_refs": sorted(allowed_refs),
+                },
+                model=cfg.model_for("mdx_repair"),
+                cache_dir=cfg.cache_dir / "tasks",
+                force=True,
+                runtime=cfg.llm_runtime,
+            )
+            cache_results.append(repaired)
+            chapter = repaired.result
+            continue
+        if quality_issues:
+            if quality_rounds >= max_quality_rounds:
+                break
+            quality_rounds += 1
+            rewritten = await run_with_cache(
+                ChapterContentRewriteAgent,
+                {
+                    **chapter.model_dump(mode="json"),
+                    "quality_findings": _quality_findings_from_artifact_issues(quality_issues),
+                    "language": cfg.language,
+                    "book_notes": cfg.book_notes,
+                    "allowed_source_refs": sorted(allowed_refs),
+                },
+                model=cfg.model_for("quality_rewrite"),
+                cache_dir=cfg.cache_dir / "tasks",
+                force=True,
+                runtime=cfg.llm_runtime,
+            )
+            cache_results.append(rewritten)
+            chapter = rewritten.result
+            continue
+        break
+
+    return (
+        chapter,
+        cache_results,
+        Issue(
+            severity="warning",
+            code="CHAPTER_VALIDATION_UNRESOLVED",
+            message=(
+                f"{chapter.chapter_id} chapter kept after inline validation rounds: "
+                f"{'; '.join(issue.message for issue in last_issues)}"
+            ),
+            owner_task_id=f"{chapter.chapter_id}:chapter",
+        ),
+    )
+
+
+def _quality_findings_from_artifact_issues(
+    issues: list[ArtifactIssue],
+) -> list[dict[str, str]]:
+    return [
+        {"quote": issue.quote, "explanation": issue.explanation or "language_leak"}
+        for issue in issues
+        if issue.kind == "quality"
+    ]
 
 
 async def _plan_sections(cfg: BookConfig, payload: dict[str, Any]) -> CacheResult:

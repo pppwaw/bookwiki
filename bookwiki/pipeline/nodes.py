@@ -11,7 +11,6 @@ from typing import Any
 import yaml
 
 from bookwiki.agents import (
-    ChapterContentRewriteAgent,
     ChapterMdxRepairAgent,
     ChapterSplitAgent,
     ConceptAgent,
@@ -19,7 +18,6 @@ from bookwiki.agents import (
     ConceptExtractAgent,
     ConceptMdxRepairAgent,
     ConceptReconcileAgent,
-    QualityCheckAgent,
     QuizCardAgent,
     ReviewAgent,
     SectionAgent,
@@ -30,6 +28,7 @@ from bookwiki.agents import (
     SummaryAgent,
     VisionCaptionAgent,
 )
+from bookwiki.agents._helpers import SOURCE_REF_RE
 from bookwiki.checkers.mdx_validator import validate_mdx
 from bookwiki.convert.common import (
     BOOK_FIGURE_TAG_RE,
@@ -45,13 +44,14 @@ from bookwiki.convert.source_normalizer import (
 )
 from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.generate.sections import generate_chapter_sections
+from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
 from bookwiki.integrator.markdown_renderers import normalize_mdx_math
 from bookwiki.integrator.stitching import audit_stitching
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
-from bookwiki.schemas.concept import ConceptReconciledItem, ConceptReconcileResult
+from bookwiki.schemas.concept import ConceptReconciledItem, ConceptReconcileResult, ConceptResult
 from bookwiki.schemas.report import CheckReport, Issue
 from bookwiki.split.chapter_splitter import parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
@@ -1982,11 +1982,13 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
     _clear_generated_files(out_dir, "*.json")
     outputs: dict[str, str] = {}
     cache_results: list[CacheResult] = []
+    concept_generation_issues: list[dict[str, Any]] = []
     used_stems: set[str] = set()
     for item in data.get("concepts", []):
+        chapter_contexts = _concept_contexts(item, state, cfg)
         concept_input = {
             **item,
-            "chapter_contexts": _concept_contexts(item, state, cfg),
+            "chapter_contexts": chapter_contexts,
             "language": cfg.language,
             "book_notes": cfg.book_notes,
         }
@@ -1998,10 +2000,124 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
             runtime=cfg.llm_runtime,
         )
         cache_results.append(result)
-        safe_name = _unique_file_stem(result.result.name, used_stems, fallback_prefix="concept")
-        path = write_json(out_dir / f"{safe_name}.json", _json_model(result.result))
-        outputs[result.result.name] = _rel(path, cfg.book_dir)
-    return {"concept_pages": outputs, "cache_hit": _stage_cache_hit(cache_results)}
+        concept, inline_cache, inline_issue = await _validate_concept_artifact_inline(
+            cfg=cfg,
+            concept=result.result,
+            chapter_contexts=chapter_contexts,
+        )
+        cache_results.extend(inline_cache)
+        if inline_issue is not None:
+            concept_generation_issues.append(inline_issue.model_dump(mode="json"))
+        safe_name = _unique_file_stem(concept.name, used_stems, fallback_prefix="concept")
+        path = write_json(out_dir / f"{safe_name}.json", _json_model(concept))
+        outputs[concept.name] = _rel(path, cfg.book_dir)
+    return {
+        "concept_pages": outputs,
+        "concept_generation_issues": concept_generation_issues,
+        "cache_hit": _stage_cache_hit(cache_results),
+    }
+
+
+async def _validate_concept_artifact_inline(
+    *,
+    cfg: BookConfig,
+    concept: ConceptResult,
+    chapter_contexts: list[dict[str, Any]],
+) -> tuple[ConceptResult, list[CacheResult], Issue | None]:
+    cache_results: list[CacheResult] = []
+    allowed_refs = _allowed_refs_from_concept_contexts(chapter_contexts)
+    max_mdx_rounds = int(cfg.generation.get("maxRepairRounds", 1) or 1)
+    max_quality_rounds = int(cfg.generation.get("maxQualityRounds", 1) or 1)
+    mdx_rounds = 0
+    quality_rounds = 0
+    last_issues: list[ArtifactIssue] = []
+
+    while True:
+        last_issues = await validate_artifact(
+            body_md=concept.body_md,
+            kind="concept",
+            allowed_refs=allowed_refs,
+            cfg=cfg,
+        )
+        if not last_issues:
+            return concept, cache_results, None
+
+        mdx_issues = [issue for issue in last_issues if issue.kind == "mdx"]
+        quality_issues = [issue for issue in last_issues if issue.kind == "quality"]
+        if mdx_issues:
+            if mdx_rounds >= max_mdx_rounds:
+                break
+            mdx_rounds += 1
+            repaired = await run_with_cache(
+                ConceptMdxRepairAgent,
+                {
+                    **concept.model_dump(mode="json"),
+                    "mdx_errors": [issue.message for issue in mdx_issues],
+                    "language": cfg.language,
+                    "book_notes": cfg.book_notes,
+                    "allowed_source_refs": sorted(allowed_refs),
+                },
+                model=cfg.model_for("mdx_repair"),
+                cache_dir=_cache_dir(cfg),
+                force=True,
+                runtime=cfg.llm_runtime,
+            )
+            cache_results.append(repaired)
+            concept = repaired.result
+            continue
+        if quality_issues:
+            if quality_rounds >= max_quality_rounds:
+                break
+            quality_rounds += 1
+            rewritten = await run_with_cache(
+                ConceptContentRewriteAgent,
+                {
+                    **concept.model_dump(mode="json"),
+                    "quality_findings": _quality_findings_from_artifact_issues(quality_issues),
+                    "language": cfg.language,
+                    "book_notes": cfg.book_notes,
+                    "allowed_source_refs": sorted(allowed_refs),
+                },
+                model=cfg.model_for("quality_rewrite"),
+                cache_dir=_cache_dir(cfg),
+                force=True,
+                runtime=cfg.llm_runtime,
+            )
+            cache_results.append(rewritten)
+            concept = rewritten.result
+            continue
+        break
+
+    return (
+        concept,
+        cache_results,
+        Issue(
+            severity="warning",
+            code="CONCEPT_VALIDATION_UNRESOLVED",
+            message=(
+                f"{concept.name} concept kept after inline validation rounds: "
+                f"{'; '.join(issue.message for issue in last_issues)}"
+            ),
+            owner_task_id=str(concept.owner_task_id or f"concept:{concept.name}"),
+        ),
+    )
+
+
+def _allowed_refs_from_concept_contexts(chapter_contexts: list[dict[str, Any]]) -> set[str]:
+    refs: set[str] = set()
+    for context in chapter_contexts:
+        refs.update(SOURCE_REF_RE.findall(str(context.get("source_md") or "")))
+    return refs
+
+
+def _quality_findings_from_artifact_issues(
+    issues: list[ArtifactIssue],
+) -> list[dict[str, str]]:
+    return [
+        {"quote": issue.quote, "explanation": issue.explanation or "language_leak"}
+        for issue in issues
+        if issue.kind == "quality"
+    ]
 
 
 def _chapter_figure_index(state: State, cfg: BookConfig, ch_id: str) -> dict[str, str]:
@@ -2225,6 +2341,9 @@ async def check_node(state: State, cfg: BookConfig) -> State:
     for raw_issue in state.get("generation_issues", []):
         if isinstance(raw_issue, dict):
             issues.append(Issue.model_validate(raw_issue))
+    for raw_issue in state.get("concept_generation_issues", []):
+        if isinstance(raw_issue, dict):
+            issues.append(Issue.model_validate(raw_issue))
     if not (cfg.content_dir / "index.mdx").exists():
         issues.append(
             Issue(
@@ -2364,8 +2483,6 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                         owner_task_id=owner,
                     )
                 )
-    if cfg.generation.get("qualityCheck"):
-        issues.extend(await _quality_check_issues(state, cfg))
     status = "needs_repair" if issues else "passed"
     report = CheckReport(status=status, issues=issues)
     logs_dir = ensure_dir(cfg.work_dir / "logs")
@@ -2405,16 +2522,6 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
                     out_dir / f"{target.replace(':', '-')}.json", _json_model(repaired)
                 )
                 outputs.append(_rel(path, cfg.book_dir))
-        elif "QUALITY_LANGUAGE_LEAK" in codes:
-            if target.startswith("concept-quality:"):
-                rewritten = await _rewrite_concept_content(target, target_issues, state, cfg)
-            else:
-                rewritten = await _rewrite_chapter_content(target, target_issues, state, cfg)
-            if rewritten is not None:
-                path = write_json(
-                    out_dir / f"{target.replace(':', '-')}.json", _json_model(rewritten)
-                )
-                outputs.append(_rel(path, cfg.book_dir))
         else:
             result = await run_with_cache(
                 ReviewAgent,
@@ -2436,83 +2543,8 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
     return {"repairs": outputs, "repair_targets": [], "_repair_rounds": rounds}
 
 
-async def _quality_check_issues(state: State, cfg: BookConfig) -> list[Issue]:
-    issues: list[Issue] = []
-    rounds = dict(state.get("_repair_rounds", {}))
-    max_rounds = int(cfg.generation.get("maxQualityRounds", 1) or 1)
-    for ch_id, paths in state.get("agent_results", {}).items():
-        chapter_rel = paths.get("chapter")
-        if not chapter_rel:
-            continue
-        chapter = _agent_result(read_json(cfg.book_dir / chapter_rel))
-        owner = f"{ch_id}:chapter"
-        title = str(chapter.get("title") or ch_id)
-        issues.extend(
-            await _quality_check_artifact(
-                owner,
-                title,
-                str(chapter.get("body_md") or ""),
-                "chapter",
-                rounds,
-                max_rounds,
-                cfg,
-            )
-        )
-    for _name, rel_path in state.get("concept_pages", {}).items():
-        concept = read_json(cfg.book_dir / rel_path)
-        owner = f"concept-quality:{Path(rel_path).stem}"
-        title = str(concept.get("name") or Path(rel_path).stem)
-        issues.extend(
-            await _quality_check_artifact(
-                owner,
-                title,
-                str(concept.get("body_md") or ""),
-                "concept",
-                rounds,
-                max_rounds,
-                cfg,
-            )
-        )
-    return issues
-
-
-async def _quality_check_artifact(
-    owner_task_id: str,
-    title: str,
-    body_md: str,
-    kind: str,
-    rounds: dict[str, Any],
-    max_rounds: int,
-    cfg: BookConfig,
-) -> list[Issue]:
-    result = await run_with_cache(
-        QualityCheckAgent,
-        {
-            "owner_task_id": owner_task_id,
-            "title": title,
-            "body_md": body_md,
-            "language": cfg.language,
-            "kind": kind,
-        },
-        model=cfg.model_for("quality_check"),
-        cache_dir=_cache_dir(cfg),
-        runtime=cfg.llm_runtime,
-    )
-    severity = "error" if int(rounds.get(owner_task_id, 0)) < max_rounds else "warning"
-    return [
-        Issue(
-            severity=severity,
-            code="QUALITY_LANGUAGE_LEAK",
-            message=f"{finding.quote}: {finding.explanation}",
-            owner_task_id=owner_task_id,
-        )
-        for finding in result.result.findings
-    ]
-
-
 def _repair_round_limit(codes: set[str], cfg: BookConfig) -> int:
-    if "QUALITY_LANGUAGE_LEAK" in codes:
-        return int(cfg.generation.get("maxQualityRounds", 1) or 1)
+    del codes
     return int(cfg.generation.get("maxRepairRounds", 1) or 1)
 
 
@@ -2601,87 +2633,6 @@ async def _repair_concept_mdx(
     )
     write_json(concept_path, _json_model(result.result))
     return result.result
-
-
-async def _rewrite_chapter_content(
-    target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
-) -> Any | None:
-    """Rewrite flagged language-leak spans in a chapter via ``ChapterContentRewriteAgent``."""
-    ch_id = target.partition(":")[0]
-    chapter_rel = state.get("agent_results", {}).get(ch_id, {}).get("chapter")
-    if not chapter_rel:
-        return None
-    chapter_path = cfg.book_dir / chapter_rel
-    chapter = _agent_result(read_json(chapter_path))
-    rewrite_input = {
-        **chapter,
-        "quality_findings": _quality_findings_from_issues(target_issues),
-        "language": cfg.language,
-        "book_notes": cfg.book_notes,
-        "allowed_source_refs": sorted(_allowed_source_refs(state, cfg)),
-    }
-    result = await run_with_cache(
-        ChapterContentRewriteAgent,
-        rewrite_input,
-        model=cfg.model_for("quality_rewrite"),
-        cache_dir=_cache_dir(cfg),
-        force=True,
-        runtime=cfg.llm_runtime,
-    )
-    write_json(
-        chapter_path,
-        _agent_result_payload(
-            ChapterContentRewriteAgent, cfg.model_for("quality_rewrite"), result.result
-        ),
-    )
-    return result.result
-
-
-async def _rewrite_concept_content(
-    target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
-) -> Any | None:
-    """Rewrite flagged language-leak spans in a concept via ``ConceptContentRewriteAgent``."""
-    stem = target.partition(":")[2]
-    concept_rel = next(
-        (rel for rel in state.get("concept_pages", {}).values() if Path(rel).stem == stem),
-        None,
-    )
-    if not concept_rel:
-        return None
-    concept_path = cfg.book_dir / concept_rel
-    concept = read_json(concept_path)
-    rewrite_input = {
-        **concept,
-        "quality_findings": _quality_findings_from_issues(target_issues),
-        "language": cfg.language,
-        "book_notes": cfg.book_notes,
-        "allowed_source_refs": sorted(_allowed_source_refs(state, cfg)),
-    }
-    result = await run_with_cache(
-        ConceptContentRewriteAgent,
-        rewrite_input,
-        model=cfg.model_for("quality_rewrite"),
-        cache_dir=_cache_dir(cfg),
-        force=True,
-        runtime=cfg.llm_runtime,
-    )
-    write_json(concept_path, _json_model(result.result))
-    return result.result
-
-
-def _quality_findings_from_issues(issues: list[dict[str, Any]]) -> list[dict[str, str]]:
-    findings: list[dict[str, str]] = []
-    for issue in issues:
-        if str(issue.get("code")) != "QUALITY_LANGUAGE_LEAK":
-            continue
-        quote, separator, explanation = str(issue.get("message") or "").partition(": ")
-        findings.append(
-            {
-                "quote": quote,
-                "explanation": explanation if separator else "language_leak",
-            }
-        )
-    return findings
 
 
 def index_node(state: State, cfg: BookConfig) -> State:

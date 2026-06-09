@@ -32,26 +32,23 @@ Keep agent outputs as Pydantic models. Agents do not write final Markdown; sched
 
 The `generate` stage is agentic and runs per chapter: `SectionPlannerAgent` splits the chapter into
 teaching units, `SectionAgent` writes each section's prose (section-level validate/repair with a
-`maxSectionRepairRounds` fallback that logs a warning and keeps the imperfect section), `QuizCardAgent`
-produces the quiz and recall cards from the assembled body, and `SummaryAgent` writes the summary. When
+`maxSectionRepairRounds` fallback that logs a warning and keeps the imperfect section), then the
+assembled chapter body runs inline validation/refactor self-heal before quiz/summary: MDX, source-ref
+citations, and (only when `generation.qualityCheck=true`) semantic quality are checked and repaired via
+the existing chapter MDX/content agents. `QuizCardAgent` and `SummaryAgent` consume the healed body. When
 a section needs a figure the source PDF lacks, `SectionAgent` declares a `figure_request` and
 `SupplementImageAgent` fills it by writing matplotlib code through LiteLLM function-calling; generated
 figures land under `work/assets/generated/` and are merged into the chapter figure index so the
 integrator keeps them.
 
-The `check` stage compiles every rendered chapter `.mdx` with the bundled Node validator
-(`tools/mdx-validate`, using `@mdx-js/mdx` + remark-math — the same parser config as the fumadocs
-site) and raises a `MDX_PARSE_ERROR` issue for anything that would break the site build (bare `<`/`>`
-comparisons like `n<30`, bare `{...}` set notation — math that should be wrapped in `$...$`). `repair`
-routes those targets to `ChapterMdxRepairAgent` (model key `mdx_repair`), which wraps the offending
-math in LaTeX without touching teaching content, then re-integrates and re-checks until clean or
-`maxRepairRounds` is hit. The validator degrades gracefully (skips, never blocks) when Node or its
-deps are absent; run `pnpm install` in `tools/mdx-validate` to enable it.
-
-The optional semantic quality loop is default-off (`generation.qualityCheck=false`). When enabled,
-`check` asks `QualityCheckAgent` to flag only high-confidence `language_leak` spans in chapter and
-concept artifacts, then `repair` routes those owners to the content rewrite agents, which rewrite only
-the flagged quotes and stop after `maxQualityRounds` by downgrading unresolved leaks to warnings.
+校验下沉：`generate` / `concept_pages` now perform per-chapter and per-concept inline 自洽 loops for
+raw pre-render `body_md` (MDX + 引用 + optional language-leak quality), bottoming out as warnings when
+bounded repair rounds are exhausted. The macro `check` stage 退化为跨切面 checks plus 渲染态 MDX 兜底:
+it still compiles rendered chapter/concept `.mdx` after `integrate` with the bundled Node validator
+(`tools/mdx-validate`, using `@mdx-js/mdx` + remark-math — the same parser config as the fumadocs site)
+and raises `MDX_PARSE_ERROR` for render-time breakage. `repair` keeps the MDX route for that rendered
+fallback, but semantic quality repair is inline only. Quality stays default-off
+(`generation.qualityCheck=false`); when off, no quality LLM call is made.
 
 `run_plot` (the figure tool) executes LLM-written matplotlib code via **host subprocess** behind three
 guardrails (AST import/call blacklist, chdir to an isolated tempdir with a scrubbed environment, and a
