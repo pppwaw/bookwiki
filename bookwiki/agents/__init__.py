@@ -4,6 +4,7 @@ from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
 from bookwiki.agents.chapter_split_agent import ChapterSplitAgent
 from bookwiki.agents.concept_agent import ConceptAgent
 from bookwiki.agents.concept_extract import ConceptExtractAgent
+from bookwiki.agents.concept_mdx_repair_agent import ConceptMdxRepairAgent
 from bookwiki.agents.concept_reconcile import ConceptReconcileAgent
 from bookwiki.agents.quiz_card_agent import QuizCardAgent
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
@@ -21,6 +22,7 @@ __all__ = [
     "ChapterMdxRepairAgent",
     "ChapterSplitAgent",
     "ConceptAgent",
+    "ConceptMdxRepairAgent",
     "ConceptExtractAgent",
     "ConceptReconcileAgent",
     "QuizCardAgent",

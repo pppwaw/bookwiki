@@ -15,6 +15,7 @@ from bookwiki.agents import (
     ChapterSplitAgent,
     ConceptAgent,
     ConceptExtractAgent,
+    ConceptMdxRepairAgent,
     ConceptReconcileAgent,
     QuizCardAgent,
     ReviewAgent,
@@ -2297,6 +2298,18 @@ def check_node(state: State, cfg: BookConfig) -> State:
                     )
                 )
 
+    for path in sorted((cfg.content_dir / "concepts").glob("*.mdx")):
+        text = path.read_text(encoding="utf-8")
+        for error in validate_mdx(text):
+            issues.append(
+                Issue(
+                    severity="error",
+                    code="MDX_PARSE_ERROR",
+                    message=f"{path.name} fails MDX compilation: {error}",
+                    owner_task_id=f"concept-mdx:{path.stem}",
+                )
+            )
+
     allowed_refs = _allowed_source_refs(state, cfg)
     for ch_id, paths in state.get("agent_results", {}).items():
         for kind, rel_path in paths.items():
@@ -2378,7 +2391,10 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
         ]
         codes = {str(issue.get("code")) for issue in target_issues}
         if "MDX_PARSE_ERROR" in codes:
-            repaired = await _repair_chapter_mdx(target, target_issues, state, cfg)
+            if target.startswith("concept-mdx:"):
+                repaired = await _repair_concept_mdx(target, target_issues, state, cfg)
+            else:
+                repaired = await _repair_chapter_mdx(target, target_issues, state, cfg)
             if repaired is not None:
                 path = write_json(
                     out_dir / f"{target.replace(':', '-')}.json", _json_model(repaired)
@@ -2445,6 +2461,50 @@ async def _repair_chapter_mdx(
         chapter_path,
         _agent_result_payload(ChapterMdxRepairAgent, cfg.model_for("mdx_repair"), result.result),
     )
+    return result.result
+
+
+async def _repair_concept_mdx(
+    target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
+) -> Any | None:
+    """Rewrite a concept page body to fix MDX compilation errors via ``ConceptMdxRepairAgent``.
+
+    The ``concept-mdx:<stem>`` target maps back to the concept artifact whose rendered
+    filename is ``<stem>.mdx``. Feeds the concept ``body_md`` plus the ``MDX_PARSE_ERROR``
+    diagnostics to the LLM and writes the repaired ``ConceptResult`` back (same unwrapped
+    JSON shape ``concept_pages_node`` writes) so the next ``integrate`` re-renders it and
+    ``check`` re-compiles. Returns the repaired result (or ``None`` if no artifact matches).
+    """
+    stem = target.partition(":")[2]
+    concept_rel = next(
+        (rel for rel in state.get("concept_pages", {}).values() if Path(rel).stem == stem),
+        None,
+    )
+    if not concept_rel:
+        return None
+    concept_path = cfg.book_dir / concept_rel
+    concept = read_json(concept_path)
+    mdx_errors = [
+        str(issue.get("message"))
+        for issue in target_issues
+        if str(issue.get("code")) == "MDX_PARSE_ERROR"
+    ]
+    repair_input = {
+        **concept,
+        "mdx_errors": mdx_errors,
+        "language": cfg.language,
+        "book_notes": cfg.book_notes,
+        "allowed_source_refs": sorted(_allowed_source_refs(state, cfg)),
+    }
+    result = await run_with_cache(
+        ConceptMdxRepairAgent,
+        repair_input,
+        model=cfg.model_for("mdx_repair"),
+        cache_dir=_cache_dir(cfg),
+        force=True,
+        runtime=cfg.llm_runtime,
+    )
+    write_json(concept_path, _json_model(result.result))
     return result.result
 
 

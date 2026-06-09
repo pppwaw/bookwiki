@@ -15,11 +15,13 @@ from pathlib import Path
 import pytest
 
 from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
+from bookwiki.agents.concept_mdx_repair_agent import ConceptMdxRepairAgent
 from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
 from bookwiki.pipeline.nodes import check_node
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import TestLLMRuntime
 from bookwiki.schemas.chapter import ChapterResult
+from bookwiki.schemas.concept import ConceptResult
 from tests.fakes import RecordingRuntime
 
 needs_node = pytest.mark.skipif(
@@ -149,3 +151,82 @@ async def test_chapter_mdx_repair_agent_echoes_draft_offline() -> None:
     )
     assert result.chapter_id == "chapter-1"
     assert result.owner_task_id == "chapter-1:chapter"
+
+
+# --------------------------------------------------------------------------- #
+# Concept pages - check_node validates them too (not just chapters)
+# --------------------------------------------------------------------------- #
+@needs_node
+def test_check_node_flags_uncompilable_concept_mdx(tmp_path: Path) -> None:
+    book_dir = tmp_path / "book"
+    docs = book_dir / "content" / "docs"
+    _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
+    # A concept page with a stray inline <cite> tag and bare math: both break MDX.
+    _write(
+        docs / "concepts" / "Sample-size.mdx",
+        "---\ntitle: Sample size\n---\n\n# Sample size\n\n"
+        '需要 <cite ref_id="p001">Solve {\\frac{a}{b}} \\le 10</cite> 个观测。\n',
+    )
+    cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+
+    result = check_node({"agent_results": {}, "concept_pages": {}}, cfg)
+
+    report = json.loads((book_dir / result["check_report"]).read_text(encoding="utf-8"))
+    mdx_issues = [i for i in report["issues"] if i["code"] == "MDX_PARSE_ERROR"]
+    assert mdx_issues
+    assert mdx_issues[0]["owner_task_id"] == "concept-mdx:Sample-size"
+    assert "concept-mdx:Sample-size" in result["repair_targets"]
+
+
+# --------------------------------------------------------------------------- #
+# ConceptMdxRepairAgent - fixes bare math + strips stray inline <cite> tags
+# --------------------------------------------------------------------------- #
+def _concept_repair_input() -> dict[str, object]:
+    return {
+        "name": "Sample size",
+        "summary_md": "样本量确定。",
+        "body_md": '需要 <cite ref_id="p001">Solve {\\frac{a}{b}} \\le 10</cite> 个观测。',
+        "related": ["Confidence interval"],
+        "citations": [{"ref_id": "p001", "quote": "solve"}],
+        "owner_task_id": "concept:Sample size",
+        "mdx_errors": ["line 7: Expected a closing tag for `<cite>`"],
+        "language": "zh-CN",
+        "book_notes": "",
+        "allowed_source_refs": ["p001"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_concept_mdx_repair_agent_returns_fixed_body() -> None:
+    fixed = {
+        "name": "Sample size",
+        "summary_md": "样本量确定。",
+        "body_md": "需要 $\\frac{a}{b} \\le 10$ 个观测。",
+        "related": ["Confidence interval"],
+        "citations": [{"ref_id": "p001", "quote": "solve"}],
+        "owner_task_id": "concept:Sample size",
+    }
+    runtime = RecordingRuntime([fixed])
+
+    result = await ConceptMdxRepairAgent().run(
+        _concept_repair_input(), model="deepseek-v4-pro", runtime=runtime
+    )
+
+    assert isinstance(result, ConceptResult)
+    assert "<cite" not in result.body_md
+    assert "$\\frac{a}{b} \\le 10$" in result.body_md
+    assert result.owner_task_id == "concept:Sample size"
+    # The diagnostics + body reach the prompt so the model can locate the fix.
+    prompt = runtime.calls[0]["user"]
+    assert "closing tag for `<cite>`" in prompt
+    assert "<cite" in prompt
+    assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"p001"}}
+
+
+@pytest.mark.asyncio
+async def test_concept_mdx_repair_agent_echoes_draft_offline() -> None:
+    result = await ConceptMdxRepairAgent().run(
+        _concept_repair_input(), model="stub", runtime=TestLLMRuntime()
+    )
+    assert result.name == "Sample size"
+    assert result.owner_task_id == "concept:Sample size"
