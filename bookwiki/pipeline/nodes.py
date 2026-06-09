@@ -43,6 +43,7 @@ from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.generate.sections import generate_chapter_sections
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
 from bookwiki.integrator.markdown_renderers import normalize_mdx_math
+from bookwiki.integrator.stitching import audit_stitching
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
@@ -51,8 +52,11 @@ from bookwiki.schemas.report import CheckReport, Issue
 from bookwiki.split.chapter_splitter import parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
 from bookwiki.utils.hashing import sha256_file, sha256_text
+from bookwiki.utils.logging import get_logger
 
 State = dict[str, Any]
+
+_LOG = get_logger(__name__)
 
 APPROVED_STRUCTURE_MARKER = "# bookwiki: approved-structure"
 PENDING_STRUCTURE_MARKER = "# bookwiki: pending-structure-review"
@@ -2201,6 +2205,14 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             "pages": concept_stem_list,
         },
     )
+    stitching = audit_stitching(content_dir, alias_map)
+    if not stitching.ok:
+        _LOG.warning(
+            "stitching audit found issues book_id=%s term_drift=%d unresolved_xrefs=%d",
+            cfg.book_id,
+            len(stitching.term_drift),
+            len(stitching.unresolved_xrefs),
+        )
     return {"content_ready": True, "content_index": _rel(index_path, cfg.book_dir)}
 
 

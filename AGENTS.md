@@ -4,9 +4,9 @@ BookWiki turns one book's source materials into an Obsidian-style vault, a SQLit
 
 Use `scripts/run.py <book_dir>` for the full pipeline. Use the thin stage scripts for focused work:
 `convert`, `caption`, `structure`, `split`, `generate`, `check`, `repair`, and `index`. The full graph
-runs `convert → caption → structure → split → generate → reconcile_concepts → concept_pages → integrate
-→ check → repair → index`. Control entry/exit with `--from <stage> --force`, `--to <stage>`,
-`--pause-after <stage>`, `--resume`, and `--dry-run` (there is no `--force-from`).
+runs `convert → caption → structure → split → build_skeleton → generate → reconcile_concepts →
+concept_pages → integrate → check → repair → index`. Control entry/exit with `--from <stage> --force`,
+`--to <stage>`, `--pause-after <stage>`, `--resume`, and `--dry-run` (there is no `--force-from`).
 
 The default runnable pipeline scope is the full graph through `index`; the pipeline is feature-complete,
 with only optional follow-ups left. Do not start the long-running site dev server
@@ -19,6 +19,14 @@ model to fill in image captions before structuring.
 The `structure` stage is a hard review gate. Before running `split`, the user must review
 `work/structure/proposed-structure.yaml`, edit `work/structure/approved-structure.yaml`, and mark
 it with a line exactly `# bookwiki: approved-structure`.
+
+After `split`, `build_skeleton` runs `SkeletonAgent` once over every chapter's source to produce the
+book-wide read-only contract (`work/concepts/skeleton.json`): a canonical glossary with each concept's
+first-owning chapter, an `alias_map` (every variant → canonical), and one-line `chapter_briefs`.
+`generate` injects each chapter's slice of that contract so chapters share terminology and can write
+neighbour transitions; `integrate` then converges terms (rewriting `[[alias]]` to canonical) and
+resolves cross-chapter concept mentions into `<PreviewLink>` tags, and audits the rendered vault for
+residual term drift / unresolved cross-references (see `bookwiki/integrator/stitching.py`).
 
 Keep agent outputs as Pydantic models. Agents do not write final Markdown; scheduler nodes write intermediate JSON and the integrator renders the vault.
 
