@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import inspect
 import json
 import mimetypes
 import os
+import random
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -12,9 +14,78 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from bookwiki.utils.logging import get_logger
+
+_LOG = get_logger(__name__)
+
 # A tool executor maps ``(tool_name, arguments)`` to a JSON-serialisable result.
 # It may be sync or async; ``generate_with_tools`` awaits awaitable results.
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]] | dict[str, Any]]
+
+
+_RATE_LIMIT_MARKERS = (
+    "ratelimit",
+    "rate limit",
+    "no deployments available",
+    "routerratelimiterror",
+    "too many requests",
+    "429",
+)
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """True if ``exc`` (or anything in its cause/context chain) is a rate-limit error.
+
+    Rate limits surface deeply nested: instructor wraps in ``InstructorRetryException``,
+    the router in ``RouterRateLimitError``, tenacity in ``RetryError``. We walk the chain
+    and match on type name / message rather than importing optional litellm types.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name = type(current).__name__.lower()
+        message = str(current).lower()
+        if "ratelimit" in name or any(marker in message for marker in _RATE_LIMIT_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+async def _acreate_with_backoff(
+    factory: Callable[[], Awaitable[Any]],
+    *,
+    max_attempts: int = 6,
+    base_delay: float = 5.0,
+    max_delay: float = 90.0,
+) -> Any:
+    """Call ``factory()``, retrying rate-limit errors with exponential backoff.
+
+    A sustained rate limit puts the deployment into cooldown (litellm default ~60s),
+    far longer than the in-call retries (router ``num_retries`` + instructor
+    ``max_retries``), so a busy run would otherwise crash. Here we wait the limit out:
+    delays grow ~5s, 10s, 20s, 40s, 80s (capped at ``max_delay``, jittered) — a budget
+    that outlasts the cooldown. Non-rate-limit errors propagate immediately.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        try:
+            return await factory()
+        except Exception as exc:
+            if not _is_rate_limit_error(exc) or attempt == max_attempts - 1:
+                raise
+            last_exc = exc
+            delay = min(max_delay, base_delay * (2.0**attempt)) + random.uniform(0.0, base_delay)
+            _LOG.warning(
+                "LLM rate limited (attempt %d/%d); backing off %.1fs: %s",
+                attempt + 1,
+                max_attempts,
+                delay,
+                str(exc)[:160],
+            )
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
 
 
 class LLMRuntime(Protocol):
@@ -97,12 +168,14 @@ class LiteLLMRuntime:
         self.router = router
         client = self.client if self.client is not None else build_instructor_client(router)
         self.client = client
-        result = await client.create(
-            model=model,
-            response_model=output_model,
-            messages=_messages(system=system, user=user, image_paths=image_paths),
-            max_retries=max_retries,
-            temperature=_temperature_for_model(model),
+        result = await _acreate_with_backoff(
+            lambda: client.create(
+                model=model,
+                response_model=output_model,
+                messages=_messages(system=system, user=user, image_paths=image_paths),
+                max_retries=max_retries,
+                temperature=_temperature_for_model(model),
+            )
         )
         if isinstance(result, output_model):
             return output_model.model_validate(result.model_dump(mode="json"), context=context)
@@ -127,12 +200,14 @@ class LiteLLMRuntime:
         self.router = router
         messages = _messages(system=system, user=user, image_paths=image_paths)
         for _round in range(max_tool_rounds):
-            response = await router.acompletion(
-                model=model,
-                messages=messages,
-                tools=list(tools),
-                tool_choice="auto",
-                temperature=_temperature_for_model(model),
+            response = await _acreate_with_backoff(
+                lambda: router.acompletion(
+                    model=model,
+                    messages=messages,
+                    tools=list(tools),
+                    tool_choice="auto",
+                    temperature=_temperature_for_model(model),
+                )
             )
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
@@ -146,21 +221,23 @@ class LiteLLMRuntime:
 
         client = self.client if self.client is not None else build_instructor_client(router)
         self.client = client
-        result = await client.create(
-            model=model,
-            response_model=output_model,
-            messages=[
-                *messages,
-                {
-                    "role": "user",
-                    "content": (
-                        "Return the final answer as JSON matching the requested schema. "
-                        "Do not call tools."
-                    ),
-                },
-            ],
-            max_retries=max_retries,
-            temperature=_temperature_for_model(model),
+        result = await _acreate_with_backoff(
+            lambda: client.create(
+                model=model,
+                response_model=output_model,
+                messages=[
+                    *messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "Return the final answer as JSON matching the requested schema. "
+                            "Do not call tools."
+                        ),
+                    },
+                ],
+                max_retries=max_retries,
+                temperature=_temperature_for_model(model),
+            )
         )
         if isinstance(result, output_model):
             return output_model.model_validate(result.model_dump(mode="json"), context=context)
@@ -230,7 +307,10 @@ def build_router() -> Any:
         routing_strategy="usage-based-routing-v2",
         num_retries=3,
         retry_after=2,
-        fallbacks=[{"deepseek-v4-pro": ["deepseek-v4-flash"]}],
+        fallbacks=[
+            {"deepseek-v4-pro": ["deepseek-v4-flash"]},
+            {"deepseek-v4-flash": ["deepseek-v4-pro"]},
+        ],
     )
 
 

@@ -4,10 +4,12 @@ import base64
 import os
 
 import pytest
+from pydantic import BaseModel
 
 from bookwiki.scheduler.llm import (
     LiteLLMRuntime,
     MissingLLMApiKey,
+    _is_rate_limit_error,
     _model_list,
     build_instructor_client,
     load_dotenv,
@@ -230,3 +232,84 @@ async def test_litellm_runtime_loads_dotenv_before_key_check(
 
     assert result.chapter_id == "chapter-6"
     assert os.environ["DEEPSEEK_API_KEY"] == "from-dotenv"
+
+
+class _Tiny(BaseModel):
+    value: str
+
+
+class _RouterRateLimit(Exception):
+    """Stand-in for litellm's RouterRateLimitError (matched by name/message)."""
+
+
+class _FlakyClient:
+    def __init__(self, payload: dict[str, object], *, fail_times: int, exc: Exception) -> None:
+        self.payload = payload
+        self.fail_times = fail_times
+        self.exc = exc
+        self.calls = 0
+
+    async def create(self, **kwargs: object) -> object:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise self.exc
+        output_model = kwargs["response_model"]
+        return output_model.model_validate(self.payload, context=kwargs.get("context"))
+
+
+def test_is_rate_limit_error_walks_cause_chain() -> None:
+    assert _is_rate_limit_error(_RouterRateLimit("boom"))
+    assert _is_rate_limit_error(
+        RuntimeError("No deployments available for selected model, Try again in 5 seconds")
+    )
+    nested = ValueError("wrapper")
+    nested.__cause__ = _RouterRateLimit("inner rate limit")
+    assert _is_rate_limit_error(nested)
+    assert not _is_rate_limit_error(ValueError("just a bad value"))
+
+
+@pytest.mark.asyncio
+async def test_generate_backs_off_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    sleeps: list[float] = []
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr("bookwiki.scheduler.llm.asyncio.sleep", _fake_sleep)
+    client = _FlakyClient(
+        {"value": "ok"},
+        fail_times=2,
+        exc=_RouterRateLimit("No deployments available, Try again in 5 seconds"),
+    )
+    runtime = LiteLLMRuntime(router=object())
+    runtime.client = client
+
+    result = await runtime.generate(
+        model="deepseek-v4-pro", output_model=_Tiny, system="s", user="u"
+    )
+
+    assert isinstance(result, _Tiny) and result.value == "ok"
+    assert client.calls == 3  # 2 rate-limit failures + 1 success
+    assert len(sleeps) == 2 and sleeps[0] < sleeps[1]  # exponential backoff
+
+
+@pytest.mark.asyncio
+async def test_generate_reraises_non_rate_limit_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "bookwiki.scheduler.llm.asyncio.sleep",
+        lambda delay: sleeps.append(delay),
+    )
+    client = _FlakyClient({"value": "ok"}, fail_times=2, exc=ValueError("schema mismatch"))
+    runtime = LiteLLMRuntime(router=object())
+    runtime.client = client
+
+    with pytest.raises(ValueError, match="schema mismatch"):
+        await runtime.generate(model="deepseek-v4-pro", output_model=_Tiny, system="s", user="u")
+
+    assert client.calls == 1  # no retries for non-rate-limit errors
+    assert sleeps == []
