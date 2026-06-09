@@ -180,3 +180,84 @@ async def test_generate_chapter_sections_records_fallback_warning(tmp_path: Path
     assert "## S0" in result.chapter.body_md
     # All four scripted responses after the plan were consumed (1 + 2 repairs).
     assert runtime.responses == []
+
+
+def _two_section_plan() -> dict[str, Any]:
+    return {
+        "chapter_id": "chapter-1",
+        "sections": [
+            {
+                "chapter_id": "chapter-1",
+                "index": 0,
+                "title": "Foundations",
+                "topics_covered": ["t0"],
+                "concepts_introduced": [],
+                "learning_goal": "lay groundwork",
+            },
+            {
+                "chapter_id": "chapter-1",
+                "index": 1,
+                "title": "Estimators",
+                "topics_covered": ["t1"],
+                "concepts_introduced": [],
+                "learning_goal": "build estimators",
+            },
+        ],
+        "owner_task_id": "chapter-1:section_plan",
+    }
+
+
+def _section_response_at(index: int, title: str) -> dict[str, Any]:
+    return {
+        "chapter_id": "chapter-1",
+        "section_index": index,
+        "title": title,
+        "body_md": "Section body about the concept.",
+        "concepts": [],
+        "citations": [{"ref_id": "src-p001", "quote": "content"}],
+        "figure_requests": [],
+        "owner_task_id": f"chapter-1:section:{index:03d}",
+    }
+
+
+@pytest.mark.asyncio
+async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path: Path) -> None:
+    # Each section must see the whole chapter's outline (so a later same-chapter
+    # topic is not mistaken for "the next chapter") plus its own position flags.
+    runtime = RecordingRuntime(
+        [
+            _two_section_plan(),
+            _section_response_at(0, "Foundations"),
+            _section_response_at(1, "Estimators"),
+            _quiz_card_response(),
+            _summary_response(),
+        ]
+    )
+    cfg = _cfg(tmp_path / "book", runtime)
+
+    await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id="chapter-1",
+        title="Search",
+        source_md=SOURCE_MD,
+        source_path="work/chapter_sources/chapter-1/source.md",
+        topics=["t0", "t1"],
+        figures=[],
+        skeleton_payload={},
+    )
+
+    # calls: [plan, section-0, section-1, quiz_card, summary]
+    section0 = runtime.calls[1]["user"]
+    section1 = runtime.calls[2]["user"]
+    summary = runtime.calls[4]["user"]
+
+    # Section 0 can see the later section's title only via the injected outline.
+    assert '"chapter_outline"' in section0
+    assert "Estimators" in section0
+    # Position flags: only the final section is is_last.
+    assert '"is_first": true' in section0
+    assert '"is_last": false' in section0
+    assert '"is_last": true' in section1
+    # The summary is scoped by the same outline.
+    assert '"chapter_outline"' in summary
+

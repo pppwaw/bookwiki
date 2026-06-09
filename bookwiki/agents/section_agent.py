@@ -41,8 +41,10 @@ class SectionAgent:
 
 输入提供：本段规格 `section`（`title`、`topics_covered`、`concepts_introduced`、
 `learning_goal`）、全书术语表 `glossary` 与 `alias_map`、本章拥有的概念
-`chapter_owns`、仅引用他章的概念 `chapter_uses`、邻章摘要 `prev_brief`/`next_brief`，
-以及可嵌入的 `figures`。
+`chapter_owns`、仅引用他章的概念 `chapter_uses`、邻章摘要 `prev_brief`/`next_brief`、
+**本章完整小节大纲 `chapter_outline`**（各段 `index`/`title`/`learning_goal`）、
+**本段位置 `section_position`**（`index`/`total`/`is_first`/`is_last`），以及可嵌入的
+`figures`。
 
 源文档被包裹为如下形式：
 <document>
@@ -56,8 +58,13 @@ class SectionAgent:
 - `concepts_introduced` 中的概念在本段首次定义；`chapter_uses` 中的概念**只引用、
   不重新定义**（可写「正如术语表/前文所定义的 X……」）。
 - 术语统一：凡 `alias_map` 中出现的变体，一律改写为其规范名（canonical）。
-- 衔接：如果是首段且有 `prev_brief`，用一句话承接上一章；如果是末段且有
-  `next_brief`，可用一句话预告下一章。
+- 衔接（关键，避免跨章误判）：参照 `chapter_outline` 了解本章整体脉络与各段先后，
+  过渡只在**本章内部**承上启下（"上一段已建立 X，本段在此基础上…"）。
+  - `chapter_outline` 中列出的主题**都属于本章**，**绝不可**把它们说成"下一章/后面的
+    章节/未来会学"——它们就在本章稍后的小节里。本章标题点明的主题同理属于本章。
+  - 仅当 `section_position.is_last` 为真且有 `next_brief` 时，才可用一句话预告**下一章**；
+    其余段一律不写任何跨章预告。
+  - `section_position.is_first` 为真且有 `prev_brief` 时，可用一句话承接上一章。
 - `body_md` **不要**包含章节级 `# 一级标题`；也不要重复写本段的小节标题
   （渲染器会自动加 `## {section.title}`）。直接从正文段落开始。
 - 在语境中展示公式：先说明符号含义再使用。显式点出常见误区。

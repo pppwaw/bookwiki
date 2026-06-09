@@ -106,9 +106,17 @@ async def generate_chapter_sections(
     plan = await _plan_sections(cfg, {**base_payload, "topics": topics, **skeleton_payload})
     cache_results.append(plan)
     section_plan: SectionPlan = plan.result
+    ordered_specs = sorted(section_plan.sections, key=lambda item: item.index)
+    # Inject the chapter's own outline into every section call so a section knows
+    # what the rest of THIS chapter covers (and its own position). Without it a
+    # section mistakes a later same-chapter topic for "the next chapter".
+    chapter_outline = [
+        {"index": spec.index, "title": spec.title, "learning_goal": spec.learning_goal}
+        for spec in ordered_specs
+    ]
 
     sections: list[SectionResult] = []
-    for spec in sorted(section_plan.sections, key=lambda item: item.index):
+    for spec in ordered_specs:
         section, section_cache, section_issue = await _generate_validated_section(
             cfg=cfg,
             base_payload=base_payload,
@@ -116,6 +124,7 @@ async def generate_chapter_sections(
             figures=figures,
             skeleton_payload=skeleton_payload,
             allowed_refs=allowed_refs,
+            chapter_outline=chapter_outline,
         )
         cache_results.extend(section_cache)
         if section_issue is not None:
@@ -157,6 +166,7 @@ async def generate_chapter_sections(
             **base_payload,
             "chapter_result": chapter.model_dump(mode="json"),
             "chapter_body_md": chapter.body_md,
+            "chapter_outline": chapter_outline,
         },
         model=cfg.model_for("summary"),
         cache_dir=cfg.cache_dir / "tasks",
@@ -193,13 +203,26 @@ async def _generate_validated_section(
     figures: list[dict[str, str]],
     skeleton_payload: dict[str, Any],
     allowed_refs: set[str],
+    chapter_outline: list[dict[str, Any]],
 ) -> tuple[SectionResult, list[CacheResult], Issue | None]:
     cache_results: list[CacheResult] = []
+    last_index = chapter_outline[-1]["index"] if chapter_outline else spec.index
+    section_position = {
+        "index": spec.index,
+        "total": len(chapter_outline),
+        "is_first": spec.index == 0,
+        "is_last": spec.index == last_index,
+    }
+    section_context = {
+        "chapter_outline": chapter_outline,
+        "section_position": section_position,
+    }
     section_input = {
         **base_payload,
         "section": spec.model_dump(mode="json"),
         "figures": figures,
         **skeleton_payload,
+        **section_context,
     }
     generated = await run_with_cache(
         SectionAgent,
@@ -229,6 +252,7 @@ async def _generate_validated_section(
                 "previous_section": section.model_dump(mode="json"),
                 "issues": list(validation.messages),
                 **skeleton_payload,
+                **section_context,
             },
             model=cfg.model_for("section_repair"),
             cache_dir=cfg.cache_dir / "tasks",

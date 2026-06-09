@@ -54,6 +54,19 @@ def test_quiz_prompt_requires_application_questions() -> None:
     assert "应用/计算题" in QuizCardAgent.prompt_template.body
 
 
+def test_section_prompt_uses_chapter_outline_for_transitions() -> None:
+    # A section must reason about the whole chapter's outline + its own position,
+    # so same-chapter topics are never mislabelled as "the next chapter".
+    body = SectionAgent.prompt_template.body
+    assert "chapter_outline" in body
+    assert "section_position" in body
+    assert "is_last" in body
+
+
+def test_summary_prompt_scopes_to_chapter_outline() -> None:
+    assert "chapter_outline" in SummaryAgent.prompt_template.body
+
+
 def test_prompt_cache_key_reflects_agent_local_prompt_changes(monkeypatch) -> None:
     original = prompt_cache_key(_PromptedAgent.prompt_template)
     monkeypatch.setattr(

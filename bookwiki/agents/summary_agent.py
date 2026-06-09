@@ -38,7 +38,10 @@ class SummaryAgent:
 - 不要在 key_points 中返回对象。
 - 只在顶层 citations 数组中放置引用对象。
 - 保持引用简短并与源文本绑定。
-- 不要引入章节源文本中不存在的概念。""",
+- 不要引入章节源文本中不存在的概念。
+- 本章范围以 `chapter_outline`（各小节大纲）与已写好的章节正文为准：摘要只描述
+  **本章已讲**的内容；`chapter_outline` 中列出的主题（以及本章标题点明的主题）都属于
+  本章，**绝不可**把它们写成"下一章/后面章节/未来会学"。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> SummaryResult:
