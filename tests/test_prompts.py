@@ -47,6 +47,8 @@ def test_common_prompt_forbids_courseware_meta_references() -> None:
     assert "内容自洽" in rendered.system
     assert "课件" in rendered.system
     assert "citations" in rendered.system
+    # Source-language (English) sentences must be absorbed and rewritten, not pasted.
+    assert "目标语言重写" in rendered.system
 
 
 def test_quiz_prompt_requires_application_questions() -> None:
