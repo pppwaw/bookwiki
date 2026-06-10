@@ -520,8 +520,36 @@ def _strip_mdx_fence(content: str) -> str:
     return match.group(1).strip() if match else text
 
 
+_VALID_ESCAPE_NEXT = set('\\"/bfnrtu')
+
+
 def _repair_json_escapes(content: str) -> str:
-    return re.sub(r'\\(?![\\"/bfnrtu])', r"\\\\", content)
+    """Repair only isolated invalid backslash escapes while preserving valid pairs."""
+    out: list[str] = []
+    i, n = 0, len(content)
+    while i < n:
+        ch = content[i]
+        if ch == "\\":
+            nxt = content[i + 1] if i + 1 < n else ""
+            if nxt in _VALID_ESCAPE_NEXT:
+                out.append(ch)
+                out.append(nxt)
+                i += 2
+                continue
+            out.append("\\\\")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _content_is_valid_json(text: str) -> bool:
+    try:
+        json.loads(_strip_json_fence(text))
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 def _repair_response_json_escapes(response: Any) -> Any:
@@ -538,11 +566,11 @@ def _repair_response_json_escapes(response: Any) -> Any:
             continue
         if isinstance(message, dict):
             content = message.get("content")
-            if isinstance(content, str):
+            if isinstance(content, str) and not _content_is_valid_json(content):
                 message["content"] = _repair_json_escapes(content)
             continue
         content = getattr(message, "content", None)
-        if isinstance(content, str):
+        if isinstance(content, str) and not _content_is_valid_json(content):
             message.content = _repair_json_escapes(content)
     return response
 

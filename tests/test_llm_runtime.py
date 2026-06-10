@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
@@ -11,6 +13,8 @@ from bookwiki.scheduler.llm import (
     MissingLLMApiKey,
     _is_rate_limit_error,
     _model_list,
+    _repair_json_escapes,
+    _repair_response_json_escapes,
     build_instructor_client,
     load_dotenv,
 )
@@ -89,6 +93,67 @@ def test_moonshot_model_list_uses_official_api_base(monkeypatch: pytest.MonkeyPa
     moonshot = next(item for item in _model_list() if item["model_name"] == "kimi-k2.6")
 
     assert moonshot["litellm_params"]["api_base"] == "https://api.moonshot.cn/v1"
+
+
+def test_repair_keeps_valid_latex_json() -> None:
+    content = r'{"q":"$\\max\\{x\\}$"}'
+
+    repaired = _repair_json_escapes(content)
+
+    assert json.loads(repaired)["q"] == r"$\max\{x\}$"
+
+
+def test_repair_fixes_underescaped_latex() -> None:
+    content = '{"q":"$\\max$"}'
+
+    repaired = _repair_json_escapes(content)
+
+    assert json.loads(repaired)["q"] == r"$\max$"
+
+
+def test_repair_idempotent_on_valid_json() -> None:
+    content = r'{"q":"$\\frac\\{\\partial f\\}\\{\\partial x\\}$"}'
+
+    repaired = _repair_json_escapes(content)
+
+    assert repaired == content
+    assert _repair_json_escapes(repaired) == content
+
+
+def test_response_repair_skips_valid_content() -> None:
+    content = r'{"q":"$\\max\\{x\\}$"}'
+    response = {"choices": [{"message": {"content": content}}]}
+
+    _repair_response_json_escapes(response)
+
+    assert response["choices"][0]["message"]["content"] == content
+
+
+def test_response_repair_fixes_invalid_content() -> None:
+    response = {"choices": [{"message": {"content": '{"q":"$\\max$"}'}}]}
+
+    _repair_response_json_escapes(response)
+
+    content = response["choices"][0]["message"]["content"]
+    assert json.loads(content)["q"] == r"$\max$"
+
+
+def test_response_repair_handles_object_message_content() -> None:
+    message = SimpleNamespace(content='{"q":"$\\sigma$"}')
+    response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    _repair_response_json_escapes(response)
+
+    assert json.loads(message.content)["q"] == r"$\sigma$"
+
+
+def test_repair_handles_newline_quote_and_unicode_escapes() -> None:
+    content = r'{"q":"line\n\"quoted\"\u03bc"}'
+
+    repaired = _repair_json_escapes(content)
+
+    assert repaired == content
+    assert json.loads(repaired)["q"] == 'line\n"quoted"μ'
 
 
 @pytest.mark.asyncio
