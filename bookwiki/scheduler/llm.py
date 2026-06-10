@@ -302,15 +302,15 @@ def build_router() -> Any:
             "LiteLLM is required for real LLM calls; install the runtime extra"
         ) from exc
 
+    # No cross-model fallback: pro/flash are deliberately chosen per task (quality vs
+    # cost) and are NOT interchangeable. Rate limits are handled by waiting the cooldown
+    # out on the SAME model (see ``_acreate_with_backoff``), so a task always runs on its
+    # intended model instead of silently degrading to / inflating onto the other.
     return Router(
         model_list=_model_list(),
         routing_strategy="usage-based-routing-v2",
         num_retries=3,
         retry_after=2,
-        fallbacks=[
-            {"deepseek-v4-pro": ["deepseek-v4-flash"]},
-            {"deepseek-v4-flash": ["deepseek-v4-pro"]},
-        ],
     )
 
 
