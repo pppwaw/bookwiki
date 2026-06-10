@@ -10,6 +10,7 @@ from bookwiki.agents.concept_content_rewrite_agent import ConceptContentRewriteA
 from bookwiki.agents.concept_extract import ConceptExtractAgent
 from bookwiki.agents.concept_mdx_repair_agent import ConceptMdxRepairAgent
 from bookwiki.agents.concept_reconcile import ConceptReconcileAgent
+from bookwiki.agents.knowledge_quiz_agent import KnowledgeQuizAgent
 from bookwiki.agents.quality_check_agent import QualityCheckAgent
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
 from bookwiki.agents.review_agent import ReviewAgent
@@ -33,6 +34,7 @@ __all__ = [
     "ConceptMdxRepairAgent",
     "ConceptExtractAgent",
     "ConceptReconcileAgent",
+    "KnowledgeQuizAgent",
     "QualityCheckAgent",
     "RepairSectionAgent",
     "ReviewAgent",

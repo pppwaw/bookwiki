@@ -5,7 +5,8 @@ plan / generate / validate / repair / assemble loop:
 
     plan_sections          -> SectionPlan (teaching units)
     for each section:
-        generate_one_section -> SectionResult (prose + local knowledge quiz)
+        generate_one_section -> SectionResult (prose + flat metadata)
+        knowledge_quiz       -> section-level definition/distinction quiz JSON
         validate_section     -> deterministic checks vs the book skeleton
         repair_section        -> up to ``maxSectionRepairRounds`` retries
         (fallback)            -> record a warning Issue, keep the imperfect body
@@ -33,6 +34,7 @@ from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent
 from bookwiki.agents.card_agent import CardAgent, chapter_body_blocks
 from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
 from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
+from bookwiki.agents.knowledge_quiz_agent import KnowledgeQuizAgent
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
 from bookwiki.agents.section_agent import SectionAgent
 from bookwiki.agents.section_planner_agent import SectionPlannerAgent
@@ -539,6 +541,22 @@ async def _generate_validated_section(
             ),
             owner_task_id=f"{spec.chapter_id}:chapter",
         )
+    knowledge_quiz = await run_with_cache(
+        KnowledgeQuizAgent,
+        {
+            **base_payload,
+            "section_index": section.section_index,
+            "title": section.title,
+            "body_md": section.body_md,
+            "concepts": section.concepts or spec.concepts_introduced,
+            "allowed_source_refs": sorted(allowed_refs),
+        },
+        model=cfg.model_for("knowledge_quiz"),
+        cache_dir=cfg.cache_dir / "tasks",
+        runtime=cfg.llm_runtime,
+    )
+    cache_results.append(knowledge_quiz)
+    section = section.model_copy(update={"knowledge_questions": knowledge_quiz.result.items})
     return section, cache_results, issue
 
 

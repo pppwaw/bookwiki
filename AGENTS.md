@@ -36,14 +36,16 @@ MDX-direct 输出：模型返回 YAML frontmatter（结构化元数据）+ raw M
 runtime 的非法 JSON 转义修复层兜底（如 LaTeX `\mu` 这类 JSON-invalid escape 会在 instructor 解析前修复）。
 
 The `generate` stage is agentic and runs per chapter: `SectionPlannerAgent` splits the chapter into
-teaching units, `SectionAgent` writes each section's prose and 段级知识题 (section-level validate/repair
-with a `maxSectionRepairRounds` fallback that logs a warning and keeps the imperfect section), then the
-assembled chapter body runs inline validation/refactor self-heal before quiz/summary: MDX, source-ref
-citations, and (only when `generation.qualityCheck=true`) semantic quality are checked and repaired via
-the existing chapter MDX/content agents. 应用题由 `ApplicationQuizAgent` (`deepseek-v4-pro`) from
-section `application_question_requests` 专做并 inline 校验/有界修复; recall 卡片保持章级 `CardAgent`
-(`deepseek-v4-flash`) over the healed body, and `SummaryAgent` consumes the healed body. When a section
-needs a figure the source PDF lacks, `SectionAgent` declares a `figure_request` and `SupplementImageAgent`
+teaching units, `SectionAgent` writes each section's prose with flat MDX-direct frontmatter only
+(section-level validate/repair with a `maxSectionRepairRounds` fallback that logs a warning and keeps
+the imperfect section), then 段级知识题改由 schema 引导的 `KnowledgeQuizAgent` (JSON, flash) 按段产出，
+不再进 `SectionAgent` 的 YAML frontmatter；`SectionAgent` 的 MDX-direct frontmatter 只留扁平元数据。
+The assembled chapter body runs inline validation/refactor self-heal before quiz/summary: MDX,
+source-ref citations, and (only when `generation.qualityCheck=true`) semantic quality are checked and
+repaired via the existing chapter MDX/content agents. 应用题由 `ApplicationQuizAgent` (`deepseek-v4-pro`)
+from section `application_question_requests` 专做并 inline 校验/有界修复; recall 卡片保持章级
+`CardAgent` (`deepseek-v4-flash`) over the healed body, and `SummaryAgent` consumes the healed body.
+When a section needs a figure the source PDF lacks, `SectionAgent` declares a `figure_request` and `SupplementImageAgent`
 fills it by writing matplotlib code through LiteLLM function-calling; generated figures land under
 `work/assets/generated/` and are merged into the chapter figure index so the integrator keeps them.
 

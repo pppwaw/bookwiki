@@ -85,10 +85,7 @@ class SectionAgent:
 - 不需要新图时 `figure_requests` 留空；每个 `figure_requests` 项的 `figure_ref` 都必须
    与正文中的某个 <BookFigure id="..."/> 占位一致。不要滥用，只在图能显著帮助理解时请求。
 
-=== 段级知识题与应用题请求 ===
-- `knowledge_questions`：写完本段正文后，额外产出 1-2 道只考查**本段已经教过内容**的
-  定义/辨析/概念理解题。题干要具体，选项至少两个且只有一个正确；解释用一两句说明为什么。
-  这些题**不得**要求计算、代入数值、估计或推导；应用/计算题不在这里直接写。
+=== 应用题请求 ===
 - `application_question_requests`：仅当本段确实适合做应用/计算题时，声明结构化请求；可以为空。
   每项说明 `topic`、`concept`、`rationale`，以及可支撑该题的 `source_refs`。不要发明源引用，
   `source_refs` 只能来自已有 <chunk ref="...">。真正的应用题稍后由专门 agent 基于全章正文填写。
@@ -103,13 +100,11 @@ class SectionAgent:
 输出格式（MDX-direct）：
 - 只返回 YAML frontmatter + raw MDX body，不要返回 JSON。
 - frontmatter 字段：`section_index`、`title`、`concepts`、`citations`、`figure_requests`、
-  `knowledge_questions`、`application_question_requests`。
+  `application_question_requests`。
 - 不要在 frontmatter 中输出 `chapter_id` 或 `owner_task_id`；系统会用确定性默认值注入。
-- frontmatter 里任何含 LaTeX 反斜杠的字段（题干、解释、引用 quote 等）必须使用 YAML
+- frontmatter 里任何含 LaTeX 反斜杠的字段（引用 quote 等）必须使用 YAML
   单引号标量或块标量，确保反斜杠按字面保留。
-- frontmatter 完整示例（**字段名必须逐字一致**：knowledge_questions 用
-  `question`/`choices`/`answer`/`explanation`/`citations`，**绝不要**用 `stem`/`options`
-  等别名；答案即使是数字也写成带引号字符串）：
+- frontmatter 完整示例：
 ```
 section_index: 0
 title: 抽样分布
@@ -118,12 +113,6 @@ citations:
   - ref_id: Week-9-p012
     quote: '统计量的分布称为抽样分布'
 figure_requests: []
-knowledge_questions:
-  - question: '以下哪一项是统计量？'
-    choices: ['$\\bar{X}$', '$\\mu$', '$\\sigma$']
-    answer: '$\\bar{X}$'
-    explanation: '统计量不含未知参数，而 $\\mu$、$\\sigma$ 是参数。'
-    citations: []
 application_question_requests:
   - topic: '样本均值的分布'
     concept: 'Sampling distribution'

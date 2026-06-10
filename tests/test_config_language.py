@@ -35,6 +35,7 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
     assert cfg.generation == DEFAULT_GENERATION_EXPECTED
     assert cfg.notes_path == "book.notes.md"
     assert "section" in cfg.models
+    assert cfg.models["knowledge_quiz"] == "deepseek-v4-flash"
     assert "quiz" not in cfg.models
     assert cfg.models["vision"] == "kimi-k2.6"
 
@@ -45,6 +46,7 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
     assert payload["generation"] == DEFAULT_GENERATION_EXPECTED
     assert payload["notesPath"] == "book.notes.md"
     assert "section" in payload["models"]
+    assert payload["models"]["knowledge_quiz"] == "deepseek-v4-flash"
     assert "quiz" not in payload["models"]
     assert payload["models"]["vision"] == "kimi-k2.6"
 

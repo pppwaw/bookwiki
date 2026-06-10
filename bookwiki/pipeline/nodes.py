@@ -20,6 +20,7 @@ from bookwiki.agents import (
     ConceptExtractAgent,
     ConceptMdxRepairAgent,
     ConceptReconcileAgent,
+    KnowledgeQuizAgent,
     ReviewAgent,
     SectionAgent,
     SkeletonAgent,
@@ -61,6 +62,7 @@ from bookwiki.utils.hashing import sha256_file, sha256_text
 from bookwiki.utils.logging import get_logger
 
 _APPLICATION_QUIZ_REQUEST_SCHEMA = ApplicationQuizRequest
+_KNOWLEDGE_QUIZ_AGENT = KnowledgeQuizAgent
 
 State = dict[str, Any]
 

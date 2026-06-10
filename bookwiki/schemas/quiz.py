@@ -24,3 +24,10 @@ class QuizResult(VersionedModel):
     items: list[QuizItem] = Field(default_factory=list)
     placements: list[QuizPlacement] = Field(default_factory=list)
     owner_task_id: str
+
+
+class KnowledgeQuizResult(VersionedModel):
+    chapter_id: str
+    section_index: int
+    items: list[QuizItem] = Field(default_factory=list)
+    owner_task_id: str
