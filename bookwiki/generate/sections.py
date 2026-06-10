@@ -5,12 +5,13 @@ plan / generate / validate / repair / assemble loop:
 
     plan_sections          -> SectionPlan (teaching units)
     for each section:
-        generate_one_section -> SectionResult (prose only)
+        generate_one_section -> SectionResult (prose + local knowledge quiz)
         validate_section     -> deterministic checks vs the book skeleton
         repair_section        -> up to ``maxSectionRepairRounds`` retries
         (fallback)            -> record a warning Issue, keep the imperfect body
     assemble_chapter_result -> ChapterResult (full body_md)
-    QuizCardAgent           -> quiz + card from the assembled body
+    ApplicationQuizAgent    -> application/computation quiz from section requests
+    CardAgent               -> recall cards from the assembled body
     SummaryAgent            -> chapter summary
 
 It is intentionally plain ``async`` Python (a ``while`` loop, no compiled
@@ -28,14 +29,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bookwiki.agents._helpers import SOURCE_REF_RE
+from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent
+from bookwiki.agents.card_agent import CardAgent, chapter_body_blocks
 from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
 from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
-from bookwiki.agents.quiz_card_agent import QuizCardAgent, chapter_body_blocks
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
 from bookwiki.agents.section_agent import SectionAgent
 from bookwiki.agents.section_planner_agent import SectionPlannerAgent
 from bookwiki.agents.summary_agent import SummaryAgent
 from bookwiki.agents.supplement_image_agent import SupplementImageAgent
+from bookwiki.checkers.mdx_validator import validate_mdx
 from bookwiki.generate.figures import (
     build_book_figure_tag,
     generated_asset_relpath,
@@ -52,9 +55,9 @@ from bookwiki.schemas.card import CardResult
 from bookwiki.schemas.chapter import ChapterResult
 from bookwiki.schemas.common import Citation
 from bookwiki.schemas.figure import ImageSupplementResult
-from bookwiki.schemas.quiz import QuizPlacement, QuizResult
+from bookwiki.schemas.quiz import QuizItem, QuizPlacement, QuizResult
 from bookwiki.schemas.report import Issue
-from bookwiki.schemas.section import SectionPlan, SectionResult, SectionSpec
+from bookwiki.schemas.section import ApplicationQuizRequest, SectionPlan, SectionResult, SectionSpec
 from bookwiki.schemas.summary import SummaryResult
 
 DEFAULT_MAX_SECTION_REPAIR_ROUNDS = 2
@@ -156,21 +159,39 @@ async def generate_chapter_sections(
     if chapter_issue is not None:
         issues.append(chapter_issue)
 
-    quiz_card = await run_with_cache(
-        QuizCardAgent,
+    knowledge_items = [question for section in sections for question in section.knowledge_questions]
+    requests = [
+        request for section in sections for request in section.application_question_requests
+    ]
+    application_quiz, application_cache, application_issue = await _generate_application_quiz(
+        cfg=cfg,
+        base_payload=base_payload,
+        chapter=chapter,
+        requests=requests,
+        allowed_refs=allowed_refs,
+    )
+    cache_results.extend(application_cache)
+    if application_issue is not None:
+        issues.append(application_issue)
+    quiz = _build_chapter_quiz(
+        chapter_id=chapter_id,
+        body_md=chapter.body_md,
+        items=[*knowledge_items, *application_quiz.items],
+    )
+
+    card_result = await run_with_cache(
+        CardAgent,
         {
             **base_payload,
-            "quiz_per_chapter": cfg.quiz_per_chapter,
             "cards_per_chapter": cfg.cards_per_chapter,
             "chapter_body_md": chapter.body_md,
         },
-        model=cfg.model_for("quiz_card"),
+        model=cfg.model_for("card"),
         cache_dir=cfg.cache_dir / "tasks",
         runtime=cfg.llm_runtime,
     )
-    cache_results.append(quiz_card)
-    quiz = _normalize_quiz_placements(quiz_card.result.quiz, chapter.body_md)
-    card: CardResult = quiz_card.result.card
+    cache_results.append(card_result)
+    card: CardResult = card_result.result
 
     summary = await run_with_cache(
         SummaryAgent,
@@ -291,6 +312,138 @@ def _quality_findings_from_artifact_issues(
         for issue in issues
         if issue.kind == "quality"
     ]
+
+
+async def _generate_application_quiz(
+    *,
+    cfg: BookConfig,
+    base_payload: dict[str, Any],
+    chapter: ChapterResult,
+    requests: list[ApplicationQuizRequest],
+    allowed_refs: set[str],
+) -> tuple[QuizResult, list[CacheResult], Issue | None]:
+    cache_results: list[CacheResult] = []
+    request_payloads = [request.model_dump(mode="json") for request in requests]
+    quiz = await _run_application_quiz(
+        cfg=cfg,
+        base_payload=base_payload,
+        chapter=chapter,
+        requests=request_payloads,
+        allowed_refs=allowed_refs,
+        mdx_errors=[],
+        force=False,
+    )
+    cache_results.append(quiz)
+    result: QuizResult = quiz.result
+    errors = _application_quiz_mdx_errors(result.items)
+    max_rounds = int(cfg.generation.get("maxRepairRounds", 1) or 1)
+    rounds = 0
+    while errors and rounds < max_rounds:
+        rounds += 1
+        repaired = await _run_application_quiz(
+            cfg=cfg,
+            base_payload=base_payload,
+            chapter=chapter,
+            requests=request_payloads,
+            allowed_refs=allowed_refs,
+            mdx_errors=errors,
+            force=True,
+        )
+        cache_results.append(repaired)
+        result = repaired.result
+        errors = _application_quiz_mdx_errors(result.items)
+
+    if not errors:
+        return result, cache_results, None
+    return (
+        result,
+        cache_results,
+        Issue(
+            severity="warning",
+            code="QUIZ_VALIDATION_UNRESOLVED",
+            message=(
+                f"{chapter.chapter_id} application quiz kept after inline validation rounds: "
+                f"{'; '.join(errors)}"
+            ),
+            owner_task_id=f"{chapter.chapter_id}:quiz",
+        ),
+    )
+
+
+async def _run_application_quiz(
+    *,
+    cfg: BookConfig,
+    base_payload: dict[str, Any],
+    chapter: ChapterResult,
+    requests: list[dict[str, Any]],
+    allowed_refs: set[str],
+    mdx_errors: list[str],
+    force: bool,
+) -> CacheResult:
+    return await run_with_cache(
+        ApplicationQuizAgent,
+        {
+            **base_payload,
+            "chapter_body_md": chapter.body_md,
+            "requests": requests,
+            "allowed_source_refs": sorted(allowed_refs),
+            "mdx_errors": mdx_errors,
+        },
+        model=cfg.model_for("application_quiz"),
+        cache_dir=cfg.cache_dir / "tasks",
+        force=force,
+        runtime=cfg.llm_runtime,
+    )
+
+
+def _application_quiz_mdx_errors(items: list[QuizItem]) -> list[str]:
+    errors: list[str] = []
+    for item_index, item in enumerate(items, start=1):
+        fields = [("question", item.question), ("explanation", item.explanation)]
+        fields.extend(
+            (f"choice {choice_index}", choice)
+            for choice_index, choice in enumerate(item.choices, 1)
+        )
+        for field_name, text in fields:
+            for error in validate_mdx(str(text)):
+                errors.append(f"item {item_index} {field_name}: {error}")
+    return errors
+
+
+def _build_chapter_quiz(*, chapter_id: str, body_md: str, items: list[QuizItem]) -> QuizResult:
+    quiz = QuizResult(
+        chapter_id=chapter_id,
+        items=items,
+        placements=_quiz_placements_for_items(len(items), body_md),
+        owner_task_id=f"{chapter_id}:quiz",
+    )
+    return _normalize_quiz_placements(quiz, body_md)
+
+
+def _quiz_placements_for_items(item_count: int, body_md: str) -> list[QuizPlacement]:
+    if item_count <= 0:
+        return []
+    block_count = max(len(chapter_body_blocks(body_md)), 1)
+    placement_count = min(max((item_count + 1) // 2, 1), 4)
+    groups: list[list[int]] = [[] for _ in range(placement_count)]
+    for zero_index in range(item_count):
+        groups[min(zero_index // 2, placement_count - 1)].append(zero_index + 1)
+    placements: list[QuizPlacement] = []
+    for group_index, indexes in enumerate(groups):
+        if not indexes:
+            continue
+        after_block = min(
+            block_count - 1,
+            max(0, round(((group_index + 1) * block_count) / (placement_count + 1)) - 1),
+        )
+        placements.append(
+            QuizPlacement(
+                after_block=after_block,
+                item_indexes=indexes,
+                title="检查点" if group_index == 0 else "快速检验",
+            )
+        )
+    return placements
 
 
 async def _plan_sections(cfg: BookConfig, payload: dict[str, Any]) -> CacheResult:

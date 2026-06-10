@@ -11,6 +11,8 @@ from typing import Any
 import yaml
 
 from bookwiki.agents import (
+    ApplicationQuizAgent,
+    CardAgent,
     ChapterMdxRepairAgent,
     ChapterSplitAgent,
     ConceptAgent,
@@ -18,7 +20,6 @@ from bookwiki.agents import (
     ConceptExtractAgent,
     ConceptMdxRepairAgent,
     ConceptReconcileAgent,
-    QuizCardAgent,
     ReviewAgent,
     SectionAgent,
     SkeletonAgent,
@@ -53,10 +54,13 @@ from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
 from bookwiki.schemas.concept import ConceptReconciledItem, ConceptReconcileResult, ConceptResult
 from bookwiki.schemas.report import CheckReport, Issue
+from bookwiki.schemas.section import ApplicationQuizRequest
 from bookwiki.split.chapter_splitter import parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
 from bookwiki.utils.hashing import sha256_file, sha256_text
 from bookwiki.utils.logging import get_logger
+
+_APPLICATION_QUIZ_REQUEST_SCHEMA = ApplicationQuizRequest
 
 State = dict[str, Any]
 
@@ -1763,7 +1767,8 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
     skeleton_data = _load_skeleton(state, cfg)
 
     section_model = cfg.model_for("section")
-    quiz_card_model = cfg.model_for("quiz_card")
+    application_quiz_model = cfg.model_for("application_quiz")
+    card_model = cfg.model_for("card")
     summary_model = cfg.model_for("summary")
 
     chapter_items = list(state.get("chapter_sources", {}).items())
@@ -1811,11 +1816,11 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             ),
             "quiz": write_json(
                 result_dir / f"{ch_id}.quiz.json",
-                _agent_result_payload(QuizCardAgent, quiz_card_model, generated.quiz),
+                _agent_result_payload(ApplicationQuizAgent, application_quiz_model, generated.quiz),
             ),
             "card": write_json(
                 result_dir / f"{ch_id}.card.json",
-                _agent_result_payload(QuizCardAgent, quiz_card_model, generated.card),
+                _agent_result_payload(CardAgent, card_model, generated.card),
             ),
         }
         chapter_results[ch_id] = {name: _rel(path, cfg.book_dir) for name, path in paths.items()}

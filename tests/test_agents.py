@@ -10,11 +10,12 @@ import pytest
 from pydantic import BaseModel
 
 from bookwiki.agents import (
+    ApplicationQuizAgent,
+    CardAgent,
     ChapterSplitAgent,
     ConceptAgent,
     ConceptExtractAgent,
     ConceptReconcileAgent,
-    QuizCardAgent,
     ReviewAgent,
     SectionAgent,
     SourceLayoutRepairAgent,
@@ -115,32 +116,28 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
             },
             {
                 "chapter_id": "chapter-1",
-                "quiz": {
-                    "chapter_id": "chapter-1",
-                    "items": [
-                        {
-                            "question": "What does search expand?",
-                            "choices": ["states", "colors"],
-                            "answer": "states",
-                            "explanation": "The source says search expands states.",
-                            "citations": [{"ref_id": "source-p001", "quote": "expands states"}],
-                        }
-                    ],
-                    "placements": [{"after_block": 0, "item_indexes": [1], "title": "Quiz"}],
-                    "owner_task_id": "chapter-1:quiz",
-                },
-                "card": {
-                    "chapter_id": "chapter-1",
-                    "items": [
-                        {
-                            "front": "State space search",
-                            "back": "Search over reachable states toward a goal.",
-                            "citations": [{"ref_id": "source-p001", "quote": "toward a goal"}],
-                        }
-                    ],
-                    "owner_task_id": "chapter-1:card",
-                },
-                "owner_task_id": "chapter-1:quizcard",
+                "items": [
+                    {
+                        "question": "Given $3$ states, what is expanded?",
+                        "choices": ["$3$ states", "$3$ colors"],
+                        "answer": "$3$ states",
+                        "explanation": "The source says search expands states.",
+                        "citations": [{"ref_id": "source-p001", "quote": "expands states"}],
+                    }
+                ],
+                "placements": [],
+                "owner_task_id": "chapter-1:quiz",
+            },
+            {
+                "chapter_id": "chapter-1",
+                "items": [
+                    {
+                        "front": "State space search",
+                        "back": "Search over reachable states toward a goal.",
+                        "citations": [{"ref_id": "source-p001", "quote": "toward a goal"}],
+                    }
+                ],
+                "owner_task_id": "chapter-1:card",
             },
             {
                 "chapter_id": "chapter-1",
@@ -217,9 +214,14 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
         runtime=runtime,
     )
     section = await SectionAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
-    quizcard = await QuizCardAgent().run(
-        {**chapter_payload, "chapter_body_md": section.body_md},
+    application_quiz = await ApplicationQuizAgent().run(
+        {**chapter_payload, "chapter_body_md": section.body_md, "requests": []},
         model="deepseek-v4-pro",
+        runtime=runtime,
+    )
+    card = await CardAgent().run(
+        {**chapter_payload, "chapter_body_md": section.body_md},
+        model="deepseek-v4-flash",
         runtime=runtime,
     )
     summary = await SummaryAgent().run(chapter_payload, model="deepseek-v4-flash", runtime=runtime)
@@ -280,8 +282,8 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert structure.chapters == ["Chapter 1 Search"]
     assert split.report_md == "# Split Audit\n\nMock audit."
     assert section.owner_task_id == "chapter-1:section:000"
-    assert quizcard.quiz.items[0].answer == "states"
-    assert quizcard.card.items[0].front == "State space search"
+    assert application_quiz.items[0].answer == "$3$ states"
+    assert card.items[0].front == "State space search"
     assert summary.key_points == ["States", "Goals"]
     assert extracted.concepts[0].name == "state space"
     assert reconciled.alias_map["states"] == "state space"
@@ -291,11 +293,12 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert layout.patches[0].action == "attach_caption"
     assert vision.caption_md == "A diagram showing state expansion."
     assert runtime.calls[-1]["image_paths"] == [str(figure)]
-    assert len(runtime.calls) == 11
+    assert len(runtime.calls) == 12
     assert runtime.responses == []
     assert {call["output_model"] for call in runtime.calls} >= {
         "SectionResult",
-        "QuizCardResult",
+        "QuizResult",
+        "CardResult",
         "SourceLayoutRepairResult",
         "VisionCaptionResult",
     }

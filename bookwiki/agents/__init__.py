@@ -1,5 +1,7 @@
 """BookWiki LLM-backed agents."""
 
+from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent
+from bookwiki.agents.card_agent import CardAgent
 from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
 from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
 from bookwiki.agents.chapter_split_agent import ChapterSplitAgent
@@ -9,7 +11,6 @@ from bookwiki.agents.concept_extract import ConceptExtractAgent
 from bookwiki.agents.concept_mdx_repair_agent import ConceptMdxRepairAgent
 from bookwiki.agents.concept_reconcile import ConceptReconcileAgent
 from bookwiki.agents.quality_check_agent import QualityCheckAgent
-from bookwiki.agents.quiz_card_agent import QuizCardAgent
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
 from bookwiki.agents.review_agent import ReviewAgent
 from bookwiki.agents.section_agent import SectionAgent
@@ -25,13 +26,14 @@ __all__ = [
     "ChapterMdxRepairAgent",
     "ChapterContentRewriteAgent",
     "ChapterSplitAgent",
+    "ApplicationQuizAgent",
+    "CardAgent",
     "ConceptAgent",
     "ConceptContentRewriteAgent",
     "ConceptMdxRepairAgent",
     "ConceptExtractAgent",
     "ConceptReconcileAgent",
     "QualityCheckAgent",
-    "QuizCardAgent",
     "RepairSectionAgent",
     "ReviewAgent",
     "SectionAgent",

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 
+from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent
+from bookwiki.agents.card_agent import CardAgent
 from bookwiki.agents.prompting import PromptTemplate, prompt_cache_key, render_prompt
-from bookwiki.agents.quiz_card_agent import QuizCardAgent
 from bookwiki.agents.section_agent import SectionAgent
 from bookwiki.agents.summary_agent import SummaryAgent
 from bookwiki.scheduler import cache as cache_module
@@ -51,9 +52,10 @@ def test_common_prompt_forbids_courseware_meta_references() -> None:
     assert "目标语言重写" in rendered.system
 
 
-def test_quiz_prompt_requires_application_questions() -> None:
-    # The quiz must go beyond definitional recall into concept-based application.
-    assert "应用/计算题" in QuizCardAgent.prompt_template.body
+def test_application_quiz_prompt_requires_application_questions() -> None:
+    # The application quiz must go beyond definitional recall into scenario work.
+    assert "应用/计算题" in ApplicationQuizAgent.prompt_template.body
+    assert "纯定义/辨析题" in ApplicationQuizAgent.prompt_template.body
 
 
 def test_section_prompt_uses_chapter_outline_for_transitions() -> None:
@@ -179,7 +181,7 @@ def test_m4_content_prompts_are_embedded_in_agent_modules() -> None:
 
 
 def test_content_agents_request_markdown_math_syntax() -> None:
-    for agent_cls in [SectionAgent, QuizCardAgent]:
+    for agent_cls in [SectionAgent, ApplicationQuizAgent, CardAgent]:
         body = agent_cls.prompt_template.body
         assert "$...$" in body
         assert "$$...$$" in body

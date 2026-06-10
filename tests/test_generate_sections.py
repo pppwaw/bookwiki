@@ -127,21 +127,20 @@ def _chapter_response_with_body(body_md: str) -> dict[str, Any]:
     }
 
 
-def _quiz_card_response() -> dict[str, Any]:
+def _application_quiz_response(items: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "chapter_id": "chapter-1",
-        "quiz": {
-            "chapter_id": "chapter-1",
-            "items": [],
-            "placements": [],
-            "owner_task_id": "chapter-1:quiz",
-        },
-        "card": {
-            "chapter_id": "chapter-1",
-            "items": [],
-            "owner_task_id": "chapter-1:card",
-        },
-        "owner_task_id": "chapter-1:quizcard",
+        "items": items or [],
+        "placements": [],
+        "owner_task_id": "chapter-1:quiz",
+    }
+
+
+def _card_response() -> dict[str, Any]:
+    return {
+        "chapter_id": "chapter-1",
+        "items": [],
+        "owner_task_id": "chapter-1:card",
     }
 
 
@@ -172,7 +171,8 @@ async def test_generate_chapter_sections_records_fallback_warning(tmp_path: Path
             _section_response(["Owned Concept"]),  # initial: violates ownership
             _section_response(["Owned Concept"]),  # repair round 1: still bad
             _section_response(["Owned Concept"]),  # repair round 2: still bad
-            _quiz_card_response(),
+            _application_quiz_response(),
+            _card_response(),
             _summary_response(),
         ]
     )
@@ -209,7 +209,8 @@ async def test_generate_chapter_sections_inline_repairs_bare_mdx_math(
             _plan_response([]),
             _section_response_with_body("当 n<30 时使用 t 分布。"),
             _chapter_response_with_body("# Search\n\n## S0\n\n当 $n < 30$ 时使用 t 分布。"),
-            _quiz_card_response(),
+            _application_quiz_response(),
+            _card_response(),
             _summary_response(),
         ]
     )
@@ -242,7 +243,8 @@ async def test_generate_chapter_sections_inline_exhaustion_warns_and_completes(
             _section_response_with_body("当 n<30 时使用 t 分布。"),
             _chapter_response_with_body("# Search\n\n## S0\n\n当 n<30 时使用 t 分布。"),
             _chapter_response_with_body("# Search\n\n## S0\n\n当 n<30 时使用 t 分布。"),
-            _quiz_card_response(),
+            _application_quiz_response(),
+            _card_response(),
             _summary_response(),
         ]
     )
@@ -305,6 +307,38 @@ def _section_response_at(index: int, title: str) -> dict[str, Any]:
     }
 
 
+def _section_response_with_practice(index: int, title: str) -> dict[str, Any]:
+    payload = _section_response_at(index, title)
+    payload["knowledge_questions"] = [
+        {
+            "question": f"What does {title} define?",
+            "choices": [title, "Unrelated topic"],
+            "answer": title,
+            "explanation": "This section introduces the concept directly.",
+            "citations": [{"ref_id": "src-p001", "quote": "content"}],
+        }
+    ]
+    payload["application_question_requests"] = [
+        {
+            "topic": f"{title} application",
+            "concept": title,
+            "rationale": "The section supports a concrete scenario.",
+            "source_refs": ["src-p001"],
+        }
+    ]
+    return payload
+
+
+def _application_item(index: int, question: str | None = None) -> dict[str, Any]:
+    return {
+        "question": question or f"Scenario ${index}+1$ asks for a conclusion.",
+        "choices": [f"${index + 1}$", f"${index + 2}$"],
+        "answer": f"${index + 1}$",
+        "explanation": f"Compute ${index}+1={index + 1}$, so the first option is correct.",
+        "citations": [{"ref_id": "src-p001", "quote": "content"}],
+    }
+
+
 @pytest.mark.asyncio
 async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path: Path) -> None:
     # Each section must see the whole chapter's outline (so a later same-chapter
@@ -314,7 +348,8 @@ async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path
             _two_section_plan(),
             _section_response_at(0, "Foundations"),
             _section_response_at(1, "Estimators"),
-            _quiz_card_response(),
+            _application_quiz_response(),
+            _card_response(),
             _summary_response(),
         ]
     )
@@ -331,10 +366,10 @@ async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path
         skeleton_payload={},
     )
 
-    # calls: [plan, section-0, section-1, quiz_card, summary]
+    # calls: [plan, section-0, section-1, application_quiz, card, summary]
     section0 = runtime.calls[1]["user"]
     section1 = runtime.calls[2]["user"]
-    summary = runtime.calls[4]["user"]
+    summary = runtime.calls[5]["user"]
 
     # Section 0 can see the later section's title only via the injected outline.
     assert '"chapter_outline"' in section0
@@ -345,3 +380,115 @@ async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path
     assert '"is_last": true' in section1
     # The summary is scoped by the same outline.
     assert '"chapter_outline"' in summary
+
+
+@pytest.mark.asyncio
+async def test_generate_chapter_sections_merges_section_knowledge_and_application_quiz(
+    tmp_path: Path,
+) -> None:
+    runtime = RecordingRuntime(
+        [
+            _two_section_plan(),
+            _section_response_with_practice(0, "Foundations"),
+            _section_response_with_practice(1, "Estimators"),
+            _application_quiz_response([_application_item(1), _application_item(2)]),
+            _card_response(),
+            _summary_response(),
+        ]
+    )
+    cfg = _cfg(tmp_path / "book", runtime)
+
+    result = await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id="chapter-1",
+        title="Search",
+        source_md=SOURCE_MD,
+        source_path="work/chapter_sources/chapter-1/source.md",
+        topics=["t0", "t1"],
+        figures=[],
+        skeleton_payload={},
+    )
+
+    assert [item.answer for item in result.quiz.items] == [
+        "Foundations",
+        "Estimators",
+        "$2$",
+        "$3$",
+    ]
+    placed = sorted(
+        index for placement in result.quiz.placements for index in placement.item_indexes
+    )
+    assert placed == [1, 2, 3, 4]
+    assert runtime.calls[3]["output_model"].__name__ == "QuizResult"
+    assert '"requests"' in runtime.calls[3]["user"]
+
+
+@pytest.mark.asyncio
+async def test_generate_chapter_sections_repairs_invalid_application_quiz_mdx(
+    tmp_path: Path,
+) -> None:
+    runtime = RecordingRuntime(
+        [
+            _plan_response([]),
+            _section_response([]),
+            _application_quiz_response([_application_item(1, question="When n<30, what follows?")]),
+            _application_quiz_response(
+                [_application_item(1, question="When $n < 30$, what follows?")]
+            ),
+            _card_response(),
+            _summary_response(),
+        ]
+    )
+    cfg = _cfg(tmp_path / "book", runtime)
+
+    result = await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id="chapter-1",
+        title="Search",
+        source_md=SOURCE_MD,
+        source_path="work/chapter_sources/chapter-1/source.md",
+        topics=["t0"],
+        figures=[],
+        skeleton_payload={},
+    )
+
+    assert "When $n < 30$" in result.quiz.items[0].question
+    assert result.issues == []
+    assert runtime.calls[3]["output_model"].__name__ == "QuizResult"
+    assert "mdx_errors" in runtime.calls[3]["user"]
+
+
+@pytest.mark.asyncio
+async def test_generate_chapter_sections_warns_when_application_quiz_mdx_stays_broken(
+    tmp_path: Path,
+) -> None:
+    runtime = RecordingRuntime(
+        [
+            _plan_response([]),
+            _section_response([]),
+            _application_quiz_response([_application_item(1, question="When n<30, what follows?")]),
+            _application_quiz_response([_application_item(1, question="When n<30, what follows?")]),
+            _application_quiz_response([_application_item(1, question="When n<30, what follows?")]),
+            _card_response(),
+            _summary_response(),
+        ]
+    )
+    cfg = _cfg(tmp_path / "book", runtime)
+    cfg.generation["maxRepairRounds"] = 2
+
+    result = await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id="chapter-1",
+        title="Search",
+        source_md=SOURCE_MD,
+        source_path="work/chapter_sources/chapter-1/source.md",
+        topics=["t0"],
+        figures=[],
+        skeleton_payload={},
+    )
+
+    issue = next(issue for issue in result.issues if issue.code == "QUIZ_VALIDATION_UNRESOLVED")
+    assert issue.severity == "warning"
+    assert issue.owner_task_id == "chapter-1:quiz"
+    assert result.quiz.items[0].question == "When n<30, what follows?"
+    assert result.summary.chapter_id == "chapter-1"

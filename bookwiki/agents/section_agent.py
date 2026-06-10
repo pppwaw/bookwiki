@@ -20,15 +20,14 @@ def section_owner_task_id(chapter_id: str, index: int) -> str:
 
 
 class SectionAgent:
-    """Write one teaching section (prose only) for a chapter.
+    """Write one teaching section and its local knowledge checks for a chapter.
 
     The chapter is generated section by section: each call writes the body for a
     single :class:`SectionSpec`, grounded in the chapter source and constrained
-    by the book skeleton (own vs. referenced concepts, neighbour briefs). Quiz
-    items and recall cards are NOT produced here; they are generated once at
-    chapter level after all sections are assembled. ``body_md`` must omit the
-    chapter ``# H1`` heading - the assembler adds the chapter title and the
-    per-section ``##`` heading.
+    by the book skeleton (own vs. referenced concepts, neighbour briefs). Recall
+    cards are generated once at chapter level after all sections are assembled.
+    ``body_md`` must omit the chapter ``# H1`` heading - the assembler adds the
+    chapter title and the per-section ``##`` heading.
     """
 
     kind: ClassVar[str] = "section_llm_v1"
@@ -84,7 +83,16 @@ class SectionAgent:
      `kind="reuse_existing"`（复用某张 `figures` 里的源图，`figure_ref` 填该源图 id），
      `rationale` 一句话说明这张图要表达什么。
 - 不需要新图时 `figure_requests` 留空；每个 `figure_requests` 项的 `figure_ref` 都必须
-  与正文中的某个 <BookFigure id="..."/> 占位一致。不要滥用，只在图能显著帮助理解时请求。
+   与正文中的某个 <BookFigure id="..."/> 占位一致。不要滥用，只在图能显著帮助理解时请求。
+
+=== 段级知识题与应用题请求 ===
+- `knowledge_questions`：写完本段正文后，额外产出 1-2 道只考查**本段已经教过内容**的
+  定义/辨析/概念理解题。题干要具体，选项至少两个且只有一个正确；解释用一两句说明为什么。
+  这些题**不得**要求计算、代入数值、估计或推导；应用/计算题不在这里直接写。
+- `application_question_requests`：仅当本段确实适合做应用/计算题时，声明结构化请求；可以为空。
+  每项说明 `topic`、`concept`、`rationale`，以及可支撑该题的 `source_refs`。不要发明源引用，
+  `source_refs` 只能来自已有 <chunk ref="...">。真正的应用题稍后由专门 agent 基于全章正文填写。
+- 不要在 `body_md` 里塞测验占位符；题目只放进结构化字段。
 
 忠实性与标识：
 - 每个 `citations` 的 ref_id 必须匹配一个已存在的 <chunk ref="..."> 值；quote 是被引
@@ -116,6 +124,8 @@ class SectionAgent:
             concepts=concepts,
             citations=[citation(inp)],
             figure_requests=[],
+            knowledge_questions=[],
+            application_question_requests=[],
             owner_task_id=section_owner_task_id(ch_id, index),
         )
         llm_input = _content_input(inp, refs)

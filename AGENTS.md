@@ -31,15 +31,16 @@ residual term drift / unresolved cross-references (see `bookwiki/integrator/stit
 Keep agent outputs as Pydantic models. Agents do not write final Markdown; scheduler nodes write intermediate JSON and the integrator renders the vault.
 
 The `generate` stage is agentic and runs per chapter: `SectionPlannerAgent` splits the chapter into
-teaching units, `SectionAgent` writes each section's prose (section-level validate/repair with a
-`maxSectionRepairRounds` fallback that logs a warning and keeps the imperfect section), then the
+teaching units, `SectionAgent` writes each section's prose and 段级知识题 (section-level validate/repair
+with a `maxSectionRepairRounds` fallback that logs a warning and keeps the imperfect section), then the
 assembled chapter body runs inline validation/refactor self-heal before quiz/summary: MDX, source-ref
 citations, and (only when `generation.qualityCheck=true`) semantic quality are checked and repaired via
-the existing chapter MDX/content agents. `QuizCardAgent` and `SummaryAgent` consume the healed body. When
-a section needs a figure the source PDF lacks, `SectionAgent` declares a `figure_request` and
-`SupplementImageAgent` fills it by writing matplotlib code through LiteLLM function-calling; generated
-figures land under `work/assets/generated/` and are merged into the chapter figure index so the
-integrator keeps them.
+the existing chapter MDX/content agents. 应用题由 `ApplicationQuizAgent` (`deepseek-v4-pro`) from
+section `application_question_requests` 专做并 inline 校验/有界修复; recall 卡片保持章级 `CardAgent`
+(`deepseek-v4-flash`) over the healed body, and `SummaryAgent` consumes the healed body. When a section
+needs a figure the source PDF lacks, `SectionAgent` declares a `figure_request` and `SupplementImageAgent`
+fills it by writing matplotlib code through LiteLLM function-calling; generated figures land under
+`work/assets/generated/` and are merged into the chapter figure index so the integrator keeps them.
 
 校验下沉：`generate` / `concept_pages` now perform per-chapter and per-concept inline 自洽 loops for
 raw pre-render `body_md` (MDX + 引用 + optional language-leak quality), bottoming out as warnings when

@@ -47,21 +47,20 @@ def _section_response() -> dict[str, object]:
     }
 
 
-def _quiz_card_response() -> dict[str, object]:
+def _application_quiz_response() -> dict[str, object]:
     return {
         "chapter_id": "chapter-1",
-        "quiz": {
-            "chapter_id": "chapter-1",
-            "items": [],
-            "placements": [],
-            "owner_task_id": "chapter-1:quiz",
-        },
-        "card": {
-            "chapter_id": "chapter-1",
-            "items": [],
-            "owner_task_id": "chapter-1:card",
-        },
-        "owner_task_id": "chapter-1:quizcard",
+        "items": [],
+        "placements": [],
+        "owner_task_id": "chapter-1:quiz",
+    }
+
+
+def _card_response() -> dict[str, object]:
+    return {
+        "chapter_id": "chapter-1",
+        "items": [],
+        "owner_task_id": "chapter-1:card",
     }
 
 
@@ -205,7 +204,8 @@ async def test_generate_node_feeds_topics_to_planner_and_figures_to_section(tmp_
         [
             _section_plan_response(),
             _section_response(),
-            _quiz_card_response(),
+            _application_quiz_response(),
+            _card_response(),
             _summary_response(),
         ]
     )

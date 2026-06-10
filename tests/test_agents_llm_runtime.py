@@ -3,11 +3,12 @@ from __future__ import annotations
 import pytest
 
 from bookwiki.agents import (
+    ApplicationQuizAgent,
+    CardAgent,
     ChapterSplitAgent,
     ConceptAgent,
     ConceptExtractAgent,
     ConceptReconcileAgent,
-    QuizCardAgent,
     ReviewAgent,
     SectionAgent,
     SourceSummaryAgent,
@@ -142,42 +143,38 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
             },
             {
                 "chapter_id": "chapter-6",
-                "quiz": {
-                    "chapter_id": "chapter-6",
-                    "items": [
-                        {
-                            "question": "What is estimated?",
-                            "choices": ["parameter", "path"],
-                            "answer": "parameter",
-                            "explanation": "Point estimation estimates parameters.",
-                            "citations": [
-                                {
-                                    "ref_id": "Week-10-p001",
-                                    "quote": "unknown parameters",
-                                }
-                            ],
-                        }
-                    ],
-                    "placements": [{"after_block": 0, "item_indexes": [1], "title": "Quiz"}],
-                    "owner_task_id": "chapter-6:quiz",
-                },
-                "card": {
-                    "chapter_id": "chapter-6",
-                    "items": [
-                        {
-                            "front": "Point estimation",
-                            "back": "Estimate unknown parameters.",
-                            "citations": [
-                                {
-                                    "ref_id": "Week-10-p001",
-                                    "quote": "unknown parameters",
-                                }
-                            ],
-                        }
-                    ],
-                    "owner_task_id": "chapter-6:card",
-                },
-                "owner_task_id": "chapter-6:quizcard",
+                "items": [
+                    {
+                        "question": "If the estimator is $31$, what is estimated?",
+                        "choices": ["parameter", "path"],
+                        "answer": "parameter",
+                        "explanation": "Point estimation estimates parameters.",
+                        "citations": [
+                            {
+                                "ref_id": "Week-10-p001",
+                                "quote": "unknown parameters",
+                            }
+                        ],
+                    }
+                ],
+                "placements": [],
+                "owner_task_id": "chapter-6:quiz",
+            },
+            {
+                "chapter_id": "chapter-6",
+                "items": [
+                    {
+                        "front": "Point estimation",
+                        "back": "Estimate unknown parameters.",
+                        "citations": [
+                            {
+                                "ref_id": "Week-10-p001",
+                                "quote": "unknown parameters",
+                            }
+                        ],
+                    }
+                ],
+                "owner_task_id": "chapter-6:card",
             },
             {
                 "chapter_id": "chapter-6",
@@ -235,9 +232,18 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         runtime=runtime,
     )
     await SectionAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
-    await QuizCardAgent().run(
-        {**chapter_payload, "chapter_body_md": "# Point Estimation\n\nMethod of moments."},
+    await ApplicationQuizAgent().run(
+        {
+            **chapter_payload,
+            "chapter_body_md": "# Point Estimation\n\nMethod of moments.",
+            "requests": [],
+        },
         model="deepseek-v4-pro",
+        runtime=runtime,
+    )
+    await CardAgent().run(
+        {**chapter_payload, "chapter_body_md": "# Point Estimation\n\nMethod of moments."},
+        model="deepseek-v4-flash",
         runtime=runtime,
     )
     await SummaryAgent().run(chapter_payload, model="deepseek-v4-flash", runtime=runtime)
@@ -258,12 +264,12 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         runtime=runtime,
     )
 
-    assert len(runtime.calls) == 9
+    assert len(runtime.calls) == 10
     assert all("只返回合法的 JSON" in call["system"] for call in runtime.calls)
 
 
 @pytest.mark.asyncio
-async def test_quiz_card_agent_seeds_requested_counts_from_config() -> None:
+async def test_split_practice_agents_offline_echo_empty_items() -> None:
     payload = {
         "chapter_id": "chapter-1",
         "title": "Search",
@@ -275,10 +281,13 @@ async def test_quiz_card_agent_seeds_requested_counts_from_config() -> None:
         "cards_per_chapter": 4,
     }
 
-    result = await QuizCardAgent().run(payload, model="deepseek-v4-pro", runtime=TestLLMRuntime())
+    quiz = await ApplicationQuizAgent().run(
+        {**payload, "requests": []}, model="deepseek-v4-pro", runtime=TestLLMRuntime()
+    )
+    card = await CardAgent().run(payload, model="deepseek-v4-flash", runtime=TestLLMRuntime())
 
-    assert len(result.quiz.items) == 3
-    assert len(result.card.items) == 4
+    assert quiz.items == []
+    assert card.items == []
 
 
 @pytest.mark.asyncio
