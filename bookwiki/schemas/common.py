@@ -2,16 +2,27 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from bookwiki.schemas import SCHEMA_VERSION
 
+# Content is now authored as YAML frontmatter + raw MDX body (see
+# ``bookwiki.agents.document``). ``yaml.safe_load`` parses bare scalars like a quiz
+# ``answer: 3`` as ``int``, but the field is ``str``; coerce numbers to strings so YAML
+# typing does not reject otherwise-valid content. This only affects ``str``-typed fields;
+# ``int``/``float`` fields are unaffected.
+_COERCE_NUMBERS = ConfigDict(coerce_numbers_to_str=True)
+
 
 class VersionedModel(BaseModel):
+    model_config = _COERCE_NUMBERS
+
     schema_version: str = Field(default=SCHEMA_VERSION)
 
 
 class Citation(BaseModel):
+    model_config = _COERCE_NUMBERS
+
     ref_id: str
     quote: str
 
