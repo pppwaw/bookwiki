@@ -107,6 +107,29 @@ class SectionAgent:
 - 不要在 frontmatter 中输出 `chapter_id` 或 `owner_task_id`；系统会用确定性默认值注入。
 - frontmatter 里任何含 LaTeX 反斜杠的字段（题干、解释、引用 quote 等）必须使用 YAML
   单引号标量或块标量，确保反斜杠按字面保留。
+- frontmatter 完整示例（**字段名必须逐字一致**：knowledge_questions 用
+  `question`/`choices`/`answer`/`explanation`/`citations`，**绝不要**用 `stem`/`options`
+  等别名；答案即使是数字也写成带引号字符串）：
+```
+section_index: 0
+title: 抽样分布
+concepts: ['Sampling distribution']
+citations:
+  - ref_id: Week-9-p012
+    quote: '统计量的分布称为抽样分布'
+figure_requests: []
+knowledge_questions:
+  - question: '以下哪一项是统计量？'
+    choices: ['$\\bar{X}$', '$\\mu$', '$\\sigma$']
+    answer: '$\\bar{X}$'
+    explanation: '统计量不含未知参数，而 $\\mu$、$\\sigma$ 是参数。'
+    citations: []
+application_question_requests:
+  - topic: '样本均值的分布'
+    concept: 'Sampling distribution'
+    rationale: '让学习者代入数值计算概率'
+    source_refs: ['Week-9-p012']
+```
 - 第二个 `---` 后直接写 raw MDX body；正文中的 LaTeX（如 `$\\mu$`、`$\\bar{X}$`）
   必须原样书写，不要 JSON 转义。""",
     )
