@@ -33,11 +33,17 @@ class ConcurrencyProbeRuntime:
         self.max_concurrent = 0
 
     async def generate(self, **kwargs: Any) -> Any:
+        return await self._record_call(self._inner.generate, **kwargs)
+
+    async def generate_document(self, **kwargs: Any) -> str:
+        return await self._record_call(self._inner.generate_document, **kwargs)
+
+    async def _record_call(self, call: Any, **kwargs: Any) -> Any:
         self.current += 1
         self.max_concurrent = max(self.max_concurrent, self.current)
         try:
             await asyncio.sleep(self.delay)
-            return await self._inner.generate(**kwargs)
+            return await call(**kwargs)
         finally:
             self.current -= 1
 

@@ -169,8 +169,7 @@ async def test_generate_chapter_sections_records_fallback_warning(tmp_path: Path
         [
             _plan_response(["Owned Concept"]),
             _section_response(["Owned Concept"]),  # initial: violates ownership
-            _section_response(["Owned Concept"]),  # repair round 1: still bad
-            _section_response(["Owned Concept"]),  # repair round 2: still bad
+            _section_response(["Owned Concept"]),  # repair response reused by cache in round 2
             _application_quiz_response(),
             _card_response(),
             _summary_response(),
@@ -196,7 +195,7 @@ async def test_generate_chapter_sections_records_fallback_warning(tmp_path: Path
     assert issue.owner_task_id == "chapter-1:chapter"
     # The imperfect section is still assembled into the chapter body.
     assert "## S0" in result.chapter.body_md
-    # All four scripted responses after the plan were consumed (1 + 2 repairs).
+    # All scripted responses after the plan were consumed.
     assert runtime.responses == []
 
 
@@ -230,7 +229,7 @@ async def test_generate_chapter_sections_inline_repairs_bare_mdx_math(
     assert "$n < 30$" in result.chapter.body_md
     assert "n<30" not in result.chapter.body_md
     assert result.issues == []
-    assert runtime.calls[2]["output_model"].__name__ == "ChapterResult"
+    assert "ChapterMdxRepairAgent" in runtime.calls[2]["user"]
 
 
 @pytest.mark.asyncio

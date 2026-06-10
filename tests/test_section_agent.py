@@ -13,33 +13,33 @@ SOURCE_MD = "<!-- source_ref: src-p001 -->\nPoint estimation content."
 async def test_section_agent_carries_knowledge_questions_and_application_requests() -> None:
     runtime = RecordingRuntime(
         [
-            {
-                "chapter_id": "chapter-1",
-                "section_index": 0,
-                "title": "Point Estimation",
-                "body_md": "Point estimation chooses one value for a parameter.",
-                "concepts": ["point estimation"],
-                "citations": [{"ref_id": "src-p001", "quote": "Point estimation"}],
-                "figure_requests": [],
-                "knowledge_questions": [
-                    {
-                        "question": "What does point estimation return?",
-                        "choices": ["One value", "A full textbook"],
-                        "answer": "One value",
-                        "explanation": "The section defines it as choosing one value.",
-                        "citations": [{"ref_id": "src-p001", "quote": "Point estimation"}],
-                    }
-                ],
-                "application_question_requests": [
-                    {
-                        "topic": "sample mean as point estimate",
-                        "concept": "point estimation",
-                        "rationale": "The section introduces estimating a parameter from data.",
-                        "source_refs": ["src-p001"],
-                    }
-                ],
-                "owner_task_id": "chapter-1:section:000",
-            }
+            """---
+section_index: 0
+title: Point Estimation
+concepts:
+  - point estimation
+citations:
+  - ref_id: src-p001
+    quote: Point estimation
+figure_requests: []
+knowledge_questions:
+  - question: What does point estimation return?
+    choices:
+      - One value
+      - A full textbook
+    answer: One value
+    explanation: The section defines it as choosing one value.
+    citations:
+      - ref_id: src-p001
+        quote: Point estimation
+application_question_requests:
+  - topic: sample mean as point estimate
+    concept: point estimation
+    rationale: The section introduces estimating a parameter from data.
+    source_refs:
+      - src-p001
+---
+Point estimation chooses one value for a parameter with $\\mu$ preserved."""
         ]
     )
 
@@ -56,6 +56,7 @@ async def test_section_agent_carries_knowledge_questions_and_application_request
 
     assert result.knowledge_questions[0].answer == "One value"
     assert result.application_question_requests[0].topic == "sample mean as point estimate"
+    assert r"$\mu$" in result.body_md
 
 
 @pytest.mark.asyncio

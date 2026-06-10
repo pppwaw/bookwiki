@@ -9,7 +9,7 @@ from bookwiki.agents._helpers import (
     citation,
     source_refs,
 )
-from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.llm import generate_document_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.summary import SummaryResult
@@ -41,7 +41,14 @@ class SummaryAgent:
 - 不要引入章节源文本中不存在的概念。
 - 本章范围以 `chapter_outline`（各小节大纲）与已写好的章节正文为准：摘要只描述
   **本章已讲**的内容；`chapter_outline` 中列出的主题（以及本章标题点明的主题）都属于
-  本章，**绝不可**把它们写成"下一章/后面章节/未来会学"。""",
+  本章，**绝不可**把它们写成"下一章/后面章节/未来会学"。
+
+输出格式（MDX-direct）：
+- 只返回 YAML frontmatter + raw MDX body，不要返回 JSON。
+- frontmatter 字段：`key_points`、`citations`。
+- 不要在 frontmatter 中输出 `chapter_id` 或 `owner_task_id`；系统会用确定性默认值注入。
+- 含 LaTeX 反斜杠的 frontmatter 字段必须使用 YAML 单引号标量或块标量。
+- 第二个 `---` 后直接写 raw MDX `summary_md`；LaTeX 原样书写，如 `$\\mu$`，不要 JSON 转义。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> SummaryResult:
@@ -56,7 +63,7 @@ class SummaryAgent:
             owner_task_id=f"{ch_id}:summary",
         )
         llm_input = _content_input(inp, refs)
-        result = await generate_with_llm(
+        result = await generate_document_with_llm(
             runtime=runtime,
             model=model,
             output_model=SummaryResult,
@@ -65,6 +72,8 @@ class SummaryAgent:
             prompt_template=self.prompt_template,
             inp=llm_input,
             draft=draft,
+            body_field="summary_md",
+            defaults={"chapter_id": ch_id, "owner_task_id": f"{ch_id}:summary"},
             allowed_citation_refs=refs,
         )
         return SummaryResult.model_validate(result)

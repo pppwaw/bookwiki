@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.llm import generate_document_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.common import Citation
@@ -29,7 +29,14 @@ class ConceptContentRewriteAgent:
 - 不要删改任何 `<BookFigure ... />`、`<PreviewLink ...>`、公式、代码、链接或引用。
 - 保持 `name`、`summary_md`、`related`、`citations`、`owner_task_id` 与输入完全一致。
 - 不要引入新的 source_ref;`citations` 的 ref_id 必须仍在 `allowed_source_refs` 中。
-- 如果某个 quote 不在正文中,不要臆造位置;保持正文其它内容不变。""",
+- 如果某个 quote 不在正文中,不要臆造位置;保持正文其它内容不变。
+
+输出格式（MDX-direct）：
+- 只返回 YAML frontmatter + raw MDX body，不要返回 JSON。
+- frontmatter 字段：`name`、`summary_md`、`related`、`citations`。
+- 不要在 frontmatter 中输出 `owner_task_id`；系统会用确定性默认值注入。
+- `summary_md`、citation quote 等含 LaTeX 反斜杠时必须使用 YAML 单引号标量或块标量。
+- 第二个 `---` 后直接写 raw MDX `body_md`；正文 LaTeX 原样书写，如 `$\\mu$`，不要 JSON 转义。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> ConceptResult:
@@ -43,7 +50,7 @@ class ConceptContentRewriteAgent:
             citations=_draft_citations(inp.get("citations")),
             owner_task_id=str(inp.get("owner_task_id") or f"concept:{name}"),
         )
-        result = await generate_with_llm(
+        result = await generate_document_with_llm(
             runtime=runtime,
             model=model,
             output_model=ConceptResult,
@@ -52,6 +59,8 @@ class ConceptContentRewriteAgent:
             prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
+            body_field="body_md",
+            defaults={"owner_task_id": str(inp.get("owner_task_id") or f"concept:{name}")},
             allowed_citation_refs=refs or None,
         )
         return ConceptResult.model_validate(result)

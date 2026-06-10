@@ -65,6 +65,37 @@ class LitellmMockRuntime:
         content = mocked.choices[0].message.content
         return output_model.model_validate(json.loads(content), context=context)
 
+    async def generate_document(
+        self,
+        *,
+        model: str,
+        system: str,
+        user: str,
+        image_paths: Sequence[str | Path] | None = None,
+        max_retries: int = 2,
+    ) -> str:
+        self.calls.append(
+            {
+                "model": model,
+                "output_model": "Document",
+                "system": system,
+                "user": user,
+                "context": None,
+                "image_paths": [str(path) for path in image_paths or []],
+                "max_retries": max_retries,
+            }
+        )
+        response = self.responses.pop(0)
+        body_field = (
+            "summary_md" if "summary_md" in response and "body_md" not in response else "body_md"
+        )
+        body = response.get(body_field, "")
+        frontmatter = {key: value for key, value in response.items() if key != body_field}
+        import yaml
+
+        frontmatter_text = yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False).strip()
+        return f"---\n{frontmatter_text}\n---\n{body}"
+
 
 @pytest.mark.asyncio
 async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None:
@@ -296,7 +327,6 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert len(runtime.calls) == 12
     assert runtime.responses == []
     assert {call["output_model"] for call in runtime.calls} >= {
-        "SectionResult",
         "QuizResult",
         "CardResult",
         "SourceLayoutRepairResult",

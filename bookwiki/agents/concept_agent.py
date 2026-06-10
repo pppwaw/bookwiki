@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.llm import generate_document_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.common import Citation
@@ -41,7 +41,14 @@ class ConceptAgent:
 - 一切数学符号、关系式、希腊字母、分数、集合/区间与花括号记号都必须放进 $...$；
   绝不要在正文里直接写裸花括号（如 `{\\frac{a}{b}}`、`{x ≥ a}`）、裸 LaTeX 命令
   （如 `\\frac`、`\\leq`）或裸 Unicode 数学符号——它们会破坏 MDX 编译。
-- 不要使用 \\( ... \\) 或 \\[ ... \\] 数学定界符。""",
+- 不要使用 \\( ... \\) 或 \\[ ... \\] 数学定界符。
+
+输出格式（MDX-direct）：
+- 只返回 YAML frontmatter + raw MDX body，不要返回 JSON。
+- frontmatter 字段：`name`、`summary_md`、`related`、`citations`。
+- 不要在 frontmatter 中输出 `owner_task_id`；系统会用确定性默认值注入。
+- `summary_md`、citation quote 等含 LaTeX 反斜杠时必须使用 YAML 单引号标量或块标量。
+- 第二个 `---` 后直接写 raw MDX `body_md`；正文 LaTeX 原样书写，如 `$\\mu$`，不要 JSON 转义。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> ConceptResult:
@@ -58,7 +65,7 @@ class ConceptAgent:
             citations=citations,
             owner_task_id=f"concept:{name}",
         )
-        result = await generate_with_llm(
+        result = await generate_document_with_llm(
             runtime=runtime,
             model=model,
             output_model=ConceptResult,
@@ -67,6 +74,8 @@ class ConceptAgent:
             prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
+            body_field="body_md",
+            defaults={"owner_task_id": f"concept:{name}"},
             allowed_citation_refs=allowed_refs,
         )
         return ConceptResult.model_validate(result)

@@ -155,8 +155,8 @@ async def test_chapter_mdx_repair_agent_returns_fixed_body() -> None:
     prompt = runtime.calls[0]["user"]
     assert "Unexpected character" in prompt
     assert "n<30" in prompt
-    # Citations are constrained to the allowed source refs.
-    assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"src-p001"}}
+    # Document mode carries allowed refs in the input and validates them while parsing.
+    assert '"allowed_source_refs"' in prompt
 
 
 @pytest.mark.asyncio
@@ -238,7 +238,7 @@ async def test_concept_mdx_repair_agent_returns_fixed_body() -> None:
     prompt = runtime.calls[0]["user"]
     assert "closing tag for `<cite>`" in prompt
     assert "<cite" in prompt
-    assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"p001"}}
+    assert '"allowed_source_refs"' in prompt
 
 
 @pytest.mark.asyncio

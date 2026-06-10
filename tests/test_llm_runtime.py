@@ -63,7 +63,8 @@ def test_load_dotenv_reads_project_env_without_overriding_existing(
     assert os.environ["EXISTING"] == "from-env"
 
 
-def test_build_instructor_client_uses_json_mode_for_deepseek(
+@pytest.mark.asyncio
+async def test_build_instructor_client_uses_json_mode_and_repairs_invalid_escapes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = []
@@ -72,13 +73,14 @@ def test_build_instructor_client_uses_json_mode_for_deepseek(
         calls.append({"completion": completion, "mode": mode})
         return object()
 
-    router = _Router("{}")
+    router = _Router(r'{"x":"$\sigma$"}')
     monkeypatch.setattr("instructor.from_litellm", fake_from_litellm)
 
     build_instructor_client(router)
 
-    assert calls[0]["completion"] == router.acompletion
     assert calls[0]["mode"].value == "json_mode"
+    response = await calls[0]["completion"](model="deepseek-v4-pro", messages=[])
+    assert response["choices"][0]["message"]["content"] == r'{"x":"$\\sigma$"}'
 
 
 def test_moonshot_model_list_uses_official_api_base(monkeypatch: pytest.MonkeyPatch) -> None:

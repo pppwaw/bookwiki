@@ -118,6 +118,17 @@ class LLMRuntime(Protocol):
     ) -> BaseModel:
         """Run an OpenAI-style tool-calling loop, then coerce a structured result."""
 
+    async def generate_document(
+        self,
+        *,
+        model: str,
+        system: str,
+        user: str,
+        image_paths: Sequence[str | Path] | None = None,
+        max_retries: int = 2,
+    ) -> str:
+        """Return raw document text from a real or explicitly injected LLM."""
+
 
 class MissingLLMApiKey(RuntimeError):
     def __init__(self, model: str, env_name: str) -> None:
@@ -180,6 +191,32 @@ class LiteLLMRuntime:
         if isinstance(result, output_model):
             return output_model.model_validate(result.model_dump(mode="json"), context=context)
         return output_model.model_validate(result, context=context)
+
+    async def generate_document(
+        self,
+        *,
+        model: str,
+        system: str,
+        user: str,
+        image_paths: Sequence[str | Path] | None = None,
+        max_retries: int = 2,
+    ) -> str:
+        _ensure_api_key(model)
+        router = self.router if self.router is not None else build_router()
+        self.router = router
+        response = await _acreate_with_backoff(
+            lambda: router.acompletion(
+                model=model,
+                messages=_messages(system=system, user=user, image_paths=image_paths),
+                max_retries=max_retries,
+                temperature=_temperature_for_model(model),
+            )
+        )
+        content = response.choices[0].message.content
+        if content is None:
+            msg = f"model {model!r} returned an empty document response"
+            raise ValueError(msg)
+        return _strip_mdx_fence(str(content))
 
     async def generate_with_tools(
         self,
@@ -263,6 +300,21 @@ class TestLLMRuntime:
             msg = f"test runtime needs a Draft JSON block for {output_model.__name__}"
             raise ValueError(msg)
         return output_model.model_validate(draft, context=context)
+
+    async def generate_document(
+        self,
+        *,
+        model: str,
+        system: str,
+        user: str,
+        image_paths: Sequence[str | Path] | None = None,
+        max_retries: int = 2,
+    ) -> str:
+        draft = _extract_draft_document(user)
+        if draft is None:
+            msg = f"test runtime needs a Draft Document block for {model}"
+            raise ValueError(msg)
+        return draft
 
     async def generate_with_tools(
         self,
@@ -458,6 +510,43 @@ def _strip_json_fence(content: str) -> str:
     return match.group(1).strip() if match else text
 
 
+def _strip_mdx_fence(content: str) -> str:
+    text = content.strip()
+    match = re.match(
+        r"^```(?:mdx|markdown|md)?\s*(.*?)\s*```$",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    return match.group(1).strip() if match else text
+
+
+def _repair_json_escapes(content: str) -> str:
+    return re.sub(r'\\(?![\\"/bfnrtu])', r"\\\\", content)
+
+
+def _repair_response_json_escapes(response: Any) -> Any:
+    if isinstance(response, dict):
+        choices = response.get("choices", [])
+    else:
+        choices = getattr(response, "choices", [])
+    for choice in choices or []:
+        if isinstance(choice, dict):
+            message = choice.get("message")
+        else:
+            message = getattr(choice, "message", None)
+        if message is None:
+            continue
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                message["content"] = _repair_json_escapes(content)
+            continue
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            message.content = _repair_json_escapes(content)
+    return response
+
+
 def _extract_draft_payload(user: str) -> Any | None:
     marker = "Draft JSON:\n"
     if marker not in user:
@@ -469,6 +558,21 @@ def _extract_draft_payload(user: str) -> Any | None:
     else:
         draft = draft.split("\n\nReturn only", 1)[0].strip()
     return json.loads(draft)
+
+
+def _extract_draft_document(user: str) -> str | None:
+    marker = "Draft Document:\n"
+    if marker not in user:
+        return None
+    draft = user.split(marker, 1)[1].strip()
+    fenced = re.match(
+        r"^```(?:mdx|markdown|md)?\s*(.*?)\s*```",
+        draft,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if fenced:
+        return fenced.group(1).strip()
+    return draft.split("\n\nReturn only", 1)[0].strip()
 
 
 def _assistant_tool_message(message: Any) -> dict[str, Any]:  # pragma: no cover - real API path
@@ -540,4 +644,8 @@ def build_instructor_client(router: Any) -> Any:
             "Instructor is required for structured LLM calls; install the runtime extra"
         ) from exc
 
-    return instructor.from_litellm(router.acompletion, mode=instructor.Mode.JSON)
+    async def repaired_acompletion(*args: Any, **kwargs: Any) -> Any:
+        response = await router.acompletion(*args, **kwargs)
+        return _repair_response_json_escapes(response)
+
+    return instructor.from_litellm(repaired_acompletion, mode=instructor.Mode.JSON)

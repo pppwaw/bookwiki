@@ -111,7 +111,7 @@ async def test_chapter_content_rewrite_agent_preserves_identifiers_and_citations
     assert result.owner_task_id == "chapter-1:chapter"
     assert result.citations[0].ref_id == "source-p001"
     assert '<BookFigure id="fig-1" />' in result.body_md
-    assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"source-p001"}}
+    assert "MDX-direct" in runtime.calls[0]["user"]
 
 
 @pytest.mark.asyncio

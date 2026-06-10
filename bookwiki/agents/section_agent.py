@@ -9,7 +9,7 @@ from bookwiki.agents._helpers import (
     citation,
     source_refs,
 )
-from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.llm import generate_document_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.section import SectionResult
@@ -98,7 +98,17 @@ class SectionAgent:
 - 每个 `citations` 的 ref_id 必须匹配一个已存在的 <chunk ref="..."> 值；quote 是被引
   chunk 中的简短短语。
 - `chapter_id` 与输入一致；`section_index` 与 `section.index` 一致；
-  `title` 与 `section.title` 一致；`owner_task_id` 形如 `<chapter_id>:section:<3 位序号>`。""",
+  `title` 与 `section.title` 一致；`owner_task_id` 形如 `<chapter_id>:section:<3 位序号>`。
+
+输出格式（MDX-direct）：
+- 只返回 YAML frontmatter + raw MDX body，不要返回 JSON。
+- frontmatter 字段：`section_index`、`title`、`concepts`、`citations`、`figure_requests`、
+  `knowledge_questions`、`application_question_requests`。
+- 不要在 frontmatter 中输出 `chapter_id` 或 `owner_task_id`；系统会用确定性默认值注入。
+- frontmatter 里任何含 LaTeX 反斜杠的字段（题干、解释、引用 quote 等）必须使用 YAML
+  单引号标量或块标量，确保反斜杠按字面保留。
+- 第二个 `---` 后直接写 raw MDX body；正文中的 LaTeX（如 `$\\mu$`、`$\\bar{X}$`）
+  必须原样书写，不要 JSON 转义。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> SectionResult:
@@ -129,7 +139,7 @@ class SectionAgent:
             owner_task_id=section_owner_task_id(ch_id, index),
         )
         llm_input = _content_input(inp, refs)
-        result = await generate_with_llm(
+        result = await generate_document_with_llm(
             runtime=runtime,
             model=model,
             output_model=SectionResult,
@@ -138,6 +148,8 @@ class SectionAgent:
             prompt_template=self.prompt_template,
             inp=llm_input,
             draft=draft,
+            body_field="body_md",
+            defaults={"chapter_id": ch_id, "owner_task_id": section_owner_task_id(ch_id, index)},
             allowed_citation_refs=refs,
         )
         return SectionResult.model_validate(result)

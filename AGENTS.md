@@ -30,6 +30,11 @@ residual term drift / unresolved cross-references (see `bookwiki/integrator/stit
 
 Keep agent outputs as Pydantic models. Agents do not write final Markdown; scheduler nodes write intermediate JSON and the integrator renders the vault.
 
+Body 型文本 agent（Section/Summary/Concept 以及 chapter/concept 的 MDX repair、content rewrite）使用
+MDX-direct 输出：模型返回 YAML frontmatter（结构化元数据）+ raw MDX body（正文反斜杠零转义），
+再装配回原有 Pydantic output_model；quiz/card 等 item-list/结构化 agent 仍保留 JSON 输出，并由
+runtime 的非法 JSON 转义修复层兜底（如 LaTeX `\mu` 这类 JSON-invalid escape 会在 instructor 解析前修复）。
+
 The `generate` stage is agentic and runs per chapter: `SectionPlannerAgent` splits the chapter into
 teaching units, `SectionAgent` writes each section's prose and 段级知识题 (section-level validate/repair
 with a `maxSectionRepairRounds` fallback that logs a warning and keeps the imperfect section), then the

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from bookwiki.agents._helpers import chapter_id, chapter_title
-from bookwiki.agents.llm import generate_with_llm
+from bookwiki.agents.llm import generate_document_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.chapter import ChapterResult
@@ -46,7 +46,14 @@ class ChapterMdxRepairAgent:
 - 保持 `chapter_id`、`title`、`concepts`、`citations` 与输入完全一致;
   `owner_task_id` 以 `:chapter` 结尾。
 - 行内公式用 `$...$`,独立公式用 `$$...$$`;不要用 `\\( \\)` 或 `\\[ \\]`。
-- 不要引入新的 source_ref;`citations` 的 ref_id 必须仍在 `allowed_source_refs` 中。""",
+- 不要引入新的 source_ref;`citations` 的 ref_id 必须仍在 `allowed_source_refs` 中。
+
+输出格式（MDX-direct）：
+- 只返回 YAML frontmatter + raw MDX body，不要返回 JSON。
+- frontmatter 字段：`title`、`concepts`、`citations`。
+- 不要在 frontmatter 中输出 `chapter_id` 或 `owner_task_id`；系统会用确定性默认值注入。
+- citation quote 等含 LaTeX 反斜杠时必须使用 YAML 单引号标量或块标量。
+- 第二个 `---` 后直接写 raw MDX `body_md`；正文 LaTeX 原样书写，如 `$\\mu$`，不要 JSON 转义。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> ChapterResult:
@@ -60,7 +67,7 @@ class ChapterMdxRepairAgent:
             citations=_draft_citations(inp.get("citations")),
             owner_task_id=str(inp.get("owner_task_id") or f"{ch_id}:chapter"),
         )
-        result = await generate_with_llm(
+        result = await generate_document_with_llm(
             runtime=runtime,
             model=model,
             output_model=ChapterResult,
@@ -69,6 +76,11 @@ class ChapterMdxRepairAgent:
             prompt_template=self.prompt_template,
             inp=inp,
             draft=draft,
+            body_field="body_md",
+            defaults={
+                "chapter_id": ch_id,
+                "owner_task_id": str(inp.get("owner_task_id") or f"{ch_id}:chapter"),
+            },
             allowed_citation_refs=refs or None,
         )
         return ChapterResult.model_validate(result)

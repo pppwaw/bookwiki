@@ -316,7 +316,8 @@ async def test_content_agents_pass_allowed_refs_in_validation_context() -> None:
 
     await SectionAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
-    assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"source-p001"}}
+    assert "MDX-direct" in runtime.calls[0]["user"]
+    assert '"source-p001"' in runtime.calls[0]["user"]
     assert runtime.calls[0]["max_retries"] == 2
 
 
@@ -361,9 +362,8 @@ async def test_concept_agent_allows_all_context_source_refs() -> None:
     result = await ConceptAgent().run(payload, model="deepseek-v4-flash", runtime=runtime)
 
     assert result.citations[0].ref_id == "Week-10-p021"
-    assert runtime.calls[0]["context"] == {
-        "allowed_citation_refs": {"Week-10-p020", "Week-10-p021"}
-    }
+    assert '"Week-10-p020"' in runtime.calls[0]["user"]
+    assert len(runtime.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -443,9 +443,8 @@ async def test_agent_retries_when_llm_invents_citation_ref_id() -> None:
 
     assert result.citations[0].ref_id == "source-p001"
     assert len(runtime.calls) == 2
-    assert all(
-        call["context"] == {"allowed_citation_refs": {"source-p001"}} for call in runtime.calls
-    )
+    assert all('"source-p001"' in call["user"] for call in runtime.calls)
+    assert "invented-p999" in runtime.calls[1]["user"]
 
 
 @pytest.mark.asyncio

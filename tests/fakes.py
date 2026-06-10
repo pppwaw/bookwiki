@@ -8,11 +8,13 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_core import ValidationError
 
+from bookwiki.agents.document import model_to_document
+
 
 class RecordingRuntime:
     def __init__(
         self,
-        responses: list[dict[str, Any] | BaseModel],
+        responses: list[dict[str, Any] | BaseModel | str],
         tool_calls: list[tuple[str, dict[str, Any]]] | None = None,
     ) -> None:
         self.responses = responses
@@ -58,6 +60,35 @@ class RecordingRuntime:
         msg = "recording runtime exhausted without a response"
         raise ValueError(msg)
 
+    async def generate_document(
+        self,
+        *,
+        model: str,
+        system: str,
+        user: str,
+        image_paths: Sequence[str | Path] | None = None,
+        max_retries: int = 2,
+    ) -> str:
+        self.calls.append(
+            {
+                "model": model,
+                "system": system,
+                "user": user,
+                "image_paths": [str(path) for path in image_paths or []],
+                "max_retries": max_retries,
+            }
+        )
+        response = self.responses.pop(0)
+        if isinstance(response, str):
+            return response
+        if isinstance(response, BaseModel):
+            body_field = _document_body_field(response.model_dump())
+            return model_to_document(response, body_field=body_field)
+        if isinstance(response, dict):
+            return _dict_to_document(response)
+        msg = "recording runtime document response must be text or document-like data"
+        raise TypeError(msg)
+
     async def generate_with_tools(
         self,
         *,
@@ -94,3 +125,22 @@ class RecordingRuntime:
         if isinstance(response, output_model):
             return output_model.model_validate(response.model_dump(mode="json"), context=context)
         return output_model.model_validate(response, context=context)
+
+
+def _dict_to_document(response: dict[str, Any]) -> str:
+    body_field = _document_body_field(response)
+    body = response.get(body_field, "")
+    frontmatter = {key: value for key, value in response.items() if key != body_field}
+    import yaml
+
+    frontmatter_text = yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False).strip()
+    return f"---\n{frontmatter_text}\n---\n{body}"
+
+
+def _document_body_field(response: dict[str, Any]) -> str:
+    if "body_md" in response:
+        return "body_md"
+    if "summary_md" in response:
+        return "summary_md"
+    msg = "document-like data must contain body_md or summary_md"
+    raise ValueError(msg)
