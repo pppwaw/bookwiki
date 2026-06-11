@@ -120,7 +120,9 @@ matplotlib **写代码并调用 `run_plot` 工具**把它画出来。
             user=prompt.user,
             tools=FIGURE_TOOLS,
             tool_executor=tool_executor,
-            max_tool_rounds=4,
+            # 配图是迭代式：写代码→run_plot→看 error 改→重跑→verify，
+            # 单次 plot 重试 + verify 就轻易超 4 轮；给足迭代空间（循环仍有界）。
+            max_tool_rounds=128,
         )
         return ImageSupplementResult.model_validate(result)
 

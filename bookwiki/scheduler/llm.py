@@ -249,7 +249,15 @@ class LiteLLMRuntime:
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
             if not tool_calls:
+                _LOG.info("tool loop done model=%s rounds_used=%d", model, _round)
                 break
+            _LOG.info(
+                "tool round model=%s round=%d/%d calls=%d",
+                model,
+                _round + 1,
+                max_tool_rounds,
+                len(tool_calls),
+            )
             messages.append(_assistant_tool_message(message))
             for call in tool_calls:
                 messages.append(await _run_tool_call(call, tool_executor))
@@ -523,6 +531,13 @@ def _strip_mdx_fence(content: str) -> str:
 _VALID_ESCAPE_NEXT = set('\\"/bfnrtu')
 
 
+def _truncate_for_log(text: str, *, limit: int = 600) -> str:
+    text = str(text)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...[+{len(text) - limit} chars]"
+
+
 def _repair_json_escapes(content: str) -> str:
     """Repair only isolated invalid backslash escapes while preserving valid pairs."""
     out: list[str] = []
@@ -624,17 +639,22 @@ def _assistant_tool_message(message: Any) -> dict[str, Any]:  # pragma: no cover
 async def _run_tool_call(
     call: Any, tool_executor: ToolExecutor
 ) -> dict[str, Any]:  # pragma: no cover - real API path
+    tool_name = call.function.name
+    raw_args = call.function.arguments or "{}"
     try:
-        args = json.loads(call.function.arguments or "{}")
+        args = json.loads(raw_args)
     except (json.JSONDecodeError, TypeError):
         args = {}
-    result = tool_executor(call.function.name, args)
+    _LOG.info("tool call name=%s args=%s", tool_name, _truncate_for_log(raw_args))
+    result = tool_executor(tool_name, args)
     if inspect.isawaitable(result):
         result = await result
+    payload = json.dumps(result, ensure_ascii=False, default=str)
+    _LOG.info("tool result name=%s result=%s", tool_name, _truncate_for_log(payload))
     return {
         "role": "tool",
         "tool_call_id": call.id,
-        "content": json.dumps(result, ensure_ascii=False, default=str),
+        "content": payload,
     }
 
 
