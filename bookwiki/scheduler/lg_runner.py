@@ -200,7 +200,7 @@ async def _run(
     # ``config_hash`` (computed from ``cfg.to_json()``, which excludes the runtime)
     # is unaffected.
     if cfg.llm_runtime is None:
-        cfg.llm_runtime = build_runtime(max_cost_usd=cfg.budget.get("maxCostUsd"))
+        cfg.llm_runtime = build_runtime(max_cost_cny=cfg.budget.get("maxCostCny"))
 
     prior_values, prior_meta, prior_next = await _peek(db_path, cfg)
     config_matches = prior_meta.get("config_hash") == cfg_hash

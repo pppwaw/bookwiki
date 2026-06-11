@@ -76,9 +76,14 @@ into the explicit `BOOKWIKI_TEST_LLM=1` fake runtime.
 
 `lg_runner` injects a single shared `LiteLLMRuntime` onto `cfg.llm_runtime` for the whole run, so every
 agent reuses one LiteLLM `Router` (its tpm/rpm self-throttling and usage/cost accounting are
-per-Router). The runtime accumulates token/cost usage per call and enforces `generation`/`budget`
-`maxCostUsd` (default `10.0`; `<= 0` means unlimited), raising `BudgetExceeded` once the running total
-crosses it. Chapters fan out bounded by `maxChapterConcurrency` (default 4); sections within a chapter
+per-Router). The runtime accumulates token/cost usage per call and enforces `budget`
+`maxCostCny` (default `70.0`; `<= 0` means unlimited), raising `BudgetExceeded` once the running total
+crosses it. Per-token prices are registered on each Router deployment in CNY — the providers
+(`api.moonshot.cn`, DeepSeek domestic) bill in RMB — with separate cache-hit input rates so
+`cached_tokens` are priced at the discounted rate; litellm has no built-in pricing for these custom
+model names, so without this registration every call would cost 0. Legacy configs using `maxCostUsd`
+are migrated to `maxCostCny` (number carried over; the unit is now CNY). Chapters fan out bounded by
+`maxChapterConcurrency` (default 4); sections within a chapter
 also fan out, bounded by `maxSectionConcurrency` (default 3) — section inputs depend only on the static
 plan, never on a sibling section body, so order is preserved by `asyncio.gather` while running in
 parallel. The on-disk task cache writes atomically (temp + `os.replace`), tolerates corrupt entries by

@@ -438,12 +438,12 @@ def test_record_usage_accumulates_and_logs(caplog: pytest.LogCaptureFixture) -> 
 
     assert runtime.total_prompt_tokens == 200
     assert runtime.total_completion_tokens == 100
-    assert runtime.total_cost_usd == pytest.approx(0.0246)
+    assert runtime.total_cost_cny == pytest.approx(0.0246)
     assert any("llm usage" in record.getMessage() for record in caplog.records)
 
 
 def test_record_usage_enforces_budget() -> None:
-    runtime = LiteLLMRuntime(router=object(), max_cost_usd=0.05)
+    runtime = LiteLLMRuntime(router=object(), max_cost_cny=0.05)
 
     runtime._record_usage(_usage_response(10, 10, 0.04))  # under budget, fine
     with pytest.raises(BudgetExceeded, match="budget exceeded"):
@@ -451,12 +451,12 @@ def test_record_usage_enforces_budget() -> None:
 
 
 def test_record_usage_unlimited_when_budget_non_positive() -> None:
-    runtime = LiteLLMRuntime(router=object(), max_cost_usd=0)
+    runtime = LiteLLMRuntime(router=object(), max_cost_cny=0)
 
     for _ in range(5):
         runtime._record_usage(_usage_response(10, 10, 100.0))
 
-    assert runtime.total_cost_usd == pytest.approx(500.0)  # never raised
+    assert runtime.total_cost_cny == pytest.approx(500.0)  # never raised
 
 
 def test_extract_usage_and_cost_tolerate_missing_fields() -> None:

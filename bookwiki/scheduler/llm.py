@@ -29,6 +29,40 @@ ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]] | dict[
 # wall time so a stuck call surfaces as an error the backoff/repair paths can see.
 LLM_REQUEST_TIMEOUT_SECONDS = 600
 
+# Per-token prices (CNY) registered on each Router deployment so litellm computes
+# ``response_cost`` (read back by ``_record_usage``) and the ``maxCostCny`` budget is
+# actually enforceable. litellm has no built-in pricing for these custom model names,
+# so without this every call costs 0.
+#
+# Currency: CNY (¥). The configured endpoints (api.moonshot.cn, DeepSeek domestic) bill
+# in RMB, so we price in RMB to match the real invoice with no FX drift.
+#
+# Cached vs uncached input: each tuple is (input_miss, output, input_cache_hit) per 1M
+# tokens. Context caching makes cache hits far cheaper on input, so we register the hit
+# rate separately (litellm prices ``cached_tokens`` at it). Source — official platform
+# pricing (元/百万 tokens): deepseek-v4-flash ¥1/¥2, hit ¥0.02; deepseek-v4-pro ¥3/¥6,
+# hit ¥0.025; kimi-k2.6 ¥6.5/¥27, hit ¥1.10.
+_MILLION = 1_000_000.0
+_MODEL_PRICES_CNY: dict[str, tuple[float, float, float]] = {
+    "deepseek-v4-flash": (1.0 / _MILLION, 2.0 / _MILLION, 0.02 / _MILLION),
+    "deepseek-v4-pro": (3.0 / _MILLION, 6.0 / _MILLION, 0.025 / _MILLION),
+    "kimi-k2.6": (6.5 / _MILLION, 27.0 / _MILLION, 1.10 / _MILLION),
+}
+
+
+def _price_params(model_name: str) -> dict[str, float]:
+    """litellm_params cost keys for a deployment, or empty if unpriced."""
+    price = _MODEL_PRICES_CNY.get(model_name)
+    if price is None:
+        return {}
+    input_cost, output_cost, cache_read_cost = price
+    return {
+        "input_cost_per_token": input_cost,
+        "output_cost_per_token": output_cost,
+        "cache_read_input_token_cost": cache_read_cost,
+    }
+
+
 
 _RATE_LIMIT_MARKERS = (
     "ratelimit",
@@ -166,7 +200,7 @@ class ToolLoopExceeded(RuntimeError):
 
 
 class LiteLLMRuntime:
-    def __init__(self, router: Any | None = None, *, max_cost_usd: float | None = None) -> None:
+    def __init__(self, router: Any | None = None, *, max_cost_cny: float | None = None) -> None:
         self.router = router
         self.client: Any | None = None
         # Lazy router/client construction is shared across concurrently generating
@@ -175,9 +209,9 @@ class LiteLLMRuntime:
         # under the lock so the steady-state path stays lock-free.
         self._init_lock = asyncio.Lock()
         # Usage/cost accounting accumulates across every API call on this runtime.
-        # ``max_cost_usd`` (<= 0 or None means unlimited) bounds the whole run.
-        self._max_cost_usd = max_cost_usd
-        self.total_cost_usd = 0.0
+        # ``max_cost_cny`` (<= 0 or None means unlimited) bounds the whole run.
+        self._max_cost_cny = max_cost_cny
+        self.total_cost_cny = 0.0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
@@ -187,30 +221,30 @@ class LiteLLMRuntime:
         Hooked into every real API call (instructor JSON path via the
         ``build_instructor_client`` wrapper; document/tool paths directly). Robust to
         dict or object responses and to missing usage/cost fields (records 0). Raises
-        :class:`BudgetExceeded` once the accumulated cost crosses ``max_cost_usd``.
+        :class:`BudgetExceeded` once the accumulated cost crosses ``max_cost_cny``.
         """
         prompt_tokens, completion_tokens = _extract_usage(response)
         cost = _extract_cost(response)
         self.total_prompt_tokens += prompt_tokens
         self.total_completion_tokens += completion_tokens
-        self.total_cost_usd += cost
+        self.total_cost_cny += cost
         _LOG.info(
             "llm usage model=%s prompt_tokens=%d completion_tokens=%d "
-            "cost_usd=%.6f total_cost_usd=%.6f",
+            "cost_cny=%.6f total_cost_cny=%.6f",
             model or _get_attr_or_key(response, "model") or "unknown",
             prompt_tokens,
             completion_tokens,
             cost,
-            self.total_cost_usd,
+            self.total_cost_cny,
         )
         if (
-            self._max_cost_usd is not None
-            and self._max_cost_usd > 0
-            and self.total_cost_usd > self._max_cost_usd
+            self._max_cost_cny is not None
+            and self._max_cost_cny > 0
+            and self.total_cost_cny > self._max_cost_cny
         ):
             raise BudgetExceeded(
-                f"budget exceeded: spent ${self.total_cost_usd:.4f}, "
-                f"limit ${self._max_cost_usd:.4f}"
+                f"budget exceeded: spent ¥{self.total_cost_cny:.4f}, "
+                f"limit ¥{self._max_cost_cny:.4f}"
             )
 
     async def _ensure_router(self) -> Any:
@@ -409,11 +443,11 @@ class TestLLMRuntime:
         return output_model.model_validate(draft, context=context)
 
 
-def build_runtime(*, max_cost_usd: float | None = None) -> LLMRuntime:
+def build_runtime(*, max_cost_cny: float | None = None) -> LLMRuntime:
     load_dotenv()
     if os.getenv("BOOKWIKI_TEST_LLM") == "1":
         return TestLLMRuntime()
-    return LiteLLMRuntime(max_cost_usd=max_cost_usd)
+    return LiteLLMRuntime(max_cost_cny=max_cost_cny)
 
 
 def build_router() -> Any:
@@ -446,6 +480,7 @@ def _model_list() -> list[dict[str, Any]]:
                 "model": "deepseek/deepseek-v4-pro",
                 "api_key": os.getenv("DEEPSEEK_API_KEY"),
                 "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
+                **_price_params("deepseek-v4-pro"),
             },
             "tpm": 200_000,
             "rpm": 60,
@@ -456,6 +491,7 @@ def _model_list() -> list[dict[str, Any]]:
                 "model": "deepseek/deepseek-v4-flash",
                 "api_key": os.getenv("DEEPSEEK_API_KEY"),
                 "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
+                **_price_params("deepseek-v4-flash"),
             },
             "tpm": 400_000,
             "rpm": 120,
@@ -467,6 +503,7 @@ def _model_list() -> list[dict[str, Any]]:
                 "api_key": os.getenv("MOONSHOT_API_KEY"),
                 "api_base": "https://api.moonshot.cn/v1",
                 "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
+                **_price_params("kimi-k2.6"),
             },
         },
     ]

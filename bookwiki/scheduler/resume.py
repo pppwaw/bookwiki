@@ -198,7 +198,7 @@ def dry_run_report(cfg: BookConfig, chapter_count: int = 2) -> str:
     return (
         f"{draw_mermaid()}\n\n"
         f"Estimated tokens: {estimate.tokens}\n"
-        f"Estimated cost USD: {estimate.cost_usd:.6f}\n"
+        f"Estimated cost CNY: {estimate.cost_cny:.6f}\n"
         "Critical path: convert -> caption -> structure -> split -> "
         "generate -> check -> index\n"
     )

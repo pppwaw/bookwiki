@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 class BudgetExceeded(RuntimeError):
-    """Raised when accumulated LLM cost exceeds the configured ``maxCostUsd``.
+    """Raised when accumulated LLM cost exceeds the configured ``maxCostCny``.
 
     Enforcement lives in ``LiteLLMRuntime._record_usage`` (see
     ``bookwiki.scheduler.llm``): every API response accumulates token/cost usage and
