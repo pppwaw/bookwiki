@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from bookwiki.generate.figures import generated_asset_relpath
 from bookwiki.generate.sections import supplement_section_figures
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import TestLLMRuntime
@@ -143,4 +144,44 @@ async def test_supplement_noop_when_no_requests(tmp_path: Path) -> None:
     )
 
     assert registry == {}
+    assert issues == []
+
+
+@pytest.mark.asyncio
+async def test_supplement_verify_figure_uses_returned_path_no_double_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: verify_figure tool must use run_plot's returned path as-is.
+
+    The bug only surfaces with a *relative* book_dir (the real-run condition,
+    e.g. ``books/mini``): run_plot returns ``book/work/assets/...`` and the old
+    handler re-joined ``cfg.book_dir`` → ``book/book/work/...`` → a spurious
+    "file does not exist", confusing the model into wasting tool rounds. With an
+    absolute tmp_path book_dir the bug is masked (absolute right operand wins),
+    so this test deliberately chdir's and uses a relative book_dir.
+    """
+    pytest.importorskip("matplotlib")
+    monkeypatch.chdir(tmp_path)
+    book_dir = Path("book")  # relative, like the real books/<id> layout
+    figure_ref = "ch1-s0-demo"
+    returned_path = str(book_dir / generated_asset_relpath("chapter-1", figure_ref))
+    section = _section([FigureRequest(kind="plot", figure_ref=figure_ref, rationale="a line")])
+    runtime = RecordingRuntime(
+        [_image_result(figure_ref, caption="A demo line")],
+        tool_calls=[
+            ("run_plot", {"code": PLOT_CODE}),
+            # the model echoes back exactly the image_path run_plot returned
+            ("verify_figure", {"image_path": returned_path}),
+        ],
+    )
+    cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book", llm_runtime=runtime)
+
+    registry, issues = await supplement_section_figures(
+        cfg=cfg, chapter_id="chapter-1", section=section, source_figures=[]
+    )
+
+    # The verify_figure tool call (2nd result) must succeed, not "file does not exist".
+    assert len(runtime.tool_results) == 2
+    assert runtime.tool_results[1]["ok"] is True, runtime.tool_results[1]
+    assert "ch1-s0-demo" in registry
     assert issues == []

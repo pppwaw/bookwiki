@@ -328,6 +328,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -365,6 +366,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7" },
+    { name = "scipy", specifier = ">=1.17.1" },
     { name = "tiktoken", marker = "extra == 'runtime'", specifier = ">=0.8" },
 ]
 provides-extras = ["runtime", "mineru", "dev"]

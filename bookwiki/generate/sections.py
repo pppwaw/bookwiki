@@ -663,7 +663,10 @@ async def _supplement_plot(
                 plot_state["image_relpath"] = out_rel
             return result
         if name == "verify_figure":
-            return verify_figure(cfg.book_dir / str(args.get("image_path", "")))
+            # run_plot returns image_path = str(out_abs) (already book_dir-prefixed,
+            # resolved against cwd); use it as-is. Re-joining cfg.book_dir here would
+            # double the prefix (books/mini/books/mini/...) → spurious "file does not exist".
+            return verify_figure(str(args.get("image_path", "")))
         return {"ok": False, "error": f"unknown tool {name!r}"}
 
     supplement_input = {
