@@ -34,9 +34,11 @@ DEFAULT_GENERATION = {
     "quizPerChapter": 5,
     "cardsPerChapter": 8,
     "maxChapterConcurrency": 4,
+    "maxSectionConcurrency": 3,
     "maxRepairRounds": 3,
     "qualityCheck": False,
     "maxQualityRounds": 2,
+    "allowMissingMdxValidator": False,
     "sourceLayoutRepair": {
         "mode": "auto",
         "minConfidence": 0.85,
@@ -58,7 +60,7 @@ class BookConfig:
     language: str = "zh-CN"
     notes_path: str = "book.notes.md"
     models: dict[str, str] = field(default_factory=lambda: DEFAULT_MODELS.copy())
-    budget: dict[str, Any] = field(default_factory=lambda: {"maxCostUsd": 2.0})
+    budget: dict[str, Any] = field(default_factory=lambda: {"maxCostUsd": 10.0})
     generation: dict[str, Any] = field(default_factory=lambda: deepcopy(DEFAULT_GENERATION))
     pause_after: list[str] = field(default_factory=list)
     dry_run: bool = False
@@ -117,6 +119,13 @@ class BookConfig:
             DEFAULT_GENERATION["maxChapterConcurrency"],
         )
 
+    @property
+    def section_concurrency(self) -> int:
+        return _positive_int(
+            self.generation.get("maxSectionConcurrency"),
+            DEFAULT_GENERATION["maxSectionConcurrency"],
+        )
+
     def to_json(self) -> dict[str, Any]:
         return {
             "book_id": self.book_id,
@@ -152,7 +161,7 @@ def load_config(book_dir: str | Path) -> BookConfig:
         language=str(raw.get("language") or "zh-CN"),
         notes_path=str(raw.get("notesPath") or raw.get("notes_path") or "book.notes.md"),
         models={**DEFAULT_MODELS, **raw.get("models", {})},
-        budget={**{"maxCostUsd": 2.0}, **raw.get("budget", {})},
+        budget={**{"maxCostUsd": 10.0}, **raw.get("budget", {})},
         generation=_merge_generation(raw.get("generation", {})),
     )
 

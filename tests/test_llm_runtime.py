@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import logging
 import os
 from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
 
+from bookwiki.scheduler.budget_guard import BudgetExceeded
 from bookwiki.scheduler.llm import (
     LiteLLMRuntime,
     MissingLLMApiKey,
+    _extract_cost,
+    _extract_usage,
     _is_rate_limit_error,
     _model_list,
     _repair_json_escapes,
@@ -380,3 +385,106 @@ async def test_generate_reraises_non_rate_limit_immediately(
 
     assert client.calls == 1  # no retries for non-rate-limit errors
     assert sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_calls_build_single_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    build_calls = {"router": 0, "client": 0}
+
+    def fake_build_router() -> object:
+        build_calls["router"] += 1
+        return object()
+
+    def fake_build_instructor_client(
+        router: object, *, on_usage: object = None
+    ) -> _InstructorClient:
+        build_calls["client"] += 1
+        return _InstructorClient({"value": "ok"})
+
+    monkeypatch.setattr("bookwiki.scheduler.llm.build_router", fake_build_router)
+    monkeypatch.setattr(
+        "bookwiki.scheduler.llm.build_instructor_client", fake_build_instructor_client
+    )
+    runtime = LiteLLMRuntime()
+
+    results = await asyncio.gather(
+        *(
+            runtime.generate(model="deepseek-v4-pro", output_model=_Tiny, system="s", user="u")
+            for _ in range(10)
+        )
+    )
+
+    assert all(isinstance(r, _Tiny) and r.value == "ok" for r in results)
+    assert build_calls["router"] == 1  # lock collapses concurrent first-build into one
+    assert build_calls["client"] == 1
+
+
+def _usage_response(prompt: int, completion: int, cost: float) -> SimpleNamespace:
+    return SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=prompt, completion_tokens=completion),
+        _hidden_params={"response_cost": cost},
+        model="deepseek-v4-pro",
+    )
+
+
+def test_record_usage_accumulates_and_logs(caplog: pytest.LogCaptureFixture) -> None:
+    runtime = LiteLLMRuntime(router=object())
+    response = _usage_response(100, 50, 0.0123)
+
+    with caplog.at_level(logging.INFO, logger="bookwiki.scheduler.llm"):
+        runtime._record_usage(response)
+        runtime._record_usage(response)
+
+    assert runtime.total_prompt_tokens == 200
+    assert runtime.total_completion_tokens == 100
+    assert runtime.total_cost_usd == pytest.approx(0.0246)
+    assert any("llm usage" in record.getMessage() for record in caplog.records)
+
+
+def test_record_usage_enforces_budget() -> None:
+    runtime = LiteLLMRuntime(router=object(), max_cost_usd=0.05)
+
+    runtime._record_usage(_usage_response(10, 10, 0.04))  # under budget, fine
+    with pytest.raises(BudgetExceeded, match="budget exceeded"):
+        runtime._record_usage(_usage_response(10, 10, 0.02))  # crosses 0.05
+
+
+def test_record_usage_unlimited_when_budget_non_positive() -> None:
+    runtime = LiteLLMRuntime(router=object(), max_cost_usd=0)
+
+    for _ in range(5):
+        runtime._record_usage(_usage_response(10, 10, 100.0))
+
+    assert runtime.total_cost_usd == pytest.approx(500.0)  # never raised
+
+
+def test_extract_usage_and_cost_tolerate_missing_fields() -> None:
+    assert _extract_usage({"choices": []}) == (0, 0)
+    assert _extract_usage(SimpleNamespace()) == (0, 0)
+    # No hidden params and no litellm cost computable -> 0.0, never raises.
+    assert _extract_cost({"choices": []}) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_run_tool_call_returns_error_on_invalid_json_args() -> None:
+    from bookwiki.scheduler.llm import _run_tool_call
+
+    calls: list[tuple[str, dict]] = []
+
+    def executor(name: str, args: dict) -> dict:
+        calls.append((name, args))
+        return {"ok": True}
+
+    call = SimpleNamespace(
+        id="call-1",
+        function=SimpleNamespace(name="run_plot", arguments="{not valid json"),
+    )
+
+    result = await _run_tool_call(call, executor)
+
+    content = json.loads(result["content"])
+    assert content["ok"] is False
+    assert "invalid JSON tool arguments" in content["error"]
+    assert result["tool_call_id"] == "call-1"
+    assert calls == []  # executor body never runs on malformed arguments

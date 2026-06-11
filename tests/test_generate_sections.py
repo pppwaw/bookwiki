@@ -7,11 +7,13 @@ that records a warning ``Issue`` and keeps the imperfect section.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import bookwiki.generate.sections as sections
 from bookwiki.generate.sections import generate_chapter_sections
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import TestLLMRuntime
@@ -519,3 +521,93 @@ async def test_generate_chapter_sections_warns_when_application_quiz_mdx_stays_b
     assert issue.owner_task_id == "chapter-1:quiz"
     assert result.quiz.items[0].question == "When n<30, what follows?"
     assert result.summary.chapter_id == "chapter-1"
+
+
+@pytest.mark.asyncio
+async def test_sections_fan_out_bounded_by_section_concurrency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = BookConfig(
+        book_dir=tmp_path / "book",
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+        generation={"quizPerChapter": 2, "cardsPerChapter": 2, "maxSectionConcurrency": 2},
+    )
+
+    active = 0
+    peak = 0
+    original = sections._generate_validated_section
+
+    async def tracking_section(**kwargs: Any):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            # Yield control so siblings can overlap before this one finishes.
+            await asyncio.sleep(0.02)
+            return await original(**kwargs)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(sections, "_generate_validated_section", tracking_section)
+
+    result = await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id="chapter-1",
+        title="Search",
+        source_md=SOURCE_MD,
+        source_path="work/chapter_sources/chapter-1/source.md",
+        topics=["t0", "t1", "t2"],
+        figures=[],
+        skeleton_payload={},
+    )
+
+    # 3 sections, semaphore=2: sections ran in parallel (peak > 1) but never exceeded
+    # the configured bound.
+    assert peak == 2
+    # Order is still preserved by gather, so the assembled body keeps section order.
+    body = result.chapter.body_md
+    assert body.index("## t0") < body.index("## t1") < body.index("## t2")
+
+
+def test_section_position_flags_boundaries_with_nonzero_base() -> None:
+    from bookwiki.generate.sections import _section_position
+    from bookwiki.schemas.section import SectionSpec
+
+    outline = [{"index": 1}, {"index": 2}, {"index": 3}]
+
+    def spec(index: int) -> SectionSpec:
+        return SectionSpec(
+            chapter_id="chapter-1",
+            index=index,
+            title=f"s{index}",
+            learning_goal="g",
+            topics_covered=[],
+            concepts_introduced=[],
+        )
+
+    first = _section_position(spec(1), outline)
+    middle = _section_position(spec(2), outline)
+    last = _section_position(spec(3), outline)
+
+    assert first["is_first"] is True and first["is_last"] is False
+    assert middle["is_first"] is False and middle["is_last"] is False
+    assert last["is_first"] is False and last["is_last"] is True
+
+
+def test_section_position_zero_based_still_flags_first() -> None:
+    from bookwiki.generate.sections import _section_position
+    from bookwiki.schemas.section import SectionSpec
+
+    outline = [{"index": 0}, {"index": 1}]
+    spec0 = SectionSpec(
+        chapter_id="chapter-1",
+        index=0,
+        title="s0",
+        learning_goal="g",
+        topics_covered=[],
+        concepts_introduced=[],
+    )
+
+    assert _section_position(spec0, outline)["is_first"] is True

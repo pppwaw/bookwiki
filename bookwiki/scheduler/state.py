@@ -68,6 +68,7 @@ class PipelineState(TypedDict, total=False):
 
     # --- repair ---
     repairs: list[str]
+    repair_exhausted: list[Any]
     _repair_rounds: dict[str, int]
 
     # --- index ---

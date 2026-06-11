@@ -9,6 +9,9 @@ from pydantic import BaseModel
 from bookwiki.agents.document import model_to_document, parse_frontmatter_document
 from bookwiki.agents.prompting import PromptTemplate, render_prompt
 from bookwiki.scheduler.llm import LLMRuntime
+from bookwiki.utils.logging import get_logger
+
+_LOG = get_logger(__name__)
 
 
 async def generate_with_llm(
@@ -78,7 +81,8 @@ async def generate_document_with_llm(
         "本次调用是 MDX-direct 文档输出模式：不要返回 JSON；"
         "只返回 YAML frontmatter + raw MDX body。"
     )
-    user = _document_user_prompt(prompt.user, draft_document=draft_document)
+    base_user = _document_user_prompt(prompt.user, draft_document=draft_document)
+    user = base_user
     last_error: Exception | None = None
     for attempt in range(max_attempts):
         text = await runtime.generate_document(
@@ -100,10 +104,17 @@ async def generate_document_with_llm(
             last_error = exc
             if attempt == max_attempts - 1:
                 break
+            # Rebuild from the ORIGINAL prompt (not cumulative) to avoid snowballing,
+            # and include the prior failed document so the model can fix it in place
+            # rather than blindly regenerating from scratch.
             user = (
-                f"{user}\n\n"
+                f"{base_user}\n\n"
                 "上一次 MDX-direct 文档无法解析或校验失败。\n"
-                f"错误：{exc}\n"
+                f"错误：{exc}\n\n"
+                "上一次返回的文档（请在此基础上定点修正，不要从零重写）：\n"
+                "```\n"
+                f"{_truncate_failed_doc(text)}\n"
+                "```\n\n"
                 "请修正后重新返回完整文档：开头必须是 YAML frontmatter，"
                 "随后是 `---` 与 raw MDX body。"
             )
@@ -111,9 +122,21 @@ async def generate_document_with_llm(
     raise last_error
 
 
+def _truncate_failed_doc(text: str, *, max_chars: int = 20_000) -> str:
+    """Keep a failed document small for the retry prompt: head + tail when oversized."""
+    if len(text) <= max_chars:
+        return text
+    head = text[:16_000]
+    tail = text[-4_000:]
+    return f"{head}\n\n[... truncated {len(text) - max_chars} chars ...]\n\n{tail}"
+
+
 def compact_input(value: Any, *, max_chars: int = 40_000) -> Any:
     if isinstance(value, str):
-        return value if len(value) <= max_chars else value[:max_chars] + "\n\n[truncated]"
+        if len(value) <= max_chars:
+            return value
+        _LOG.warning("compact_input truncated a %d-char string to %d", len(value), max_chars)
+        return value[:max_chars] + "\n\n[truncated]"
     if isinstance(value, dict):
         return {key: compact_input(item, max_chars=max_chars) for key, item in value.items()}
     if isinstance(value, list):
@@ -135,43 +158,4 @@ def _document_user_prompt(user: str, *, draft_document: str) -> str:
         f"{draft_document}\n"
         "```\n\n"
         "Return only the final YAML frontmatter + raw MDX body document."
-    )
-
-
-def _invalid_citation_refs(result: BaseModel, allowed_refs: set[str]) -> list[str]:
-    if not allowed_refs:
-        return []
-    seen = set()
-    invalid = []
-    for ref_id in _iter_citation_ref_ids(result.model_dump(mode="json")):
-        if ref_id not in allowed_refs and ref_id not in seen:
-            seen.add(ref_id)
-            invalid.append(ref_id)
-    return invalid
-
-
-def _iter_citation_ref_ids(value: Any) -> Iterable[str]:
-    if isinstance(value, dict):
-        if "ref_id" in value and "quote" in value:
-            yield str(value["ref_id"])
-        for item in value.values():
-            yield from _iter_citation_ref_ids(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _iter_citation_ref_ids(item)
-
-
-def _citation_retry_instruction(invalid_refs: list[str], allowed_refs: set[str]) -> str:
-    return (
-        "Citation validation failed.\n"
-        f"Invalid ref_id values: {', '.join(invalid_refs)}\n"
-        f"Allowed source_ref values: {', '.join(sorted(allowed_refs))}\n"
-        "Return corrected JSON only. Do not invent source_ref values."
-    )
-
-
-def _citation_error_message(invalid_refs: list[str], allowed_refs: set[str]) -> str:
-    return (
-        f"invalid citation ref_id values: {', '.join(invalid_refs)}; "
-        f"allowed source_ref values: {', '.join(sorted(allowed_refs))}"
     )

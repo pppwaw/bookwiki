@@ -28,6 +28,7 @@ from langgraph.graph import END, START, StateGraph
 
 from bookwiki.pipeline.nodes import NODE_FUNCTIONS
 from bookwiki.scheduler.config import BookConfig
+from bookwiki.scheduler.llm import build_runtime
 from bookwiki.scheduler.resume import (
     NODE_ORDER,
     clear_for_force,
@@ -191,6 +192,15 @@ async def _run(
 ) -> dict[str, Any]:
     db_path = cfg.cache_dir / CHECKPOINT_DB
     cfg_hash = config_hash(cfg)
+
+    # Inject one shared LLM runtime for the whole pipeline so every agent call
+    # reuses a single LiteLLM Router (its tpm/rpm self-throttling and usage/cost
+    # accounting are per-Router; an ad-hoc runtime per call defeats both). Built
+    # lazily here after the dry-run early-return, so no-LLM stages stay cheap and
+    # ``config_hash`` (computed from ``cfg.to_json()``, which excludes the runtime)
+    # is unaffected.
+    if cfg.llm_runtime is None:
+        cfg.llm_runtime = build_runtime(max_cost_usd=cfg.budget.get("maxCostUsd"))
 
     prior_values, prior_meta, prior_next = await _peek(db_path, cfg)
     config_matches = prior_meta.get("config_hash") == cfg_hash

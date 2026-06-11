@@ -11,9 +11,11 @@ DEFAULT_GENERATION_EXPECTED = {
     "quizPerChapter": 5,
     "cardsPerChapter": 8,
     "maxChapterConcurrency": 4,
+    "maxSectionConcurrency": 3,
     "maxRepairRounds": 3,
     "qualityCheck": False,
     "maxQualityRounds": 2,
+    "allowMissingMdxValidator": False,
     "sourceLayoutRepair": {
         "mode": "auto",
         "minConfidence": 0.85,

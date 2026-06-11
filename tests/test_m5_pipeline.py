@@ -72,7 +72,7 @@ async def test_concept_reconcile_merges_aliases_rule_first_without_llm() -> None
 
 
 @pytest.mark.asyncio
-async def test_check_routes_bad_quiz_answer_and_repair_rewrites_agent_result(tmp_path) -> None:
+async def test_check_routes_bad_quiz_answer_and_repair_drops_invalid_item(tmp_path) -> None:
     book_dir = tmp_path / "book"
     result_dir = book_dir / "work" / "agent_results"
     result_dir.mkdir(parents=True)
@@ -106,12 +106,19 @@ async def test_check_routes_bad_quiz_answer_and_repair_rewrites_agent_result(tmp
                     "chapter_id": "chapter-1",
                     "items": [
                         {
+                            "question": "Valid question?",
+                            "choices": ["A", "B"],
+                            "answer": "A",
+                            "explanation": "Valid.",
+                            "citations": [],
+                        },
+                        {
                             "question": "What is search?",
                             "choices": ["A", "B"],
                             "answer": "C",
                             "explanation": "Because.",
                             "citations": [{"ref_id": "source-p001", "quote": "Search source"}],
-                        }
+                        },
                     ],
                     "owner_task_id": "chapter-1:quiz",
                 }
@@ -162,7 +169,16 @@ async def test_check_routes_bad_quiz_answer_and_repair_rewrites_agent_result(tmp
     repaired = await repair_node({**state, **checked}, cfg)
     assert repaired["repair_targets"] == []
     repaired_payload = json.loads(quiz_path.read_text(encoding="utf-8"))
-    assert repaired_payload["result"]["items"][0]["answer"] == "A"
+    # The bad item is DROPPED (not silently rewritten to a wrong answer); the valid
+    # item is kept so the chapter still has a quiz.
+    items = repaired_payload["result"]["items"]
+    assert len(items) == 1
+    assert items[0]["question"] == "Valid question?"
+    actions = json.loads(
+        (book_dir / "work" / "logs" / "repair-actions.json").read_text(encoding="utf-8")
+    )
+    assert actions["actions"][0]["owner_task_id"] == "chapter-1:quiz"
+    assert actions["actions"][0]["dropped_quiz_items"] == ["What is search?"]
 
     integrate_node(state, cfg)
     passed = await check_node(state, cfg)
@@ -701,3 +717,93 @@ async def test_check_routes_unknown_refs_for_concept_and_quiz_owners(tmp_path) -
     integrate_node(state, cfg)
     passed = await check_node(state, cfg)
     assert passed["repair_targets"] == []
+
+
+@pytest.mark.asyncio
+async def test_check_node_aborts_when_mdx_validator_unavailable(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "bookwiki.pipeline.nodes.mdx_validator_available", lambda: False
+    )
+    cfg = BookConfig(
+        book_dir=tmp_path / "book",
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+
+    with pytest.raises(RuntimeError, match="mdx validator unavailable"):
+        await check_node({}, cfg)
+
+
+@pytest.mark.asyncio
+async def test_check_node_escape_valve_degrades_to_error_log(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    import logging
+
+    monkeypatch.setattr(
+        "bookwiki.pipeline.nodes.mdx_validator_available", lambda: False
+    )
+    book_dir = tmp_path / "book"
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+    cfg.generation["allowMissingMdxValidator"] = True
+
+    with caplog.at_level(logging.ERROR, logger="bookwiki.pipeline.nodes"):
+        result = await check_node({}, cfg)
+
+    # Does not abort; the missing content index is still flagged the normal way.
+    assert "repair_targets" in result
+    assert any("allowMissingMdxValidator" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_repair_node_records_exhausted_targets_loudly(tmp_path, caplog) -> None:
+    import logging
+
+    book_dir = tmp_path / "book"
+    logs_dir = book_dir / "work" / "logs"
+    logs_dir.mkdir(parents=True)
+    (logs_dir / "check-report.json").write_text(
+        json.dumps(
+            {
+                "issues": [
+                    {
+                        "severity": "error",
+                        "code": "MDX_PARSE_ERROR",
+                        "message": "chapter-1.mdx fails MDX compilation: boom",
+                        "owner_task_id": "chapter-1:chapter",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+    # The target has already consumed maxRepairRounds (default 3): the next pass must
+    # NOT silently drop it - it must record the exhaustion.
+    state = {
+        "repair_targets": ["chapter-1:chapter"],
+        "_repair_rounds": {"chapter-1:chapter": 3},
+        "check_report": "work/logs/check-report.json",
+    }
+
+    with caplog.at_level(logging.WARNING, logger="bookwiki.pipeline.nodes"):
+        result = await repair_node(state, cfg)
+
+    assert result["repairs"] == []
+    assert result["repair_exhausted"] == [
+        {"owner_task_id": "chapter-1:chapter", "codes": ["MDX_PARSE_ERROR"], "rounds": 3}
+    ]
+    exhausted_file = json.loads((logs_dir / "repair-exhausted.json").read_text(encoding="utf-8"))
+    assert exhausted_file["exhausted"][0]["owner_task_id"] == "chapter-1:chapter"
+    assert any("repair exhausted" in record.getMessage() for record in caplog.records)

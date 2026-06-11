@@ -1,10 +1,10 @@
-"""Chapter generation as a serial section pipeline (Phase 3, agentic generate).
+"""Chapter generation as a section pipeline (Phase 3, agentic generate).
 
 This module replaces the legacy single-call lesson agent per chapter with a
 plan / generate / validate / repair / assemble loop:
 
     plan_sections          -> SectionPlan (teaching units)
-    for each section:
+    for each section (parallel, bounded by maxSectionConcurrency):
         generate_one_section -> SectionResult (prose + flat metadata)
         knowledge_quiz       -> section-level definition/distinction quiz JSON
         validate_section     -> deterministic checks vs the book skeleton
@@ -15,16 +15,22 @@ plan / generate / validate / repair / assemble loop:
     CardAgent               -> recall cards from the assembled body
     SummaryAgent            -> chapter summary
 
-It is intentionally plain ``async`` Python (a ``while`` loop, no compiled
-LangGraph subgraph): caching lives at the ``run_with_cache`` level and the parent
-graph checkpointer only sees the ``generate`` node, so a subgraph buys no extra
-recovery here. Phase 5 can wrap ``generate_chapter_sections`` as a ``Send``
-fan-out unit without changing its inputs or outputs.
+Sections fan out with ``asyncio.gather`` (order preserved) bounded by a
+``cfg.section_concurrency`` semaphore: a section's input depends only on the static
+plan (outline + position), never on a sibling section's body, so there is no data
+dependency. Shared LLM rate limiting is owned by the single injected runtime's Router.
+
+It is intentionally plain ``async`` Python (no compiled LangGraph subgraph): caching
+lives at the ``run_with_cache`` level and the parent graph checkpointer only sees the
+``generate`` node, so a subgraph buys no extra recovery here. Phase 5 can wrap
+``generate_chapter_sections`` as a ``Send`` fan-out unit without changing its I/O.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,6 +41,7 @@ from bookwiki.agents.card_agent import CardAgent, chapter_body_blocks
 from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
 from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
 from bookwiki.agents.knowledge_quiz_agent import KnowledgeQuizAgent
+from bookwiki.agents.prompting import prompt_cache_key
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
 from bookwiki.agents.section_agent import SectionAgent
 from bookwiki.agents.section_planner_agent import SectionPlannerAgent
@@ -61,9 +68,28 @@ from bookwiki.schemas.quiz import QuizItem, QuizPlacement, QuizResult
 from bookwiki.schemas.report import Issue
 from bookwiki.schemas.section import ApplicationQuizRequest, SectionPlan, SectionResult, SectionSpec
 from bookwiki.schemas.summary import SummaryResult
+from bookwiki.utils.files import read_json, write_json
+from bookwiki.utils.logging import get_logger
+
+LOGGER = get_logger(__name__)
 
 DEFAULT_MAX_SECTION_REPAIR_ROUNDS = 2
 DEFAULT_PLOT_TIMEOUT_SECONDS = 30
+# A repair/rewrite that shrinks a body below this fraction of the previous body is
+# treated as a CATASTROPHIC truncation (LLM dropped most of the content / returned a
+# stub) and discarded; the previous artifact is kept and the round is still consumed.
+# Deliberately lenient (1/3): legitimate quality rewrites that strip leaked English and
+# replace it with concise target-language prose can shrink a body by ~half, so this is a
+# truncation tripwire only, NOT a fine-grained content-preservation check (that is what
+# best-result tracking + re-validation handle).
+MIN_REPAIR_BODY_RATIO = 0.34
+
+
+def _body_too_short(new_body: str, prev_body: str) -> bool:
+    prev_len = len(prev_body)
+    if prev_len == 0:
+        return False
+    return len(new_body) < MIN_REPAIR_BODY_RATIO * prev_len
 
 
 @dataclass(frozen=True)
@@ -123,30 +149,52 @@ async def generate_chapter_sections(
         for spec in ordered_specs
     ]
 
+    # Sections within a chapter generate in parallel (bounded by
+    # ``cfg.section_concurrency``); each section's input depends only on the static
+    # plan (outline + position), not on sibling section bodies, so there is no data
+    # dependency. ``asyncio.gather`` preserves order, keeping cache_results / issues /
+    # assembly deterministic. Shared LLM rate limiting is handled by the single
+    # injected runtime's Router (see lg_runner), so this does not multiply API pressure
+    # beyond the configured tpm/rpm.
+    section_semaphore = asyncio.Semaphore(cfg.section_concurrency)
+
+    async def run_section(spec: SectionSpec):
+        async with section_semaphore:
+            return await _generate_validated_section(
+                cfg=cfg,
+                base_payload=base_payload,
+                spec=spec,
+                figures=figures,
+                skeleton_payload=skeleton_payload,
+                allowed_refs=allowed_refs,
+                chapter_outline=chapter_outline,
+            )
+
+    section_outcomes = await asyncio.gather(*(run_section(spec) for spec in ordered_specs))
+
     sections: list[SectionResult] = []
-    for spec in ordered_specs:
-        section, section_cache, section_issue = await _generate_validated_section(
-            cfg=cfg,
-            base_payload=base_payload,
-            spec=spec,
-            figures=figures,
-            skeleton_payload=skeleton_payload,
-            allowed_refs=allowed_refs,
-            chapter_outline=chapter_outline,
-        )
+    for section, section_cache, section_issue in section_outcomes:
         cache_results.extend(section_cache)
         if section_issue is not None:
             issues.append(section_issue)
         sections.append(section)
 
+    # Figure supplementation also fans out per section (each request is independent).
+    figure_semaphore = asyncio.Semaphore(cfg.section_concurrency)
+
+    async def run_figures(section: SectionResult):
+        async with figure_semaphore:
+            return await supplement_section_figures(
+                cfg=cfg,
+                chapter_id=chapter_id,
+                section=section,
+                source_figures=figures,
+            )
+
+    figure_outcomes = await asyncio.gather(*(run_figures(section) for section in sections))
+
     generated_figures: dict[str, str] = {}
-    for section in sections:
-        section_registry, figure_issues = await supplement_section_figures(
-            cfg=cfg,
-            chapter_id=chapter_id,
-            section=section,
-            source_figures=figures,
-        )
+    for section_registry, figure_issues in figure_outcomes:
         generated_figures.update(section_registry)
         issues.extend(figure_issues)
 
@@ -233,20 +281,26 @@ async def _validate_chapter_artifact_inline(
     max_quality_rounds = int(cfg.generation.get("maxQualityRounds", 1) or 1)
     mdx_rounds = 0
     quality_rounds = 0
-    last_issues: list[ArtifactIssue] = []
+    best_chapter = chapter
+    best_issues: list[ArtifactIssue] | None = None
 
     while True:
-        last_issues = await validate_artifact(
+        issues = await validate_artifact(
             body_md=chapter.body_md,
             kind="chapter",
             allowed_refs=allowed_refs,
             cfg=cfg,
         )
-        if not last_issues:
+        if not issues:
             return chapter, cache_results, None
+        # Track the fewest-issue version seen so a later, worse repair round does not
+        # clobber an earlier, better one when the loop bottoms out.
+        if best_issues is None or len(issues) < len(best_issues):
+            best_chapter = chapter
+            best_issues = issues
 
-        mdx_issues = [issue for issue in last_issues if issue.kind == "mdx"]
-        quality_issues = [issue for issue in last_issues if issue.kind == "quality"]
+        mdx_issues = [issue for issue in issues if issue.kind == "mdx"]
+        quality_issues = [issue for issue in issues if issue.kind == "quality"]
         if mdx_issues:
             if mdx_rounds >= max_mdx_rounds:
                 break
@@ -266,7 +320,16 @@ async def _validate_chapter_artifact_inline(
                 runtime=cfg.llm_runtime,
             )
             cache_results.append(repaired)
-            chapter = repaired.result
+            candidate = repaired.result
+            if _body_too_short(candidate.body_md, chapter.body_md):
+                LOGGER.warning(
+                    "discarding chapter MDX repair for %s: body shrank from %d to %d chars",
+                    chapter.chapter_id,
+                    len(chapter.body_md),
+                    len(candidate.body_md),
+                )
+                continue
+            chapter = candidate
             continue
         if quality_issues:
             if quality_rounds >= max_quality_rounds:
@@ -287,21 +350,33 @@ async def _validate_chapter_artifact_inline(
                 runtime=cfg.llm_runtime,
             )
             cache_results.append(rewritten)
-            chapter = rewritten.result
+            candidate = rewritten.result
+            if _body_too_short(candidate.body_md, chapter.body_md):
+                LOGGER.warning(
+                    "discarding chapter quality rewrite for %s: body shrank from %d to %d chars",
+                    chapter.chapter_id,
+                    len(chapter.body_md),
+                    len(candidate.body_md),
+                )
+                continue
+            chapter = candidate
             continue
         break
 
+    # Exhausted: keep the fewest-issue version seen, not necessarily the last round.
+    final_chapter = best_chapter if best_issues is not None else chapter
+    final_issues = best_issues if best_issues is not None else []
     return (
-        chapter,
+        final_chapter,
         cache_results,
         Issue(
             severity="warning",
             code="CHAPTER_VALIDATION_UNRESOLVED",
             message=(
-                f"{chapter.chapter_id} chapter kept after inline validation rounds: "
-                f"{'; '.join(issue.message for issue in last_issues)}"
+                f"{final_chapter.chapter_id} chapter kept after inline validation rounds: "
+                f"{'; '.join(issue.message for issue in final_issues)}"
             ),
-            owner_task_id=f"{chapter.chapter_id}:chapter",
+            owner_task_id=f"{final_chapter.chapter_id}:chapter",
         ),
     )
 
@@ -458,6 +533,22 @@ async def _plan_sections(cfg: BookConfig, payload: dict[str, Any]) -> CacheResul
     )
 
 
+def _section_position(spec: SectionSpec, chapter_outline: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute a section's position flags within the chapter outline.
+
+    ``is_first``/``is_last`` compare against the actual first/last outline index, not a
+    hardcoded 0, so a plan numbered from a non-zero base still flags the boundaries.
+    """
+    first_index = chapter_outline[0]["index"] if chapter_outline else spec.index
+    last_index = chapter_outline[-1]["index"] if chapter_outline else spec.index
+    return {
+        "index": spec.index,
+        "total": len(chapter_outline),
+        "is_first": spec.index == first_index,
+        "is_last": spec.index == last_index,
+    }
+
+
 async def _generate_validated_section(
     *,
     cfg: BookConfig,
@@ -469,13 +560,7 @@ async def _generate_validated_section(
     chapter_outline: list[dict[str, Any]],
 ) -> tuple[SectionResult, list[CacheResult], Issue | None]:
     cache_results: list[CacheResult] = []
-    last_index = chapter_outline[-1]["index"] if chapter_outline else spec.index
-    section_position = {
-        "index": spec.index,
-        "total": len(chapter_outline),
-        "is_first": spec.index == 0,
-        "is_last": spec.index == last_index,
-    }
+    section_position = _section_position(spec, chapter_outline)
     section_context = {
         "chapter_outline": chapter_outline,
         "section_position": section_position,
@@ -505,6 +590,8 @@ async def _generate_validated_section(
 
     max_rounds = _max_section_repair_rounds(cfg)
     rounds = 0
+    best_section = section
+    best_validation = validation
     while not validation.ok and rounds < max_rounds:
         rounds += 1
         repaired = await run_with_cache(
@@ -522,13 +609,31 @@ async def _generate_validated_section(
             runtime=cfg.llm_runtime,
         )
         cache_results.append(repaired)
-        section = repaired.result
+        candidate = repaired.result
+        if _body_too_short(candidate.body_md, section.body_md):
+            LOGGER.warning(
+                "discarding section repair for %s section %d: body shrank from %d to %d chars",
+                spec.chapter_id,
+                spec.index,
+                len(section.body_md),
+                len(candidate.body_md),
+            )
+            continue
+        section = candidate
         validation = validate_section(
             section=section,
             section_spec=spec,
             allowed_refs=allowed_refs,
             skeleton_payload=skeleton_payload,
         )
+        # Keep the fewest-issue version so a worse later round can't clobber a better one.
+        if len(validation.messages) < len(best_validation.messages):
+            best_section = section
+            best_validation = validation
+
+    if not validation.ok and len(best_validation.messages) < len(validation.messages):
+        section = best_section
+        validation = best_validation
 
     issue: Issue | None = None
     if not validation.ok:
@@ -647,6 +752,22 @@ async def _supplement_plot(
     timeout_s = _plot_timeout(cfg)
     plot_state: dict[str, Any] = {}
 
+    # Result cache: SupplementImageAgent runs an expensive multi-round tool loop and is
+    # NOT routed through run_with_cache, so without this a rerun re-burns the whole loop.
+    # Keyed by the inputs that determine the figure; only ok=True results are cached, and
+    # the cached image must still be present and verifiable to be reused.
+    model = cfg.model_for("supplement_image")
+    cache_key = _supplement_cache_key(
+        chapter_id=chapter_id,
+        figure_ref=figure_ref,
+        rationale=str(request.rationale),
+        model=model,
+    )
+    sidecar = cfg.cache_dir / "figures" / f"{cache_key}.json"
+    cached = _reuse_cached_supplement(sidecar, out_abs, figure_ref)
+    if cached is not None:
+        return cached, ""
+
     async def tool_executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name == "run_plot":
             # Run the blocking subprocess off the event loop so parallel chapters
@@ -680,8 +801,8 @@ async def _supplement_plot(
     }
     result: ImageSupplementResult = await SupplementImageAgent().run(
         supplement_input,
-        model=cfg.model_for("supplement_image"),
-        runtime=cfg.llm_runtime if cfg.llm_runtime is not None else build_runtime(),
+        model=model,
+        runtime=_runtime_for(cfg),
         tool_executor=tool_executor,
     )
 
@@ -693,7 +814,49 @@ async def _supplement_plot(
         return "", verification["error"]
     caption = result.caption or str(request.rationale)
     tag = build_book_figure_tag(figure_ref, src=public_asset_url(image_relpath), caption=caption)
+    _write_supplement_sidecar(sidecar, image_relpath=image_relpath, caption=caption)
     return tag, ""
+
+
+def _supplement_cache_key(
+    *, chapter_id: str, figure_ref: str, rationale: str, model: str
+) -> str:
+    payload = json.dumps(
+        {
+            "chapter_id": chapter_id,
+            "figure_ref": figure_ref,
+            "rationale": rationale,
+            "model": model,
+            "prompt": prompt_cache_key(SupplementImageAgent.prompt_template),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _reuse_cached_supplement(sidecar: Any, out_abs: Any, figure_ref: str) -> str | None:
+    """Return a <BookFigure/> tag from a cached supplement, or ``None`` to regenerate.
+
+    Reuse requires both the sidecar metadata AND the generated image still present and
+    verifiable - a stale sidecar pointing at a missing/corrupt image regenerates.
+    """
+    if not sidecar.exists() or not out_abs.exists():
+        return None
+    if not verify_figure(out_abs)["ok"]:
+        return None
+    record = read_json(sidecar, default={})
+    image_relpath = record.get("image_relpath")
+    caption = record.get("caption")
+    if not image_relpath or not caption:
+        return None
+    return build_book_figure_tag(figure_ref, src=public_asset_url(image_relpath), caption=caption)
+
+
+def _write_supplement_sidecar(sidecar: Any, *, image_relpath: str, caption: str) -> None:
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    write_json(sidecar, {"image_relpath": image_relpath, "caption": caption})
 
 
 def _figure_issue(chapter_id: str, section_index: int, error: str) -> Issue:
@@ -703,6 +866,20 @@ def _figure_issue(chapter_id: str, section_index: int, error: str) -> Issue:
         message=f"{chapter_id} section {section_index} figure unresolved: {error}",
         owner_task_id=f"{chapter_id}:chapter",
     )
+
+
+def _runtime_for(cfg: BookConfig):
+    """Return the shared pipeline runtime, warning if we must build an ad-hoc one.
+
+    ``SupplementImageAgent`` is invoked directly (not via ``run_with_cache``), so it
+    needs the runtime passed explicitly. The shared runtime is injected on ``cfg`` by
+    ``lg_runner``; a missing one means an unwired call path and is worth a warning
+    because it would build a throwaway Router (no shared tpm/rpm or cost accounting).
+    """
+    if cfg.llm_runtime is not None:
+        return cfg.llm_runtime
+    LOGGER.warning("no shared runtime injected for SupplementImageAgent; building ad-hoc runtime")
+    return build_runtime()
 
 
 def _plot_timeout(cfg: BookConfig) -> int:

@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from bookwiki.scheduler.budget_guard import BudgetExceeded
 from bookwiki.utils.logging import get_logger
 
 _LOG = get_logger(__name__)
@@ -21,6 +22,12 @@ _LOG = get_logger(__name__)
 # A tool executor maps ``(tool_name, arguments)`` to a JSON-serialisable result.
 # It may be sync or async; ``generate_with_tools`` awaits awaitable results.
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]] | dict[str, Any]]
+
+
+# litellm leaves requests on the default (very long) socket timeout; a single hung
+# upstream request would otherwise stall a chapter indefinitely. Cap per-request
+# wall time so a stuck call surfaces as an error the backoff/repair paths can see.
+LLM_REQUEST_TIMEOUT_SECONDS = 600
 
 
 _RATE_LIMIT_MARKERS = (
@@ -159,9 +166,69 @@ class ToolLoopExceeded(RuntimeError):
 
 
 class LiteLLMRuntime:
-    def __init__(self, router: Any | None = None) -> None:
+    def __init__(self, router: Any | None = None, *, max_cost_usd: float | None = None) -> None:
         self.router = router
         self.client: Any | None = None
+        # Lazy router/client construction is shared across concurrently generating
+        # chapters; without this lock the first few parallel calls would each build
+        # their own Router (defeating its tpm/rpm self-throttling). Double-checked
+        # under the lock so the steady-state path stays lock-free.
+        self._init_lock = asyncio.Lock()
+        # Usage/cost accounting accumulates across every API call on this runtime.
+        # ``max_cost_usd`` (<= 0 or None means unlimited) bounds the whole run.
+        self._max_cost_usd = max_cost_usd
+        self.total_cost_usd = 0.0
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+
+    def _record_usage(self, response: Any, *, model: str | None = None) -> None:
+        """Accumulate token/cost usage from one API response and enforce the budget.
+
+        Hooked into every real API call (instructor JSON path via the
+        ``build_instructor_client`` wrapper; document/tool paths directly). Robust to
+        dict or object responses and to missing usage/cost fields (records 0). Raises
+        :class:`BudgetExceeded` once the accumulated cost crosses ``max_cost_usd``.
+        """
+        prompt_tokens, completion_tokens = _extract_usage(response)
+        cost = _extract_cost(response)
+        self.total_prompt_tokens += prompt_tokens
+        self.total_completion_tokens += completion_tokens
+        self.total_cost_usd += cost
+        _LOG.info(
+            "llm usage model=%s prompt_tokens=%d completion_tokens=%d "
+            "cost_usd=%.6f total_cost_usd=%.6f",
+            model or _get_attr_or_key(response, "model") or "unknown",
+            prompt_tokens,
+            completion_tokens,
+            cost,
+            self.total_cost_usd,
+        )
+        if (
+            self._max_cost_usd is not None
+            and self._max_cost_usd > 0
+            and self.total_cost_usd > self._max_cost_usd
+        ):
+            raise BudgetExceeded(
+                f"budget exceeded: spent ${self.total_cost_usd:.4f}, "
+                f"limit ${self._max_cost_usd:.4f}"
+            )
+
+    async def _ensure_router(self) -> Any:
+        if self.router is not None:
+            return self.router
+        async with self._init_lock:
+            if self.router is None:
+                self.router = build_router()
+            return self.router
+
+    async def _ensure_client(self) -> Any:
+        router = await self._ensure_router()
+        if self.client is not None:
+            return self.client
+        async with self._init_lock:
+            if self.client is None:
+                self.client = build_instructor_client(router, on_usage=self._record_usage)
+            return self.client
 
     async def generate(
         self,
@@ -175,10 +242,7 @@ class LiteLLMRuntime:
         max_retries: int = 2,
     ) -> BaseModel:
         _ensure_api_key(model)
-        router = self.router if self.router is not None else build_router()
-        self.router = router
-        client = self.client if self.client is not None else build_instructor_client(router)
-        self.client = client
+        client = await self._ensure_client()
         result = await _acreate_with_backoff(
             lambda: client.create(
                 model=model,
@@ -202,8 +266,7 @@ class LiteLLMRuntime:
         max_retries: int = 2,
     ) -> str:
         _ensure_api_key(model)
-        router = self.router if self.router is not None else build_router()
-        self.router = router
+        router = await self._ensure_router()
         response = await _acreate_with_backoff(
             lambda: router.acompletion(
                 model=model,
@@ -212,6 +275,7 @@ class LiteLLMRuntime:
                 temperature=_temperature_for_model(model),
             )
         )
+        self._record_usage(response, model=model)
         content = response.choices[0].message.content
         if content is None:
             msg = f"model {model!r} returned an empty document response"
@@ -233,8 +297,7 @@ class LiteLLMRuntime:
         max_retries: int = 2,
     ) -> BaseModel:  # pragma: no cover - exercised only against a real LiteLLM router
         _ensure_api_key(model)
-        router = self.router if self.router is not None else build_router()
-        self.router = router
+        router = await self._ensure_router()
         messages = _messages(system=system, user=user, image_paths=image_paths)
         for _round in range(max_tool_rounds):
             response = await _acreate_with_backoff(
@@ -246,6 +309,7 @@ class LiteLLMRuntime:
                     temperature=_temperature_for_model(model),
                 )
             )
+            self._record_usage(response, model=model)
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
             if not tool_calls:
@@ -264,8 +328,7 @@ class LiteLLMRuntime:
         else:
             raise ToolLoopExceeded(model, max_tool_rounds)
 
-        client = self.client if self.client is not None else build_instructor_client(router)
-        self.client = client
+        client = await self._ensure_client()
         result = await _acreate_with_backoff(
             lambda: client.create(
                 model=model,
@@ -346,11 +409,11 @@ class TestLLMRuntime:
         return output_model.model_validate(draft, context=context)
 
 
-def build_runtime() -> LLMRuntime:
+def build_runtime(*, max_cost_usd: float | None = None) -> LLMRuntime:
     load_dotenv()
     if os.getenv("BOOKWIKI_TEST_LLM") == "1":
         return TestLLMRuntime()
-    return LiteLLMRuntime()
+    return LiteLLMRuntime(max_cost_usd=max_cost_usd)
 
 
 def build_router() -> Any:
@@ -382,6 +445,7 @@ def _model_list() -> list[dict[str, Any]]:
             "litellm_params": {
                 "model": "deepseek/deepseek-v4-pro",
                 "api_key": os.getenv("DEEPSEEK_API_KEY"),
+                "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
             },
             "tpm": 200_000,
             "rpm": 60,
@@ -391,6 +455,7 @@ def _model_list() -> list[dict[str, Any]]:
             "litellm_params": {
                 "model": "deepseek/deepseek-v4-flash",
                 "api_key": os.getenv("DEEPSEEK_API_KEY"),
+                "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
             },
             "tpm": 400_000,
             "rpm": 120,
@@ -401,6 +466,7 @@ def _model_list() -> list[dict[str, Any]]:
                 "model": "moonshot/kimi-k2.6",
                 "api_key": os.getenv("MOONSHOT_API_KEY"),
                 "api_base": "https://api.moonshot.cn/v1",
+                "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
             },
         },
     ]
@@ -643,8 +709,20 @@ async def _run_tool_call(
     raw_args = call.function.arguments or "{}"
     try:
         args = json.loads(raw_args)
-    except (json.JSONDecodeError, TypeError):
-        args = {}
+    except (json.JSONDecodeError, TypeError) as exc:
+        # Surface malformed tool arguments back to the model instead of silently
+        # running with ``{}`` (which makes run_plot fail with an empty-code error the
+        # model can't diagnose, burning tool rounds). Returning the parse error lets
+        # it correct the call.
+        _LOG.warning("tool call name=%s has invalid JSON arguments: %s", tool_name, exc)
+        return {
+            "role": "tool",
+            "tool_call_id": call.id,
+            "content": json.dumps(
+                {"ok": False, "error": f"invalid JSON tool arguments: {exc}"},
+                ensure_ascii=False,
+            ),
+        }
     _LOG.info("tool call name=%s args=%s", tool_name, _truncate_for_log(raw_args))
     result = tool_executor(tool_name, args)
     if inspect.isawaitable(result):
@@ -684,7 +762,9 @@ def _image_data_url(image_path: str | Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def build_instructor_client(router: Any) -> Any:
+def build_instructor_client(
+    router: Any, *, on_usage: Callable[..., None] | None = None
+) -> Any:
     try:
         import instructor
     except Exception as exc:  # pragma: no cover - exercised only without optional extra
@@ -694,6 +774,49 @@ def build_instructor_client(router: Any) -> Any:
 
     async def repaired_acompletion(*args: Any, **kwargs: Any) -> Any:
         response = await router.acompletion(*args, **kwargs)
+        # Record usage on the raw response BEFORE instructor consumes it into the
+        # validated model (instructor.create returns the model, not the response, so
+        # this wrapper is the only place the JSON path can see token/cost usage).
+        if on_usage is not None:
+            on_usage(response, model=kwargs.get("model"))
         return _repair_response_json_escapes(response)
 
     return instructor.from_litellm(repaired_acompletion, mode=instructor.Mode.JSON)
+
+
+def _get_attr_or_key(obj: Any, name: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _extract_usage(response: Any) -> tuple[int, int]:
+    """Return ``(prompt_tokens, completion_tokens)`` from a dict or object response."""
+    usage = _get_attr_or_key(response, "usage")
+    if usage is None:
+        return 0, 0
+    prompt = _get_attr_or_key(usage, "prompt_tokens") or 0
+    completion = _get_attr_or_key(usage, "completion_tokens") or 0
+    try:
+        return int(prompt), int(completion)
+    except (TypeError, ValueError):
+        return 0, 0
+
+
+def _extract_cost(response: Any) -> float:
+    """Best-effort response cost: litellm hidden param first, then completion_cost."""
+    hidden = _get_attr_or_key(response, "_hidden_params")
+    if isinstance(hidden, dict):
+        cost = hidden.get("response_cost")
+        if cost is not None:
+            try:
+                return float(cost)
+            except (TypeError, ValueError):
+                pass
+    try:
+        import litellm
+
+        return float(litellm.completion_cost(completion_response=response))
+    except Exception:  # pragma: no cover - cost is best-effort, never fatal
+        _LOG.debug("could not determine response cost; recording 0")
+        return 0.0

@@ -31,7 +31,7 @@ from bookwiki.agents import (
     VisionCaptionAgent,
 )
 from bookwiki.agents._helpers import SOURCE_REF_RE
-from bookwiki.checkers.mdx_validator import validate_mdx
+from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
 from bookwiki.convert.common import (
     BOOK_FIGURE_TAG_RE,
     parse_book_figure_tag,
@@ -45,7 +45,7 @@ from bookwiki.convert.source_normalizer import (
     normalize_structured_source,
 )
 from bookwiki.convert.text_to_md import convert_text_to_md
-from bookwiki.generate.sections import generate_chapter_sections
+from bookwiki.generate.sections import _body_too_short, generate_chapter_sections
 from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
 from bookwiki.integrator.markdown_renderers import normalize_mdx_math
@@ -916,42 +916,128 @@ def _concept_contexts(item: dict[str, Any], state: State, cfg: BookConfig) -> li
 
 def _apply_repair(
     owner_task_id: str, issues: list[dict[str, Any]], state: State, cfg: BookConfig
-) -> None:
+) -> dict[str, Any] | None:
+    """Apply deterministic repairs, preferring DROP over fabrication.
+
+    Returns an audit record of what was removed (or ``None`` if nothing changed).
+    Earlier this collapsed every invalid citation ref onto one valid ref and rewrote
+    quiz answers / empty cards with placeholder text - both silently corrupted
+    content (wrong attribution, wrong answers, English stubs in a zh-CN book). We now
+    delete the offending citation/quiz-item/card instead, so the artifact stays
+    truthful and the loss is recorded for review.
+    """
     path = _owner_artifact_path(owner_task_id, state, cfg)
     if path is None:
-        return
+        return None
     payload = read_json(path)
     result = payload.get("result", payload)
     codes = {str(issue.get("code")) for issue in issues}
     allowed_refs = _allowed_source_refs(state, cfg)
+    actions: dict[str, Any] = {}
     if "UNKNOWN_SOURCE_REF" in codes and allowed_refs:
-        _replace_invalid_citation_refs(result, allowed_refs, sorted(allowed_refs)[0])
+        dropped = _drop_invalid_citations(result, allowed_refs)
+        if dropped:
+            actions["dropped_citations"] = dropped
     _, _, kind = owner_task_id.partition(":")
     if kind == "quiz" and "QUIZ_ANSWER_NOT_IN_CHOICES" in codes:
-        for item in result.get("items", []):
-            choices = [str(choice) for choice in item.get("choices", [])]
-            if choices and str(item.get("answer", "")) not in choices:
-                item["answer"] = choices[0]
+        dropped_quiz = _drop_invalid_quiz_items(result)
+        if dropped_quiz:
+            actions["dropped_quiz_items"] = dropped_quiz
     elif kind == "card" and "EMPTY_CARD_SIDE" in codes:
-        for index, item in enumerate(result.get("items", []), start=1):
-            if not str(item.get("front", "")).strip():
-                item["front"] = f"Card {index}"
-            if not str(item.get("back", "")).strip():
-                item["back"] = "Review the source material for this card."
+        dropped_cards = _drop_empty_cards(result)
+        if dropped_cards:
+            actions["dropped_cards"] = dropped_cards
     write_json(path, payload)
+    if actions:
+        return {"owner_task_id": owner_task_id, **actions}
+    return None
 
 
-def _replace_invalid_citation_refs(value: Any, allowed_refs: set[str], replacement: str) -> None:
-    if isinstance(value, dict):
-        if "ref_id" in value and "quote" in value and str(value["ref_id"]) not in allowed_refs:
-            value["ref_id"] = replacement
-            if not str(value.get("quote", "")).strip():
-                value["quote"] = "source context"
-        for item in value.values():
-            _replace_invalid_citation_refs(item, allowed_refs, replacement)
-    elif isinstance(value, list):
-        for item in value:
-            _replace_invalid_citation_refs(item, allowed_refs, replacement)
+def _is_invalid_citation(elem: Any, allowed_refs: set[str]) -> bool:
+    return (
+        isinstance(elem, dict)
+        and "ref_id" in elem
+        and "quote" in elem
+        and str(elem["ref_id"]) not in allowed_refs
+    )
+
+
+def _drop_invalid_citations(value: Any, allowed_refs: set[str]) -> list[str]:
+    """Recursively remove citation dicts whose ``ref_id`` is not allowed.
+
+    Returns the list of removed ``ref_id`` values. Unlike the previous
+    collapse-to-first-ref behaviour, this never reassigns a citation to a different
+    (wrong) source - an unverifiable citation is dropped, not silently re-attributed.
+    """
+    removed: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, item in list(node.items()):
+                if isinstance(item, list):
+                    kept = [elem for elem in item if not _is_invalid_citation(elem, allowed_refs)]
+                    removed.extend(
+                        str(elem["ref_id"])
+                        for elem in item
+                        if _is_invalid_citation(elem, allowed_refs)
+                    )
+                    node[key] = kept
+                    for elem in kept:
+                        walk(elem)
+                else:
+                    walk(item)
+        elif isinstance(node, list):
+            for elem in node:
+                walk(elem)
+
+    walk(value)
+    return removed
+
+
+def _drop_invalid_quiz_items(result: dict[str, Any]) -> list[str]:
+    """Drop quiz items whose answer is not among the choices; renumber placements.
+
+    Returns short descriptions of the removed items. ``QuizResult.items`` has no
+    minimum length, so deleting down to zero is schema-valid.
+    """
+    items = result.get("items", [])
+    keep_flags: list[bool] = []
+    removed: list[str] = []
+    for item in items:
+        choices = [str(choice) for choice in item.get("choices", [])]
+        invalid = bool(choices) and str(item.get("answer", "")) not in choices
+        keep_flags.append(not invalid)
+        if invalid:
+            removed.append(str(item.get("question", ""))[:60])
+    if not removed:
+        return []
+    new_index: dict[int, int] = {}
+    kept_items: list[Any] = []
+    for old_zero, (item, keep) in enumerate(zip(items, keep_flags, strict=True)):
+        if keep:
+            kept_items.append(item)
+            new_index[old_zero + 1] = len(kept_items)
+    result["items"] = kept_items
+    for placement in result.get("placements", []):
+        placement["item_indexes"] = [
+            new_index[idx] for idx in placement.get("item_indexes", []) if idx in new_index
+        ]
+    return removed
+
+
+def _drop_empty_cards(result: dict[str, Any]) -> list[str]:
+    """Drop cards with an empty front or back. ``CardResult.items`` has no minimum."""
+    items = result.get("items", [])
+    kept: list[Any] = []
+    removed: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if not str(item.get("front", "")).strip() or not str(item.get("back", "")).strip():
+            removed.append(f"card {index}")
+            continue
+        kept.append(item)
+    if removed:
+        result["items"] = kept
+    return removed
 
 
 async def convert_node(state: State, cfg: BookConfig) -> State:
@@ -1791,18 +1877,27 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
                 skeleton_payload=_skeleton_payload(skeleton_data, ch_id),
             )
 
-    # Chapters generate in parallel (chapter-level fan-out, section-level serial),
-    # bounded by ``cfg.chapter_concurrency``. ``asyncio.gather`` preserves input
-    # order, so artifacts are written and aggregated deterministically below.
+    # Chapters generate in parallel (chapter-level fan-out; sections within a chapter
+    # also fan out, bounded by cfg.section_concurrency - see generate.sections),
+    # bounded by ``cfg.chapter_concurrency``. ``asyncio.gather`` preserves input order.
+    # ``return_exceptions=True`` so one chapter's failure does not discard the
+    # in-progress work of its siblings: successful chapters are still written (and
+    # cached), then we fail loudly listing the broken chapters so a resume reruns
+    # only those.
     generated_list = await asyncio.gather(
-        *(run_chapter(ch_id, rel_source) for ch_id, rel_source in chapter_items)
+        *(run_chapter(ch_id, rel_source) for ch_id, rel_source in chapter_items),
+        return_exceptions=True,
     )
 
     chapter_results: dict[str, dict[str, str]] = {}
     chapter_cache_hits: list[bool] = []
     generation_issues: list[dict[str, Any]] = []
     generated_figures: dict[str, dict[str, str]] = {}
+    failures: list[tuple[str, BaseException]] = []
     for (ch_id, _rel_source), generated in zip(chapter_items, generated_list, strict=True):
+        if isinstance(generated, BaseException):
+            failures.append((ch_id, generated))
+            continue
         chapter_cache_hits.append(generated.cache_hit)
         generation_issues.extend(issue.model_dump(mode="json") for issue in generated.issues)
         if generated.generated_figures:
@@ -1826,6 +1921,16 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
             ),
         }
         chapter_results[ch_id] = {name: _rel(path, cfg.book_dir) for name, path in paths.items()}
+
+    if failures:
+        failed_ids = [ch_id for ch_id, _exc in failures]
+        for ch_id, exc in failures:
+            _LOG.error("generate failed for chapter %s: %s", ch_id, exc)
+        msg = (
+            f"generate failed for chapters: {failed_ids}; "
+            f"{len(chapter_results)} chapter(s) completed and were written"
+        )
+        raise RuntimeError(msg) from failures[0][1]
 
     return {
         "agent_results": chapter_results,
@@ -2037,20 +2142,24 @@ async def _validate_concept_artifact_inline(
     max_quality_rounds = int(cfg.generation.get("maxQualityRounds", 1) or 1)
     mdx_rounds = 0
     quality_rounds = 0
-    last_issues: list[ArtifactIssue] = []
+    best_concept = concept
+    best_issues: list[ArtifactIssue] | None = None
 
     while True:
-        last_issues = await validate_artifact(
+        issues = await validate_artifact(
             body_md=concept.body_md,
             kind="concept",
             allowed_refs=allowed_refs,
             cfg=cfg,
         )
-        if not last_issues:
+        if not issues:
             return concept, cache_results, None
+        if best_issues is None or len(issues) < len(best_issues):
+            best_concept = concept
+            best_issues = issues
 
-        mdx_issues = [issue for issue in last_issues if issue.kind == "mdx"]
-        quality_issues = [issue for issue in last_issues if issue.kind == "quality"]
+        mdx_issues = [issue for issue in issues if issue.kind == "mdx"]
+        quality_issues = [issue for issue in issues if issue.kind == "quality"]
         if mdx_issues:
             if mdx_rounds >= max_mdx_rounds:
                 break
@@ -2070,7 +2179,16 @@ async def _validate_concept_artifact_inline(
                 runtime=cfg.llm_runtime,
             )
             cache_results.append(repaired)
-            concept = repaired.result
+            candidate = repaired.result
+            if _body_too_short(candidate.body_md, concept.body_md):
+                _LOG.warning(
+                    "discarding concept MDX repair for %s: body shrank from %d to %d chars",
+                    concept.name,
+                    len(concept.body_md),
+                    len(candidate.body_md),
+                )
+                continue
+            concept = candidate
             continue
         if quality_issues:
             if quality_rounds >= max_quality_rounds:
@@ -2091,21 +2209,32 @@ async def _validate_concept_artifact_inline(
                 runtime=cfg.llm_runtime,
             )
             cache_results.append(rewritten)
-            concept = rewritten.result
+            candidate = rewritten.result
+            if _body_too_short(candidate.body_md, concept.body_md):
+                _LOG.warning(
+                    "discarding concept quality rewrite for %s: body shrank from %d to %d chars",
+                    concept.name,
+                    len(concept.body_md),
+                    len(candidate.body_md),
+                )
+                continue
+            concept = candidate
             continue
         break
 
+    final_concept = best_concept if best_issues is not None else concept
+    final_issues = best_issues if best_issues is not None else []
     return (
-        concept,
+        final_concept,
         cache_results,
         Issue(
             severity="warning",
             code="CONCEPT_VALIDATION_UNRESOLVED",
             message=(
-                f"{concept.name} concept kept after inline validation rounds: "
-                f"{'; '.join(issue.message for issue in last_issues)}"
+                f"{final_concept.name} concept kept after inline validation rounds: "
+                f"{'; '.join(issue.message for issue in final_issues)}"
             ),
-            owner_task_id=str(concept.owner_task_id or f"concept:{concept.name}"),
+            owner_task_id=str(final_concept.owner_task_id or f"concept:{final_concept.name}"),
         ),
     )
 
@@ -2343,7 +2472,34 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     return {"content_ready": True, "content_index": _rel(index_path, cfg.book_dir)}
 
 
+def _require_mdx_validator(cfg: BookConfig) -> None:
+    """Fail loudly if the MDX validator is unavailable, unless explicitly waived.
+
+    When Node / the bundled validator's ``node_modules`` are missing, ``validate_mdx``
+    silently returns ``[]`` ("no errors") - which would disable every inline AND macro
+    MDX check at once and let broken MDX reach the rendered site. The ``check`` stage is
+    the last gate, so it refuses to run blind. ``generation.allowMissingMdxValidator``
+    is the escape hatch for environments that knowingly have no Node (degrades to a
+    single loud error instead of aborting).
+    """
+    if mdx_validator_available():
+        return
+    if cfg.generation.get("allowMissingMdxValidator"):
+        _LOG.error(
+            "mdx validator unavailable but allowMissingMdxValidator=true; "
+            "MDX compile checks are DISABLED for this run"
+        )
+        return
+    msg = (
+        "mdx validator unavailable: install Node and run `npm install` in "
+        "tools/mdx-validate (or set generation.allowMissingMdxValidator=true to "
+        "skip MDX checks). Refusing to run check blind."
+    )
+    raise RuntimeError(msg)
+
+
 async def check_node(state: State, cfg: BookConfig) -> State:
+    _require_mdx_validator(cfg)
     issues: list[Issue] = []
     for raw_issue in state.get("generation_issues", []):
         if isinstance(raw_issue, dict):
@@ -2509,6 +2665,8 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
     rounds = dict(state.get("_repair_rounds", {}))
     out_dir = ensure_dir(cfg.work_dir / "repairs")
     outputs = []
+    repair_actions: list[dict[str, Any]] = []
+    exhausted: list[dict[str, Any]] = []
     report = read_json(cfg.book_dir / state.get("check_report", "work/logs/check-report.json"))
     for target in targets:
         target_issues = [
@@ -2517,6 +2675,22 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
         codes = {str(issue.get("code")) for issue in target_issues}
         max_rounds = _repair_round_limit(codes, cfg)
         if int(rounds.get(target, 0)) >= max_rounds:
+            # Exhausted: record it loudly instead of silently dropping the target, so
+            # broken-but-unrepaired content reaching index is visible to the operator
+            # (mirrors the inline loops' *_VALIDATION_UNRESOLVED warnings).
+            exhausted.append(
+                {
+                    "owner_task_id": target,
+                    "codes": sorted(codes),
+                    "rounds": int(rounds.get(target, 0)),
+                }
+            )
+            _LOG.warning(
+                "repair exhausted target=%s codes=%s rounds=%d (kept unrepaired)",
+                target,
+                sorted(codes),
+                int(rounds.get(target, 0)),
+            )
             continue
         rounds[target] = int(rounds.get(target, 0)) + 1
         if "MDX_PARSE_ERROR" in codes:
@@ -2546,8 +2720,26 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
                 out_dir / f"{target.replace(':', '-')}.json", _json_model(result.result)
             )
             outputs.append(_rel(path, cfg.book_dir))
-        _apply_repair(target, target_issues, state, cfg)
-    return {"repairs": outputs, "repair_targets": [], "_repair_rounds": rounds}
+        action = _apply_repair(target, target_issues, state, cfg)
+        if action is not None:
+            repair_actions.append(action)
+            _LOG.warning("repair applied destructive fix (content removed): %s", action)
+    if repair_actions:
+        write_json(
+            ensure_dir(cfg.work_dir / "logs") / "repair-actions.json",
+            {"actions": repair_actions},
+        )
+    if exhausted:
+        write_json(
+            ensure_dir(cfg.work_dir / "logs") / "repair-exhausted.json",
+            {"exhausted": exhausted},
+        )
+    return {
+        "repairs": outputs,
+        "repair_targets": [],
+        "_repair_rounds": rounds,
+        "repair_exhausted": exhausted,
+    }
 
 
 def _repair_round_limit(codes: set[str], cfg: BookConfig) -> int:

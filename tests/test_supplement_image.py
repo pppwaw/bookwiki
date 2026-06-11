@@ -148,6 +148,36 @@ async def test_supplement_noop_when_no_requests(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_supplement_plot_result_cache_skips_second_llm_call(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    section = _section([FigureRequest(kind="plot", figure_ref="ch1-s0-demo", rationale="a line")])
+    runtime1 = RecordingRuntime(
+        [_image_result("ch1-s0-demo", caption="A demo line")],
+        tool_calls=[("run_plot", {"code": PLOT_CODE})],
+    )
+    cfg1 = _cfg(tmp_path / "book", runtime1)
+
+    registry1, issues1 = await supplement_section_figures(
+        cfg=cfg1, chapter_id="chapter-1", section=section, source_figures=[]
+    )
+    assert "ch1-s0-demo" in registry1
+    assert issues1 == []
+
+    # Same book_dir (so the sidecar + generated image persist); a fresh runtime with
+    # NO responses would fail if the LLM tool loop ran again. A cache hit avoids it.
+    runtime2 = RecordingRuntime([])
+    cfg2 = _cfg(tmp_path / "book", runtime2)
+
+    registry2, issues2 = await supplement_section_figures(
+        cfg=cfg2, chapter_id="chapter-1", section=section, source_figures=[]
+    )
+
+    assert registry2 == registry1
+    assert issues2 == []
+    assert runtime2.calls == []  # no LLM call on cache hit
+
+
+@pytest.mark.asyncio
 async def test_supplement_verify_figure_uses_returned_path_no_double_prefix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

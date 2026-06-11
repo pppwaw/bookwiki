@@ -73,3 +73,23 @@ Agent cache misses call the configured real LLM through `bookwiki.scheduler.llm`
 environment variables take precedence. The site's `/api/chat` route uses `BOOKWIKI_CHAT_API_KEY`
 (OpenRouter). Missing keys should fail loudly rather than falling back to stub content. Tests may opt
 into the explicit `BOOKWIKI_TEST_LLM=1` fake runtime.
+
+`lg_runner` injects a single shared `LiteLLMRuntime` onto `cfg.llm_runtime` for the whole run, so every
+agent reuses one LiteLLM `Router` (its tpm/rpm self-throttling and usage/cost accounting are
+per-Router). The runtime accumulates token/cost usage per call and enforces `generation`/`budget`
+`maxCostUsd` (default `10.0`; `<= 0` means unlimited), raising `BudgetExceeded` once the running total
+crosses it. Chapters fan out bounded by `maxChapterConcurrency` (default 4); sections within a chapter
+also fan out, bounded by `maxSectionConcurrency` (default 3) — section inputs depend only on the static
+plan, never on a sibling section body, so order is preserved by `asyncio.gather` while running in
+parallel. The on-disk task cache writes atomically (temp + `os.replace`), tolerates corrupt entries by
+regenerating, and keys on the agent's output JSON schema digest (so a schema field add/rename
+invalidates stale entries — a one-time cost on first deploy).
+
+The macro `repair` stage prefers DROP over fabrication: unverifiable citations, quiz items whose answer
+is not among the choices, and empty-sided cards are removed (not silently re-attributed / rewritten to a
+wrong answer / stuffed with placeholder text), with an audit trail in `work/logs/repair-actions.json`;
+targets that exhaust `maxRepairRounds` are recorded in `work/logs/repair-exhausted.json` rather than
+dropped silently. The `check` stage refuses to run when the bundled MDX validator is unavailable (no
+Node / missing `node_modules`) unless `generation.allowMissingMdxValidator=true`, because a missing
+validator would silently disable every MDX check. Inline repair loops keep the fewest-issue version seen
+(not the last round) and discard any repair/rewrite that truncates a body below ~1/3 of its prior length.

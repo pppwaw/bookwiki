@@ -51,7 +51,7 @@ NODE_OUTPUT_KEYS: dict[str, set[str]] = {
     "concept_pages": {"concept_pages"},
     "integrate": {"content_ready", "content_index"},
     "check": {"check_report", "repair_targets"},
-    "repair": {"repairs", "repair_targets"},
+    "repair": {"repairs", "repair_targets", "repair_exhausted"},
     "index": {"sqlite"},
 }
 

@@ -131,3 +131,30 @@ async def test_generate_document_with_llm_retries_with_validation_error() -> Non
     assert result.body_md == r"Fixed body with $\mu$."
     assert len(runtime.calls) == 2
     assert "document validation failed" in runtime.calls[1]["user"]
+
+
+def test_compact_input_warns_on_truncation(caplog) -> None:
+    import logging
+
+    from bookwiki.agents.llm import compact_input
+
+    long_value = "x" * 50_000
+    with caplog.at_level(logging.WARNING, logger="bookwiki.agents.llm"):
+        result = compact_input(long_value)
+
+    assert result.endswith("[truncated]")
+    assert len(result) <= 40_000 + len("\n\n[truncated]")
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("50000" in msg and "40000" in msg for msg in messages)
+
+
+def test_compact_input_no_warning_for_short_string(caplog) -> None:
+    import logging
+
+    from bookwiki.agents.llm import compact_input
+
+    with caplog.at_level(logging.WARNING, logger="bookwiki.agents.llm"):
+        result = compact_input("x" * 1_000)
+
+    assert result == "x" * 1_000
+    assert caplog.records == []
