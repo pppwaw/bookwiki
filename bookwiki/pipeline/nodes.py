@@ -48,7 +48,7 @@ from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.generate.sections import _body_too_short, generate_chapter_sections
 from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
-from bookwiki.integrator.markdown_renderers import normalize_mdx_math
+from bookwiki.integrator.markdown_renderers import convert_html_style_attrs, normalize_mdx_math
 from bookwiki.integrator.stitching import audit_stitching
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
@@ -2360,7 +2360,9 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                 }
             )
         rendered_body = _insert_quiz_blocks(
-            normalize_mdx_math(_normalize_concept_links(body_md, alias_map, concept_previews)),
+            convert_html_style_attrs(
+                normalize_mdx_math(_normalize_concept_links(body_md, alias_map, concept_previews))
+            ),
             quiz,
         )
         resolved_body, figures_md = _resolve_chapter_figures(
@@ -2410,7 +2412,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             concepts_dir / f"{safe_name}.mdx",
             _frontmatter({"title": concept["name"], "type": "concept"})
             + f"# {concept['name']}\n\n"
-            + normalize_mdx_math(str(concept["body_md"]))
+            + convert_html_style_attrs(normalize_mdx_math(str(concept["body_md"])))
             + referenced_by,
         )
         concept_name = str(concept["name"])
