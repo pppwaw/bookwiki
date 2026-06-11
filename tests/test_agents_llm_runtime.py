@@ -114,15 +114,13 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
                 "key_terms": ["method of moments"],
             },
             {
-                "proposed_structure_yaml": (
-                    "chapters:\n"
-                    "  - title: Chapter 6 Point Estimation\n"
-                    "    topics:\n"
-                    "      - Method of moments\n"
-                    "    source_refs:\n"
-                    "      - Week-10-p001\n"
-                ),
-                "chapters": ["Chapter 6 Point Estimation"],
+                "chapters": [
+                    {
+                        "title": "Chapter 6 Point Estimation",
+                        "topics": ["Method of moments"],
+                        "source_refs": ["Week-10-p001"],
+                    }
+                ],
             },
             {
                 "chapters": {"chapter-6": "# Chapter 6 Point Estimation"},

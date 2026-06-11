@@ -118,15 +118,13 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
                 "key_terms": ["state space"],
             },
             {
-                "proposed_structure_yaml": (
-                    "chapters:\n"
-                    "  - title: Chapter 1 Search\n"
-                    "    topics:\n"
-                    "      - State space search\n"
-                    "    source_refs:\n"
-                    "      - source-p001\n"
-                ),
-                "chapters": ["Chapter 1 Search"],
+                "chapters": [
+                    {
+                        "title": "Chapter 1 Search",
+                        "topics": ["State space search"],
+                        "source_refs": ["source-p001"],
+                    }
+                ],
             },
             {
                 "chapters": {"chapter-1": "# Chapter 1 Search\n\nState space search."},
@@ -310,7 +308,7 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     )
 
     assert source_summary.source_refs == ["source-p001"]
-    assert structure.chapters == ["Chapter 1 Search"]
+    assert [chapter.title for chapter in structure.chapters] == ["Chapter 1 Search"]
     assert split.report_md == "# Split Audit\n\nMock audit."
     assert section.owner_task_id == "chapter-1:section:000"
     assert application_quiz.items[0].answer == "$3$ states"

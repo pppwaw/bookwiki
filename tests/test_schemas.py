@@ -304,13 +304,24 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
     (
         StructureResult,
         {
-            "proposed_structure_yaml": "chapters:\n  - title: Chapter 1 Search\n",
-            "chapters": ["Chapter 1 Search"],
+            "chapters": [
+                {
+                    "title": "Chapter 1 Search",
+                    "topics": ["State space search"],
+                    "source_refs": ["source-p001"],
+                }
+            ],
         },
         {
             "schema_version": SCHEMA_VERSION,
-            "proposed_structure_yaml": "chapters:\n  - title: Chapter 1 Search\n",
-            "chapters": ["Chapter 1 Search"],
+            "chapters": [
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "title": "Chapter 1 Search",
+                    "topics": ["State space search"],
+                    "source_refs": ["source-p001"],
+                }
+            ],
         },
     ),
     (

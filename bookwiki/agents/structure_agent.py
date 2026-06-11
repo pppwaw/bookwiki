@@ -4,17 +4,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-import yaml
-
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
-from bookwiki.schemas.source import StructureResult
-
-
-class _IndentedSafeDumper(yaml.SafeDumper):
-    def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
-        return super().increase_indent(flow, False)
+from bookwiki.schemas.source import ChapterProposal, StructureResult
 
 
 class StructureAgent:
@@ -26,22 +19,15 @@ class StructureAgent:
         body="""你是书籍结构 agent。
 
 根据源摘要创建一个建议的学习结构。
-按以下确切格式返回 `proposed_structure_yaml` 为 YAML：
+返回一个 `chapters` 数组，每个章节对象**仅**包含 `title`、`topics`、`source_refs` 三个字段：
+- `title`：章节标题。当源文本明确包含章节编号时，使用可见标题，如 "Chapter 6 Point Estimation"。
+  不要在标题中输出内部专用 ID（如 `ch06`）。
+- `topics`：源文本中可见的主题或小节标题列表。
+- `source_refs`：该章节覆盖的 source_ref 列表，必须与输入完全一致。
 
-chapters:
-  - title: Chapter 6 Point Estimation
-    topics:
-      - 源文本中可见的主题或标题。
-    source_refs:
-      - Week-9-p001
-
-当源文本明确包含章节编号时，请使用可见的标题，如 "Chapter 6 Point Estimation"。
-不要在标题中输出内部专用 ID，如 `ch06`。
 避免空白的占位章节。
-每个章节条目必须仅包含 `title`、`topics` 和 `source_refs`。
 不要包含 goal、scope、evidence、散文段落、Markdown 或代码围栏。
-
-YAML 应反映真实的源内容，而非通用模板。""",
+结构应反映真实的源内容，而非通用模板。""",
     )
 
     async def run(
@@ -69,27 +55,14 @@ YAML 应反映真实的源内容，而非通用模板。""",
 def _draft_structure(summaries: list[dict[str, Any]]) -> StructureResult:
     chapters = _chapter_specs_from_sources(summaries)
     return StructureResult(
-        proposed_structure_yaml=_render_structure_yaml(chapters),
-        chapters=[_display_heading(plan) for plan in chapters],
-    )
-
-
-def _render_structure_yaml(chapters: list[_ChapterPlan]) -> str:
-    payload = {"chapters": []}
-    for plan in chapters:
-        topics = _topic_terms(plan)
-        payload["chapters"].append(
-            {
-                "title": _display_heading(plan),
-                "topics": topics[:8] or ["Source-grounded overview"],
-                "source_refs": plan.source_refs,
-            }
-        )
-    return yaml.dump(
-        payload,
-        Dumper=_IndentedSafeDumper,
-        sort_keys=False,
-        allow_unicode=True,
+        chapters=[
+            ChapterProposal(
+                title=_display_heading(plan),
+                topics=_topic_terms(plan)[:8] or ["Source-grounded overview"],
+                source_refs=plan.source_refs,
+            )
+            for plan in chapters
+        ],
     )
 
 
