@@ -316,7 +316,7 @@ async def test_content_agents_pass_allowed_refs_in_validation_context() -> None:
 
     assert "MDX-direct" in runtime.calls[0]["user"]
     assert '"source-p001"' in runtime.calls[0]["user"]
-    assert runtime.calls[0]["max_retries"] == 2
+    assert runtime.calls[0]["max_retries"] == 4
 
 
 @pytest.mark.asyncio
@@ -464,9 +464,9 @@ async def test_agent_raises_after_repeated_invalid_citation_ref_ids() -> None:
         "figure_requests": [],
         "owner_task_id": "chapter-1:section:000",
     }
-    runtime = RecordingRuntime([bad_response, bad_response])
+    runtime = RecordingRuntime([bad_response, bad_response, bad_response, bad_response])
 
     with pytest.raises(ValueError, match="invented-p999"):
         await SectionAgent().run(payload, model="deepseek-v4-pro", runtime=runtime)
 
-    assert len(runtime.calls) == 2
+    assert len(runtime.calls) == 4

@@ -63,7 +63,7 @@ async def generate_document_with_llm(
     defaults: dict[str, Any],
     allowed_citation_refs: Iterable[str] | None = None,
     image_paths: Sequence[str | Path] | None = None,
-    max_attempts: int = 2,
+    max_attempts: int = 4,
 ) -> BaseModel:
     prompt = render_prompt(
         prompt_name=prompt_name,
@@ -116,7 +116,14 @@ async def generate_document_with_llm(
                 f"{_truncate_failed_doc(text)}\n"
                 "```\n\n"
                 "请修正后重新返回完整文档：开头必须是 YAML frontmatter，"
-                "随后是 `---` 与 raw MDX body。"
+                "随后是 `---` 与 raw MDX body。\n"
+                "YAML frontmatter 转义要点（这是上次失败的常见原因）：\n"
+                "- 单引号标量内部的单引号必须写成两个单引号（`''`），"
+                "例如 `quote: 'KE = ½ m|r''(t)|²'`。\n"
+                "- 含反斜杠（LaTeX）或特殊字符的值优先用单引号标量或块标量（`|`），"
+                "不要用双引号标量。\n"
+                "- 若值里同时含单引号和反斜杠，改用块标量：`quote: |` 换行后缩进写原文。\n"
+                "- body 中的 LaTeX 原样书写（如 `$\\mu$`），不要 JSON 转义。"
             )
     assert last_error is not None
     raise last_error
