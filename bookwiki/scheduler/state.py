@@ -40,6 +40,7 @@ class PipelineState(TypedDict, total=False):
     chapter_sources: dict[str, str]
     chapter_titles: dict[str, str]
     chapter_topics: dict[str, list[str]]
+    chapter_groups: dict[str, Any]
     chapter_alignment: str
     chapter_split_report: str
 

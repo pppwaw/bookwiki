@@ -49,7 +49,55 @@ class StructureAgent:
             inp=inp,
             draft=draft,
         )
-        return StructureResult.model_validate(result)
+        return _group_into_two_level(StructureResult.model_validate(result))
+
+
+_SECTION_TITLE_RE = re.compile(r"^\s*(\d+)\.\d")
+
+
+def _group_into_two_level(result: StructureResult) -> StructureResult:
+    """Deterministically fold section-style chapters into "Chapter N" groups.
+
+    The LLM returns a flat list where calculus-style sources carry section titles like
+    ``9.2 Infinite Series``. This nests every such leaf under a ``Chapter <N>`` group
+    (keyed by the leading integer), preserving first-seen order, so the proposed YAML is
+    already two-level. Chapter-level titles (e.g. ``Chapter 6 Point Estimation``) and any
+    title without an ``N.M`` prefix are left flat, so books without sub-sections are
+    unaffected. Group titles are bare ``Chapter N`` placeholders for the reviewer to flesh
+    out at the structure gate.
+    """
+    leaves: list[ChapterProposal] = []
+    for chapter in result.chapters:
+        leaves.extend(chapter.sections or [chapter])
+
+    sequence: list[tuple[str, object]] = []
+    group_sections: dict[int, list[ChapterProposal]] = {}
+    for leaf in leaves:
+        flat = ChapterProposal(
+            title=leaf.title,
+            topics=list(leaf.topics),
+            source_refs=list(leaf.source_refs),
+        )
+        match = _SECTION_TITLE_RE.match(leaf.title)
+        if not match:
+            sequence.append(("flat", flat))
+            continue
+        number = int(match.group(1))
+        if number not in group_sections:
+            group_sections[number] = []
+            sequence.append(("group", number))
+        group_sections[number].append(flat)
+
+    chapters: list[ChapterProposal] = []
+    for kind, value in sequence:
+        if kind == "group":
+            number = value
+            chapters.append(
+                ChapterProposal(title=f"Chapter {number}", sections=group_sections[number])
+            )
+        else:
+            chapters.append(value)  # type: ignore[arg-type]
+    return StructureResult(chapters=chapters)
 
 
 def _draft_structure(summaries: list[dict[str, Any]]) -> StructureResult:

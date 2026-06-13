@@ -15,6 +15,11 @@ class ChapterSpec:
     title: str
     topics: list[str] = field(default_factory=list)
     source_refs: list[str] = field(default_factory=list)
+    # When the chapter belongs to a two-level group, ``group_id`` is the parent
+    # group's id (e.g. ``chapter-9``) and ``group_title`` its display title
+    # (e.g. ``Chapter 9 Infinite Series``). ``None`` for flat (ungrouped) chapters.
+    group_id: str | None = None
+    group_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -32,9 +37,22 @@ class SplitResult:
     alignment: list[dict[str, object]]
     coverage: dict[str, float | int]
     report_md: str
+    chapter_groups: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 def parse_approved_structure(structure_yaml: str) -> list[ChapterSpec]:
+    """Parse the approved structure YAML into a flat, depth-first list of leaf chapters.
+
+    Two shapes are accepted per top-level ``chapters`` entry:
+
+    * **Flat leaf** (backward compatible): ``{title: "Chapter 6 ...", topics, source_refs}``.
+    * **Group** (two-level): ``{title: "Chapter 9 ...", sections: [<section>, ...]}`` where each
+      section is ``{title: "9.2 ...", topics, source_refs}``. Sections are flattened into leaf
+      ``ChapterSpec``s carrying ``group_id``/``group_title``; reading order is preserved.
+
+    A group entry must not also carry ``topics``/``source_refs``, and every section's leading
+    chapter number must match the group's number.
+    """
     try:
         payload = yaml.safe_load(structure_yaml)
     except yaml.YAMLError as exc:
@@ -48,30 +66,107 @@ def parse_approved_structure(structure_yaml: str) -> list[ChapterSpec]:
         if not isinstance(item, dict):
             msg = f"chapter entry {index} must be a mapping"
             raise ValueError(msg)
-        parsed = _parse_chapter_heading(str(item.get("title") or ""))
-        if not parsed:
-            msg = "approved structure chapter titles must look like 'Chapter 6 Point Estimation'"
-            raise ValueError(msg)
-        chapter_id, title = parsed
-        topics = _string_list(item.get("topics"))
-        source_refs = _string_list(item.get("source_refs"))
-        if not topics or not source_refs:
-            msg = (
-                f"chapter {chapter_id!r} must include non-empty topics and source_refs lists"
-            )
-            raise ValueError(msg)
-        chapters.append(
-            ChapterSpec(
-                chapter_id=chapter_id,
-                title=title,
-                topics=topics,
-                source_refs=source_refs,
-            )
-        )
+        if item.get("sections") is not None:
+            chapters.extend(_parse_group(item, index))
+        else:
+            chapters.append(_parse_leaf(item))
     if not chapters:
         msg = "approved structure must contain at least one chapter"
         raise ValueError(msg)
+    _assert_unique_ids(chapters)
     return chapters
+
+
+def chapter_groups_from_specs(specs: list[ChapterSpec]) -> dict[str, dict[str, object]]:
+    """Project leaf specs into ``group_id -> {title, leaf_ids}`` preserving first-seen order."""
+    groups: dict[str, dict[str, object]] = {}
+    for spec in specs:
+        if not spec.group_id:
+            continue
+        group = groups.setdefault(
+            spec.group_id, {"title": spec.group_title or spec.group_id, "leaf_ids": []}
+        )
+        leaf_ids = group["leaf_ids"]
+        if isinstance(leaf_ids, list):
+            leaf_ids.append(spec.chapter_id)
+    return groups
+
+
+def _parse_leaf(item: dict[str, object]) -> ChapterSpec:
+    parsed = _parse_chapter_heading(str(item.get("title") or ""))
+    if not parsed:
+        msg = "approved structure chapter titles must look like 'Chapter 6 Point Estimation'"
+        raise ValueError(msg)
+    chapter_id, title = parsed
+    topics = _string_list(item.get("topics"))
+    source_refs = _string_list(item.get("source_refs"))
+    if not topics or not source_refs:
+        msg = f"chapter {chapter_id!r} must include non-empty topics and source_refs lists"
+        raise ValueError(msg)
+    return ChapterSpec(chapter_id=chapter_id, title=title, topics=topics, source_refs=source_refs)
+
+
+def _parse_group(item: dict[str, object], index: int) -> list[ChapterSpec]:
+    if item.get("topics") or item.get("source_refs"):
+        msg = f"chapter group entry {index} must not mix 'sections' with 'topics'/'source_refs'"
+        raise ValueError(msg)
+    sections = item.get("sections")
+    if not isinstance(sections, list) or not sections:
+        msg = f"chapter group entry {index} 'sections' must be a non-empty list"
+        raise ValueError(msg)
+    group = _parse_chapter_heading(str(item.get("title") or ""))
+    if not group:
+        msg = "approved structure group titles must look like 'Chapter 9 Infinite Series'"
+        raise ValueError(msg)
+    group_id, _ = group
+    group_number = int(group_id.split("-", 1)[1])
+    # Use the raw heading as the display title so a bare "Chapter 9" is not duplicated into
+    # "Chapter 9 Chapter 9"; a descriptive "Chapter 9 Infinite Series" is kept verbatim.
+    group_title = str(item.get("title") or "").strip()
+    leaves: list[ChapterSpec] = []
+    for sub_index, section in enumerate(sections, start=1):
+        if not isinstance(section, dict):
+            msg = f"section entry {sub_index} in group {group_id!r} must be a mapping"
+            raise ValueError(msg)
+        parsed = _parse_section_heading(str(section.get("title") or ""))
+        if not parsed:
+            msg = (
+                f"section titles in group {group_id!r} must start with a number "
+                "like '9.2 Infinite Series'"
+            )
+            raise ValueError(msg)
+        leaf_id, leaf_number, leaf_title = parsed
+        if leaf_number != group_number:
+            msg = (
+                f"section {leaf_title!r} (chapter {leaf_number}) does not belong to "
+                f"group 'Chapter {group_number}'"
+            )
+            raise ValueError(msg)
+        topics = _string_list(section.get("topics"))
+        source_refs = _string_list(section.get("source_refs"))
+        if not topics or not source_refs:
+            msg = f"section {leaf_id!r} must include non-empty topics and source_refs lists"
+            raise ValueError(msg)
+        leaves.append(
+            ChapterSpec(
+                chapter_id=leaf_id,
+                title=leaf_title,
+                topics=topics,
+                source_refs=source_refs,
+                group_id=group_id,
+                group_title=group_title,
+            )
+        )
+    return leaves
+
+
+def _assert_unique_ids(chapters: list[ChapterSpec]) -> None:
+    seen: set[str] = set()
+    for spec in chapters:
+        if spec.chapter_id in seen:
+            msg = f"duplicate chapter id {spec.chapter_id!r} in approved structure"
+            raise ValueError(msg)
+        seen.add(spec.chapter_id)
 
 
 def _parse_chapter_heading(heading: str) -> tuple[str, str] | None:
@@ -86,6 +181,23 @@ def _parse_chapter_heading(heading: str) -> tuple[str, str] | None:
         title = chapter.group(2).strip() or f"Chapter {number}"
         return f"chapter-{number}", title
     return None
+
+
+def _parse_section_heading(heading: str) -> tuple[str, int, str] | None:
+    """Parse a section title like ``9.2 Infinite Series`` or ``11.1-11.4 Vectors``.
+
+    Returns ``(leaf_id, group_number, full_title)`` where ``leaf_id`` normalises the leading
+    numeric token (dots/dashes -> ``-``) into ``chapter-9-2``, and ``group_number`` is the first
+    integer (the owning chapter). The full original title is kept verbatim for display.
+    """
+    heading = heading.strip()
+    match = re.match(r"^(\d+(?:[.\-]\d+)*)\b", heading)
+    if not match:
+        return None
+    number_token = match.group(1)
+    leaf_id = "chapter-" + re.sub(r"[.\-]+", "-", number_token)
+    group_number = int(re.match(r"^(\d+)", number_token).group(1))
+    return leaf_id, group_number, heading
 
 
 def extract_source_fragments(path: str | Path) -> list[SourceFragment]:
@@ -168,7 +280,14 @@ def split_sources_by_structure(
         "assigned_ratio": round(assigned_count / total_count, 4) if total_count else 1.0,
     }
     report_md = _render_report(specs, alignment, coverage)
-    return SplitResult(chapters, chapter_titles, alignment, coverage, report_md)
+    return SplitResult(
+        chapters,
+        chapter_titles,
+        alignment,
+        coverage,
+        report_md,
+        chapter_groups=chapter_groups_from_specs(specs),
+    )
 
 
 def _string_list(value: object) -> list[str]:
@@ -234,9 +353,7 @@ def _keywords(text: str) -> set[str]:
     return {word for word in words if word not in stopwords}
 
 
-def _render_chapter_source(
-    chapter_id: str, title: str, fragments: list[SourceFragment]
-) -> str:
+def _render_chapter_source(chapter_id: str, title: str, fragments: list[SourceFragment]) -> str:
     blocks = [f"# {_display_chapter_heading(chapter_id, title)}"]
     for fragment in fragments:
         blocks.append(
@@ -248,10 +365,15 @@ def _render_chapter_source(
 
 
 def _display_chapter_heading(chapter_id: str, title: str) -> str:
-    chapter = re.match(r"^chapter-(\d+)$", chapter_id)
+    clean = title.strip()
+    # Section/leaf titles already start with their number (e.g. "9.2 Infinite Series");
+    # keep verbatim. Likewise an explicit "Chapter N ..." title is already display-ready.
+    if re.match(r"^(chapter\s+\d+\b|\d)", clean, flags=re.IGNORECASE):
+        return clean
+    chapter = re.fullmatch(r"chapter-(\d+)", chapter_id)
     if chapter:
-        return f"Chapter {int(chapter.group(1))} {title}"
-    return f"{chapter_id} {title}"
+        return f"Chapter {int(chapter.group(1))} {clean}".strip()
+    return f"{chapter_id} {clean}".strip() if clean else chapter_id
 
 
 def _render_report(

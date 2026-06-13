@@ -320,6 +320,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
                     "title": "Chapter 1 Search",
                     "topics": ["State space search"],
                     "source_refs": ["source-p001"],
+                    "sections": [],
                 }
             ],
         },
@@ -340,6 +341,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
             "alignment": [{"source_ref": "source-p001", "chapter_id": "chapter-1"}],
             "coverage": {"total_fragments": 1, "assigned_ratio": 1.0},
             "report_md": "# Split Audit",
+            "chapter_groups": {},
         },
     ),
     (

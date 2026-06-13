@@ -42,6 +42,7 @@ NODE_OUTPUT_KEYS: dict[str, set[str]] = {
     "split": {
         "chapter_sources",
         "chapter_titles",
+        "chapter_groups",
         "chapter_alignment",
         "chapter_split_report",
     },
@@ -120,11 +121,13 @@ def state_for_force_from(cfg: BookConfig, checkpoint_state: dict[str, Any]) -> d
         and start_index >= NODE_ORDER.index("generate")
         and not state.get("chapter_sources")
     ):
-        chapter_sources, chapter_titles, alignment_path = existing_split_state(cfg)
+        chapter_sources, chapter_titles, chapter_groups, alignment_path = existing_split_state(cfg)
         if chapter_sources:
             state["chapter_sources"] = chapter_sources
             if chapter_titles:
                 state["chapter_titles"] = chapter_titles
+            if chapter_groups:
+                state["chapter_groups"] = chapter_groups
             if alignment_path:
                 state["chapter_alignment"] = alignment_path
     return state
@@ -152,10 +155,12 @@ def existing_source_ref_manifests(cfg: BookConfig) -> list[str]:
     ]
 
 
-def existing_split_state(cfg: BookConfig) -> tuple[dict[str, str], dict[str, str], str | None]:
+def existing_split_state(
+    cfg: BookConfig,
+) -> tuple[dict[str, str], dict[str, str], dict[str, Any], str | None]:
     chapter_sources_dir = cfg.work_dir / "chapter_sources"
     if not chapter_sources_dir.exists():
-        return {}, {}, None
+        return {}, {}, {}, None
     chapter_sources = {
         path.parent.name: path.relative_to(cfg.book_dir).as_posix()
         for path in sorted(chapter_sources_dir.glob("*/source.md"))
@@ -164,13 +169,17 @@ def existing_split_state(cfg: BookConfig) -> tuple[dict[str, str], dict[str, str
     alignment_path = chapter_sources_dir / "_alignment.json"
     alignment_rel = None
     chapter_titles: dict[str, str] = {}
+    chapter_groups: dict[str, Any] = {}
     if alignment_path.exists():
         alignment_rel = alignment_path.relative_to(cfg.book_dir).as_posix()
         alignment = read_json(alignment_path, default={})
         raw_titles = alignment.get("chapter_titles", {})
         if isinstance(raw_titles, dict):
             chapter_titles = {str(key): str(value) for key, value in raw_titles.items()}
-    return chapter_sources, chapter_titles, alignment_rel
+        raw_groups = alignment.get("chapter_groups", {})
+        if isinstance(raw_groups, dict):
+            chapter_groups = raw_groups
+    return chapter_sources, chapter_titles, chapter_groups, alignment_rel
 
 
 def clear_for_force(cfg: BookConfig) -> None:

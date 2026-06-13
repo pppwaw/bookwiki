@@ -4,14 +4,22 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
-from bookwiki.agents.structure_agent import StructureAgent
-from bookwiki.pipeline.nodes import APPROVED_STRUCTURE_MARKER, split_node, structure_node
+from bookwiki.agents.structure_agent import StructureAgent, _group_into_two_level
+from bookwiki.pipeline.nodes import (
+    APPROVED_STRUCTURE_MARKER,
+    PENDING_STRUCTURE_MARKER,
+    split_node,
+    structure_node,
+)
 from bookwiki.scheduler.config import default_config
 from bookwiki.scheduler.llm import TestLLMRuntime
+from bookwiki.schemas.source import ChapterProposal, StructureResult
 from bookwiki.split.chapter_splitter import (
+    chapter_groups_from_specs,
     parse_approved_structure,
     split_sources_by_structure,
 )
@@ -202,9 +210,7 @@ def test_structure_agent_merges_sources_with_same_detected_chapter() -> None:
 
     structure = yaml.safe_load(result.proposed_structure_yaml)
 
-    assert [chapter["title"] for chapter in structure["chapters"]] == [
-        "Chapter 6 Point Estimation"
-    ]
+    assert [chapter["title"] for chapter in structure["chapters"]] == ["Chapter 6 Point Estimation"]
     assert "ch06 Point Estimation" not in result.proposed_structure_yaml
     assert "Chapter 2 Practice" not in result.proposed_structure_yaml
     assert structure["chapters"][0]["source_refs"] == ["Week-9-p001", "Week-10-p001"]
@@ -308,6 +314,176 @@ def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: P
     assert not stale.exists()
 
 
+NESTED_GROUPS = """chapters:
+  - title: Chapter 9 Infinite Series
+    sections:
+      - title: 9.2 Infinite Series
+        topics:
+          - infinite series
+        source_refs:
+          - 9.2-infinite-series-p001
+      - title: '9.5 Alternating Series'
+        topics:
+          - alternating series
+        source_refs:
+          - 9.5-alternating-series-p001
+  - title: Chapter 11 Vectors
+    sections:
+      - title: 11.5 Vector Functions
+        topics:
+          - vector functions
+        source_refs:
+          - 11.5-vector-functions-p001
+"""
+
+
+def test_parse_approved_structure_expands_nested_groups() -> None:
+    specs = parse_approved_structure(NESTED_GROUPS)
+    assert [spec.chapter_id for spec in specs] == [
+        "chapter-9-2",
+        "chapter-9-5",
+        "chapter-11-5",
+    ]
+    assert specs[0].group_id == "chapter-9"
+    assert specs[0].group_title == "Chapter 9 Infinite Series"
+    assert specs[0].title == "9.2 Infinite Series"
+    assert specs[2].group_id == "chapter-11"
+    groups = chapter_groups_from_specs(specs)
+    assert groups["chapter-9"]["leaf_ids"] == ["chapter-9-2", "chapter-9-5"]
+    assert groups["chapter-9"]["title"] == "Chapter 9 Infinite Series"
+    assert groups["chapter-11"]["leaf_ids"] == ["chapter-11-5"]
+
+
+def test_parse_approved_structure_rejects_section_outside_group() -> None:
+    bad = (
+        "chapters:\n"
+        "  - title: Chapter 9 Infinite Series\n"
+        "    sections:\n"
+        "      - title: 11.5 Wrong Chapter\n"
+        "        topics: [vectors]\n"
+        "        source_refs: [x-p001]\n"
+    )
+    with pytest.raises(ValueError, match="does not belong to group"):
+        parse_approved_structure(bad)
+
+
+def test_parse_approved_structure_rejects_group_mixed_with_source_refs() -> None:
+    bad = (
+        "chapters:\n"
+        "  - title: Chapter 9 Infinite Series\n"
+        "    source_refs: [x-p001]\n"
+        "    sections:\n"
+        "      - title: 9.2 Infinite Series\n"
+        "        topics: [series]\n"
+        "        source_refs: [x-p001]\n"
+    )
+    with pytest.raises(ValueError, match="must not mix"):
+        parse_approved_structure(bad)
+
+
+def test_split_sources_by_structure_keeps_leaves_flat_with_group_metadata(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "calc.md"
+    source.write_text(
+        "<!-- source_ref: 9.2-infinite-series-p001 -->\n\nSeries material.\n\n"
+        "<!-- source_ref: 9.5-alternating-series-p001 -->\n\nAlternating material.\n\n"
+        "<!-- source_ref: 11.5-vector-functions-p001 -->\n\nVector material.\n",
+        encoding="utf-8",
+    )
+    result = split_sources_by_structure([source], NESTED_GROUPS)
+
+    # Heavy stages stay flat: chapters keyed by leaf id, not group id.
+    assert set(result.chapters) >= {"chapter-9-2", "chapter-9-5", "chapter-11-5"}
+    assert "chapter-9" not in result.chapters
+    assert result.chapter_groups["chapter-9"]["leaf_ids"] == ["chapter-9-2", "chapter-9-5"]
+    assert result.chapter_groups["chapter-11"]["leaf_ids"] == ["chapter-11-5"]
+
+
+def test_group_into_two_level_nests_sections_and_keeps_chapter_titles_flat() -> None:
+    flat = StructureResult(
+        chapters=[
+            ChapterProposal(
+                title="9.2 Infinite Series", topics=["series"], source_refs=["9.2-p001"]
+            ),
+            ChapterProposal(
+                title="9.5 Alternating Series",
+                topics=["alternating"],
+                source_refs=["9.5-p001"],
+            ),
+            ChapterProposal(
+                title="11.5 Vector Functions",
+                topics=["vectors"],
+                source_refs=["11.5-p001"],
+            ),
+            ChapterProposal(
+                title="Chapter 6 Point Estimation",
+                topics=["mle"],
+                source_refs=["w9-p001"],
+            ),
+        ]
+    )
+
+    grouped = _group_into_two_level(flat)
+
+    assert [chapter.title for chapter in grouped.chapters] == [
+        "Chapter 9",
+        "Chapter 11",
+        "Chapter 6 Point Estimation",
+    ]
+    assert [section.title for section in grouped.chapters[0].sections] == [
+        "9.2 Infinite Series",
+        "9.5 Alternating Series",
+    ]
+    # Section-style leaves carry no top-level topics/source_refs; the group wraps them.
+    assert grouped.chapters[0].topics == []
+    # A real "Chapter N" title stays a flat leaf, not wrapped in a group.
+    assert grouped.chapters[2].sections == []
+    assert grouped.chapters[2].source_refs == ["w9-p001"]
+
+    # Round-trip: the proposed YAML the agent emits must parse back through the gate parser.
+    specs = parse_approved_structure(grouped.proposed_structure_yaml)
+    assert [spec.chapter_id for spec in specs] == [
+        "chapter-9-2",
+        "chapter-9-5",
+        "chapter-11-5",
+        "chapter-6",
+    ]
+    assert specs[0].group_id == "chapter-9"
+    assert specs[0].group_title == "Chapter 9"
+    assert specs[3].group_id is None
+
+
+def test_structure_node_reseeds_emptied_approved_structure(tmp_path: Path) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = TestLLMRuntime()
+    sources_dir = cfg.work_dir / "sources_md"
+    sources_dir.mkdir(parents=True)
+    source = sources_dir / "textbook.md"
+    source.write_text(
+        "# Textbook\n\n"
+        "<!-- source_ref: textbook-p001 -->\n\n"
+        "Introductory search material.\n\n"
+        "<!-- source_ref: textbook-p002 -->\n\n"
+        "Heuristic search material.\n",
+        encoding="utf-8",
+    )
+    state = {"book_id": cfg.book_id, "sources_md": ["work/sources_md/textbook.md"]}
+
+    # User emptied the previously approved file to force a fresh review.
+    approved_path = cfg.work_dir / "structure" / "approved-structure.yaml"
+    approved_path.parent.mkdir(parents=True, exist_ok=True)
+    approved_path.write_text("", encoding="utf-8")
+
+    structure_state = asyncio.run(structure_node(state, cfg))
+
+    seeded = (cfg.book_dir / structure_state["approved_structure"]).read_text(encoding="utf-8")
+    assert seeded.strip(), "emptied approved-structure should be re-seeded with pending template"
+    assert seeded.splitlines()[0].strip() == PENDING_STRUCTURE_MARKER
+    # Not yet approved: no standalone line equals the approval marker.
+    assert not any(line.strip() == APPROVED_STRUCTURE_MARKER for line in seeded.splitlines())
+
+
 def test_split_node_requires_reviewed_approved_structure_marker(tmp_path: Path) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     sources_dir = cfg.work_dir / "sources_md"
@@ -343,9 +519,7 @@ def test_structure_node_cache_key_changes_when_language_changes(tmp_path: Path) 
     sources_dir.mkdir(parents=True)
     source = sources_dir / "textbook.md"
     source.write_text(
-        "# Textbook\n\n"
-        "<!-- source_ref: textbook-p001 -->\n\n"
-        "Introductory search material.\n",
+        "# Textbook\n\n<!-- source_ref: textbook-p001 -->\n\nIntroductory search material.\n",
         encoding="utf-8",
     )
     state = {"book_id": cfg.book_id, "sources_md": ["work/sources_md/textbook.md"]}
@@ -365,9 +539,7 @@ def test_structure_node_cache_key_changes_when_book_notes_change(tmp_path: Path)
     sources_dir.mkdir(parents=True)
     source = sources_dir / "textbook.md"
     source.write_text(
-        "# Textbook\n\n"
-        "<!-- source_ref: textbook-p001 -->\n\n"
-        "Introductory search material.\n",
+        "# Textbook\n\n<!-- source_ref: textbook-p001 -->\n\nIntroductory search material.\n",
         encoding="utf-8",
     )
     cfg.notes_file.write_text(
