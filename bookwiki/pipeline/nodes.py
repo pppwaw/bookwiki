@@ -50,6 +50,7 @@ from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
 from bookwiki.integrator.markdown_renderers import (
     convert_html_style_attrs,
+    normalize_citation_quote_math,
     normalize_mdx_math,
     normalize_source_cites,
 )
@@ -287,7 +288,7 @@ def _source_citation_md(citations: list[dict[str, Any]]) -> str:
 
 
 def _source_quote_markdown(quote: str) -> str:
-    return normalize_mdx_math(quote)
+    return normalize_citation_quote_math(quote)
 
 
 def _display_chapter_title(chapter_id: str, title: str) -> str:

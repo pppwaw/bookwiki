@@ -20,6 +20,82 @@ def normalize_mdx_math(mdx: str) -> str:
     return _canonicalize_display_fences(normalized)
 
 
+# Already-delimited math: `$$ ... $$` or `$ ... $`. If a quote already carries any of
+# these, the LLM marked its math correctly (card/quiz agents do this) and we must not
+# re-wrap it.
+_DOLLAR_MATH_RE = re.compile(r"\$\$[\s\S]*?\$\$|\$[^$\n]+\$")
+
+# Strong signals that an undelimited string is in fact LaTeX math. A backslash command
+# from this whitelist, or an explicit sub/superscript group, is required before we will
+# consider wrapping. A bare backslash is NOT enough (avoids "the command \frac means…").
+_LATEX_MATH_SIGNAL_RE = re.compile(
+    r"\\(?:d?frac|tfrac|sum|prod|int|oint|sqrt|ln|log|lim|sin|cos|tan|cot|sec|csc"
+    r"|left|right|dots|cdots|ldots|vdots|ddots|rightarrow|leftarrow|to|mapsto|infty"
+    r"|partial|nabla|cdot|times|div|pm|mp|leq|geq|neq|approx|equiv|sim|propto|forall"
+    r"|exists|in|notin|subset|cup|cap|alpha|beta|gamma|delta|epsilon|varepsilon|zeta"
+    r"|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|phi|varphi|chi"
+    r"|psi|omega|Gamma|Delta|Theta|Lambda|Sigma|Phi|Psi|Omega|mathbb|mathcal|mathrm"
+    r"|mathbf|operatorname|begin|end)\b"
+    r"|[_^]\{"
+)
+
+# A "Label: math" split — a short natural-language prefix ending in a colon, followed by
+# the math run (e.g. "The N-th partial sum: S_n = …").
+_LABEL_SPLIT_RE = re.compile(r"^(?P<label>.{1,80}?[:：])\s*(?P<rest>\S[\s\S]*)$")
+
+_TRAILING_PUNCT_RE = re.compile(r"[.,;:!?。，；：！？]+$")
+
+
+def normalize_citation_quote_math(quote: str) -> str:
+    """Ensure math inside a citation quote carries ``$`` delimiters so it renders as KaTeX.
+
+    Conservative on purpose: only an entire pure-math run, or the pure-math suffix after a
+    natural-language ``Label:`` prefix, is wrapped. Any quote that mixes prose words with
+    math in an ambiguous way (e.g. ``\\frac{1}{n} is not unbiased``) is left untouched, and
+    quotes that already contain ``$...$`` are returned unchanged (idempotent). This runs
+    BEFORE ``_escape_mdx_text_outside_math`` so wrapped regions keep their raw ``{}`` for
+    KaTeX instead of being HTML-escaped.
+    """
+    text = normalize_mdx_math(str(quote).strip())
+    if not text or _DOLLAR_MATH_RE.search(text) or not _LATEX_MATH_SIGNAL_RE.search(text):
+        return text
+
+    if _is_pure_math_run(text):
+        body, trailing = _split_trailing_punct(text)
+        return f"${body}${trailing}" if body else text
+
+    match = _LABEL_SPLIT_RE.match(text)
+    if match and _is_pure_math_run(match.group("rest")):
+        body, trailing = _split_trailing_punct(match.group("rest").strip())
+        return f"{match.group('label')} ${body}${trailing}" if body else text
+
+    return text
+
+
+def _is_pure_math_run(segment: str) -> bool:
+    """True when ``segment`` is math with no natural-language words.
+
+    A natural-language word is a run of >=2 ASCII letters left over after LaTeX commands
+    and math structure (braces, operators, sub/superscripts, digits, single-letter
+    variables) are stripped. Its presence vetoes wrapping.
+    """
+    segment = segment.strip()
+    if not segment or not _LATEX_MATH_SIGNAL_RE.search(segment):
+        return False
+    residue = re.sub(r"\\[a-zA-Z]+", " ", segment)  # drop \frac, \ln, \left, ...
+    residue = re.sub(r"\\[^a-zA-Z]", " ", residue)  # drop \\, \{, \,, ...
+    residue = re.sub(r"[{}\[\]()|^_=+\-*/<>~!?.,;:'\"`&%]", " ", residue)
+    residue = re.sub(r"\d+", " ", residue)
+    return not any(len(token) >= 2 and token.isalpha() for token in residue.split())
+
+
+def _split_trailing_punct(segment: str) -> tuple[str, str]:
+    match = _TRAILING_PUNCT_RE.search(segment)
+    if match:
+        return segment[: match.start()].rstrip(), segment[match.start() :]
+    return segment, ""
+
+
 # Spans that must never be touched by fence canonicalization: code fences, inline code,
 # JSX string props (`={"..."}`, e.g. PreviewLink summary) and JSX array props
 # (`={[...]}`, e.g. QuizItem citations) — their string literals may legally contain `$$`.

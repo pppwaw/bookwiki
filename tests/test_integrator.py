@@ -42,6 +42,63 @@ def test_source_citations_do_not_repair_bare_latex_expressions() -> None:
     assert r"$\frac$" not in markdown
 
 
+def test_source_citations_wrap_pure_bare_latex_in_inline_math() -> None:
+    markdown = _source_citation_md(
+        [
+            {
+                "ref_id": "9.2-p008",
+                "quote": r"\frac{1}{(k+2)(k+3)} = \frac{1}{(k+2)} - \frac{1}{(k+3)}",
+            },
+            {
+                "ref_id": "9.2-p010",
+                "quote": r"S_{n} = \ln \frac{2}{1} + \dots = \ln(n+1) \rightarrow \infty",
+            },
+        ]
+    )
+
+    assert r"`9.2-p008`: $\frac{1}{(k+2)(k+3)} = \frac{1}{(k+2)} - \frac{1}{(k+3)}$" in markdown
+    assert r"`9.2-p010`: $S_{n} = \ln \frac{2}{1} + \dots = \ln(n+1) \rightarrow \infty$" in markdown
+    # raw braces must survive inside the wrapped math (no HTML-escaping) so KaTeX parses.
+    assert "&#123;" not in markdown
+
+
+def test_source_citations_wrap_only_math_suffix_after_prose_label() -> None:
+    markdown = _source_citation_md(
+        [
+            {
+                "ref_id": "9.2-p005",
+                "quote": r"The N-th partial sum: S_n = a_1 + \dots + a_n = \sum_{k=1}^{n} a_k",
+            },
+        ]
+    )
+
+    assert (
+        r"`9.2-p005`: The N-th partial sum: $S_n = a_1 + \dots + a_n = \sum_{k=1}^{n} a_k$"
+        in markdown
+    )
+
+
+def test_source_citations_leave_already_delimited_and_plain_prose_untouched() -> None:
+    markdown = _source_citation_md(
+        [
+            {
+                "ref_id": "9.2-p013",
+                "quote": r"A geometric series $\sum_{k=1}^{\infty} a r^{k-1}$ with $a \neq 0$.",
+            },
+            {
+                "ref_id": "9.2-p006",
+                "quote": "The infinite series converges and has sum S.",
+            },
+        ]
+    )
+
+    # Already-delimited math is idempotent: not re-wrapped, dollars preserved.
+    assert r"`9.2-p013`: A geometric series $\sum_{k=1}^{\infty} a r^{k-1}$ with $a \neq 0$." in markdown
+    # Plain prose with no LaTeX signal is never wrapped.
+    assert "`9.2-p006`: The infinite series converges and has sum S." in markdown
+
+
+
 def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Path) -> None:
     book_dir = tmp_path / "book"
     result_dir = book_dir / "work" / "agent_results"

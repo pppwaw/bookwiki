@@ -10,6 +10,7 @@ import {
   useMemo,
   useState,
 } from 'react';
+import { MathText } from './MathText';
 
 type Citation = {
   ref_id: string;
@@ -179,7 +180,12 @@ export function AnkiCard({
           {citations.map((cite) => (
             <li key={cite.ref_id}>
               <code>{cite.ref_id}</code>
-              {cite.quote ? <span> · {cite.quote}</span> : null}
+              {cite.quote ? (
+                <span>
+                  {' · '}
+                  <MathText text={cite.quote} />
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>

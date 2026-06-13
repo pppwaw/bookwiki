@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { MathText } from './MathText';
 
 export function SourceRef({ id, quote }: { id: string; quote?: string }) {
   const [open, setOpen] = useState(false);
@@ -15,7 +16,11 @@ export function SourceRef({ id, quote }: { id: string; quote?: string }) {
       title={quote}
     >
       <span className="source-ref-id">{id}</span>
-      {quote && open ? <span className="source-ref-tooltip">{quote}</span> : null}
+      {quote && open ? (
+        <span className="source-ref-tooltip">
+          <MathText text={quote} />
+        </span>
+      ) : null}
     </span>
   );
 }
