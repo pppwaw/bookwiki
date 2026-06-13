@@ -17,6 +17,7 @@ def normalize_mdx_math(mdx: str) -> str:
     normalized = "".join(
         part if part.startswith("`") else _normalize_math_segment(part) for part in parts
     )
+    normalized = _normalize_katex_text_mode_chars(normalized)
     return _canonicalize_display_fences(normalized)
 
 
@@ -104,6 +105,23 @@ _FENCE_EXCLUDE_RE = re.compile(
 )
 _DISPLAY_FENCE_RE = re.compile(r"\$\$")
 
+_MATH_SPAN_RE = re.compile(r"\$\$[\s\S]*?\$\$|\$[^$\n]+\$")
+_TEXT_COMMAND_RE = re.compile(r"\\text\{([^{}]*)\}")
+_KATEX_TEXT_MODE_DIGITS = str.maketrans(
+    {
+        "①": "1",
+        "②": "2",
+        "③": "3",
+        "④": "4",
+        "⑤": "5",
+        "⑥": "6",
+        "⑦": "7",
+        "⑧": "8",
+        "⑨": "9",
+        "⑩": "10",
+    }
+)
+
 
 def _canonicalize_display_fences(mdx: str) -> str:
     """Put every multi-line ``$$ ... $$`` display block on its own fence lines.
@@ -126,6 +144,46 @@ def _canonicalize_display_fences(mdx: str) -> str:
         for part in parts
         if part is not None
     )
+
+
+def _normalize_katex_text_mode_chars(mdx: str) -> str:
+    """Avoid KaTeX text-mode font-metric warnings inside math spans.
+
+    KaTeX has metrics for Greek letters in math fonts, but not for raw ``θ`` when it
+    appears inside ``\text{...}``; circled digits in ``\tag{①}`` have the same issue.
+    Normalize only already-delimited math spans so ordinary prose and JSX props keep
+    their human-facing wording.
+    """
+    parts = _FENCE_EXCLUDE_RE.split(mdx)
+    return "".join(
+        part
+        if part is None or part.startswith("`") or part.startswith("={")
+        else _MATH_SPAN_RE.sub(lambda match: _normalize_katex_math(match.group(0)), part)
+        for part in parts
+        if part is not None
+    )
+
+
+def _normalize_katex_math(math_span: str) -> str:
+    return _TEXT_COMMAND_RE.sub(
+        _normalize_katex_text_command,
+        math_span.translate(_KATEX_TEXT_MODE_DIGITS),
+    )
+
+
+def _normalize_katex_text_command(match: re.Match[str]) -> str:
+    text = match.group(1)
+    if "θ" not in text:
+        return match.group(0)
+
+    pieces = text.split("θ")
+    rendered: list[str] = []
+    for index, piece in enumerate(pieces):
+        if piece:
+            rendered.append(f"\\text{{{piece}}}")
+        if index < len(pieces) - 1:
+            rendered.append(r"\theta")
+    return "".join(rendered)
 
 
 def _canonicalize_fence_segment(segment: str) -> str:

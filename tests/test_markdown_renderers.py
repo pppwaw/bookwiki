@@ -65,6 +65,24 @@ def test_valid_math_is_left_untouched() -> None:
     assert normalize_mdx_math(good) == good
 
 
+def test_katex_text_mode_unsupported_chars_are_normalized_inside_math_only() -> None:
+    mdx = (
+        "正文 θ 和步骤 ① 保持原样。\n"
+        "$\\tag{①}$、$(②)$、$\\text{θ-简单}$。\n"
+        '<Card description={"$\\tag{③}$ 与 θ 保持原样"} />\n'
+        "`$\\tag{④}$`\n"
+    )
+
+    out = normalize_mdx_math(mdx)
+
+    assert "正文 θ 和步骤 ① 保持原样。" in out
+    assert "$\\tag{1}$" in out
+    assert "$(2)$" in out
+    assert "$\\theta\\text{-简单}$" in out
+    assert '<Card description={"$\\tag{③}$ 与 θ 保持原样"} />' in out
+    assert "`$\\tag{④}$`" in out
+
+
 def test_odd_fence_count_segment_is_left_alone() -> None:
     odd = "孤立围栏 $$ 不要乱配对。\n"
     assert normalize_mdx_math(odd) == odd

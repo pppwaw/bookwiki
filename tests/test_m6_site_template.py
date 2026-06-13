@@ -21,6 +21,7 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "katex" in deps
 
     source_config = (SITE / "source.config.ts").read_text(encoding="utf-8")
+    next_config = (SITE / "next.config.mjs").read_text(encoding="utf-8")
     root_layout = (SITE / "app" / "layout.tsx").read_text(encoding="utf-8")
     source = (SITE / "lib" / "source.ts").read_text(encoding="utf-8")
     docs_layout = (SITE / "app" / "docs" / "layout.tsx").read_text(encoding="utf-8")
@@ -38,6 +39,7 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "rehypePlugins: (v) => [" in source_config
     assert '[rehypeKatex, { strict: false, output: "html" }],' in source_config
     assert "...v," in source_config
+    assert "webpackBuildWorker: true" in next_config
     assert "katex/dist/katex.css" in root_layout
     assert "collections/server" in source
     assert "loader" in source
@@ -65,6 +67,12 @@ def test_home_page_renders_generated_book_index() -> None:
     assert "getSourcePage(undefined)" in home_page
     assert "source.getPages()" in home_page
     assert "chapters[0]" in home_page
+
+
+def test_site_template_build_script_uses_next_defaults() -> None:
+    package = json.loads((SITE / "package.json").read_text(encoding="utf-8"))
+
+    assert package["scripts"]["build"] == "next build"
 
 
 def test_site_template_wires_bookwiki_components_and_server_only_data_paths() -> None:
@@ -115,6 +123,9 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "children" in anki_deck
     assert "remarkMath" in markdown
     assert "rehypeKatex" in markdown
+    math_text = (SITE / "components" / "MathText.tsx").read_text(encoding="utf-8")
+    assert "normalizeKatexInput" in math_text
+    assert "KATEX_TEXT_MODE_DIGITS" in math_text
     assert "role=\"tooltip\"" in preview_link
     assert "preview-link-card" in preview_link
     assert ".preview-link-wrap:focus-within .preview-link-card" in global_css

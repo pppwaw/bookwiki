@@ -14,6 +14,7 @@ try:
     from ._common import book_arg_parser  # type: ignore[import-not-found] # noqa: E402
 except ImportError:  # pragma: no cover - direct script execution
     from _common import book_arg_parser  # type: ignore[no-redef] # noqa: E402
+from bookwiki.integrator.markdown_renderers import normalize_mdx_math  # noqa: E402
 from bookwiki.scheduler.config import BookConfig, load_config  # noqa: E402
 
 TEMPLATE_DIR = ROOT / "site-template"
@@ -74,6 +75,7 @@ def materialize_site(book: BookConfig | str | Path) -> Path:
         _remove_path(target_docs)
     target_docs.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(cfg.content_dir, target_docs)
+    _normalize_site_mdx(target_docs)
 
     source_assets = cfg.work_dir / "assets"
     target_assets = site_dir / "public" / "bookwiki-assets"
@@ -84,6 +86,14 @@ def materialize_site(book: BookConfig | str | Path) -> Path:
         shutil.copytree(source_assets, target_assets)
 
     return site_dir
+
+
+def _normalize_site_mdx(content_dir: Path) -> None:
+    for path in content_dir.rglob("*.mdx"):
+        text = path.read_text(encoding="utf-8")
+        normalized = normalize_mdx_math(text)
+        if normalized != text:
+            path.write_text(normalized, encoding="utf-8")
 
 
 def sync_site_env(site_dir: Path) -> Path | None:
@@ -189,6 +199,7 @@ def main() -> None:
     sync_site_env(site_dir)
     env = os.environ.copy()
     env["BOOKWIKI_SITE_LANGUAGE"] = cfg.language
+    env.setdefault("NODE_OPTIONS", "--max-old-space-size=4096")
 
     subprocess.run(["pnpm", "install"], cwd=site_dir, env=env, check=True)
     subprocess.run(["pnpm", "build"], cwd=site_dir, env=env, check=True)
