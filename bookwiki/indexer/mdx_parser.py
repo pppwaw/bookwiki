@@ -251,7 +251,7 @@ def _source_refs(
     refs: list[str] = []
     _add_refs(refs, _as_str_list(frontmatter.get("source_refs")))
     _add_refs(refs, re.findall(r"<!--\s*source_ref:\s*([A-Za-z0-9_.:/-]+)\s*-->", body))
-    _add_refs(refs, re.findall(r"<SourceRef\b[^>]*\bid=[\"']([^\"']+)[\"']", body))
+    _add_refs(refs, _source_ref_ids(body))
     _add_refs(refs, re.findall(r"^\s*-\s*`([^`]+)`\s*:", body, flags=re.MULTILINE))
     for item in [*quiz_items, *card_items]:
         _add_refs(refs, _item_source_refs(item))
@@ -261,10 +261,23 @@ def _source_refs(
 def source_refs_from_text(text: str) -> list[str]:
     refs: list[str] = []
     _add_refs(refs, re.findall(r"<!--\s*source_ref:\s*([A-Za-z0-9_.:/-]+)\s*-->", text))
-    _add_refs(refs, re.findall(r"<SourceRef\b[^>]*\bid=[\"']([^\"']+)[\"']", text))
+    _add_refs(refs, _source_ref_ids(text))
     _add_refs(refs, re.findall(r"^\s*-\s*`([^`]+)`\s*:", text, flags=re.MULTILINE))
     return refs
 
+
+
+def _source_ref_ids(text: str) -> list[str]:
+    ids: list[str] = []
+    for match in re.finditer(r"<SourceRef\b(?P<attrs>[^>]*)>", text, flags=re.DOTALL):
+        attrs = match.group("attrs") or ""
+        value = _prop_value(attrs, "id")
+        if value is None:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        ids.append(value)
+    return ids
 
 def _item_source_refs(item: dict[str, Any]) -> list[str]:
     refs: list[str] = []

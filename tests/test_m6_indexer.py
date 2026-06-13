@@ -21,6 +21,8 @@ def test_parse_mdx_file_extracts_frontmatter_components_and_source_refs(tmp_path
         "---\n"
         "# Search Basics\n\n"
         "A search frontier ranks nodes. <SourceRef id=\"textbook-p001\" />\n\n"
+        'Expression props also cite sources. <SourceRef id={"textbook-p002"} '
+        'quote={"Expression prop quote"} />\n\n'
         "<QuizBlock>\n"
         "  <QuizItem id=\"q1\" answer=\"choice-1\" citations={[{\"ref_id\":\"textbook-p001\"}]}>\n"
         "    <QuizQuestion>Pick one</QuizQuestion>\n"
@@ -51,7 +53,7 @@ def test_parse_mdx_file_extracts_frontmatter_components_and_source_refs(tmp_path
     assert parsed.frontmatter["concepts"] == ["Heuristic Search"]
     assert parsed.quiz_items[0]["question"] == "Pick one"
     assert parsed.card_items[0]["front"] == "Front"
-    assert parsed.source_refs == ["textbook-p001", "lecture-slide02"]
+    assert parsed.source_refs == ["textbook-p001", "textbook-p002", "lecture-slide02"]
 
 
 def test_chunk_page_splits_on_headings_and_keeps_section_source_refs(tmp_path: Path) -> None:
@@ -66,7 +68,7 @@ def test_chunk_page_splits_on_headings_and_keeps_section_source_refs(tmp_path: P
         "# Heuristics\n\n"
         "Intro text. <SourceRef id=\"textbook-p010\" />\n\n"
         "## Admissibility\n\n"
-        "Never overestimate the remaining cost. <SourceRef id=\"textbook-p011\" />\n\n"
+        'Never overestimate the remaining cost. <SourceRef id={"textbook-p011"} />\n\n'
         "## Consistency\n\n"
         "Triangle inequality form. <SourceRef id=\"slides-slide03\" />\n",
         encoding="utf-8",
