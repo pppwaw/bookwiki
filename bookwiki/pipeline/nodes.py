@@ -2355,7 +2355,9 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         concept_previews[str(name)] = preview
         concept_previews[concept_name] = preview
 
-    for ch_id, paths in state.get("agent_results", {}).items():
+    for chapter_order_index, (ch_id, paths) in enumerate(
+        state.get("agent_results", {}).items()
+    ):
         chapter = _agent_result(read_json(cfg.book_dir / paths["chapter"]))
         summary = _agent_result(read_json(cfg.book_dir / paths["summary"]))
         quiz = _agent_result(read_json(cfg.book_dir / paths["quiz"]))
@@ -2409,6 +2411,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                         "chapter_id": ch_id,
                         "title": display_title,
                         "type": "chapter",
+                        "order_index": chapter_order_index,
                         "summary": summary["summary_md"],
                         "concepts": concept_names,
                     }
