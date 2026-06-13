@@ -25,8 +25,6 @@ SITE_ENV_KEYS = (
 PRESERVE_SITE_NAMES = {
     ".bookwiki",
     ".env.local",
-    ".next",
-    ".source",
     "node_modules",
     "tsconfig.tsbuildinfo",
 }

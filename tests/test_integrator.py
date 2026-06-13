@@ -161,11 +161,11 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
     index_mdx = (book_dir / "content" / "docs" / "index.mdx").read_text(encoding="utf-8")
 
     chapter_preview = (
-        '<PreviewLink href={"../concepts/state-space"} title={"state space"} '
+        '<PreviewLink href={"/docs/concepts/state-space"} title={"state space"} '
         'summary={"State space is the reachable-state set."}>state space</PreviewLink>'
     )
     backlink_preview = (
-        '<PreviewLink href={"../chapters/chapter-1"} title={"Chapter 1 Search"} '
+        '<PreviewLink href={"/docs/chapters/chapter-1"} title={"Chapter 1 Search"} '
         'summary={"Search summary."}>Chapter 1 Search</PreviewLink>'
     )
 

@@ -39,8 +39,8 @@ from bookwiki.agents._helpers import SOURCE_REF_RE
 from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent
 from bookwiki.agents.card_agent import CardAgent, chapter_body_blocks
 from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
-from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
 from bookwiki.agents.knowledge_quiz_agent import KnowledgeQuizAgent
+from bookwiki.agents.mdx_edit_repair import ChapterMdxEditRepairAgent
 from bookwiki.agents.prompting import prompt_cache_key
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
 from bookwiki.agents.section_agent import SectionAgent
@@ -306,7 +306,7 @@ async def _validate_chapter_artifact_inline(
                 break
             mdx_rounds += 1
             repaired = await run_with_cache(
-                ChapterMdxRepairAgent,
+                ChapterMdxEditRepairAgent,
                 {
                     **chapter.model_dump(mode="json"),
                     "mdx_errors": [issue.message for issue in mdx_issues],
@@ -818,9 +818,7 @@ async def _supplement_plot(
     return tag, ""
 
 
-def _supplement_cache_key(
-    *, chapter_id: str, figure_ref: str, rationale: str, model: str
-) -> str:
+def _supplement_cache_key(*, chapter_id: str, figure_ref: str, rationale: str, model: str) -> str:
     payload = json.dumps(
         {
             "chapter_id": chapter_id,

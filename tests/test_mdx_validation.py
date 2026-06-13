@@ -3,8 +3,8 @@
 ``validate_mdx`` shells out to the bundled Node validator (``tools/mdx-validate``),
 which compiles content with ``@mdx-js/mdx`` + remark-math - the same parser config as
 the fumadocs site. ``check_node`` runs it on every rendered chapter and raises a
-``MDX_PARSE_ERROR`` issue; the repair loop drives ``ChapterMdxRepairAgent`` to rewrite
-the offending math into LaTeX.
+``MDX_PARSE_ERROR`` issue; the repair loop drives ``ChapterMdxEditRepairAgent`` to fix
+the offending math via surgical ``view``/``str_replace`` edit tools.
 """
 
 from __future__ import annotations
@@ -14,8 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from bookwiki.agents.chapter_mdx_repair_agent import ChapterMdxRepairAgent
-from bookwiki.agents.concept_mdx_repair_agent import ConceptMdxRepairAgent
+from bookwiki.agents.mdx_edit_repair import (
+    ChapterMdxEditRepairAgent,
+    ConceptMdxEditRepairAgent,
+)
 from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
 from bookwiki.pipeline.nodes import check_node
 from bookwiki.scheduler.config import BookConfig
@@ -64,7 +66,7 @@ def test_validate_mdx_accepts_book_figure_tag() -> None:
 def test_validate_mdx_flags_bare_jsx_expression() -> None:
     # An inline <cite> wrapping bare LaTeX `\bar{X}` compiles, but `{X}` renders as JS
     # and throws `ReferenceError: X is not defined` at prerender. The scan must catch it.
-    errors = validate_mdx("统计量 <cite ref_id=\"p1\">Z = \\bar{X} / \\sqrt{n}</cite>。")
+    errors = validate_mdx('统计量 <cite ref_id="p1">Z = \\bar{X} / \\sqrt{n}</cite>。')
     assert errors
     assert any("bare JSX expression" in error for error in errors)
 
@@ -74,6 +76,44 @@ def test_validate_mdx_allows_braces_inside_math() -> None:
     # The same braces are safe inside $...$ - remark-math consumes them as LaTeX, so they
     # never become JSX expressions.
     assert validate_mdx("统计量 $Z = \\bar{X} / \\sqrt{n}$。") == []
+
+
+# --------------------------------------------------------------------------- #
+# allowlist scan - reject render-time-unsafe JSX that still *compiles*
+# (the `<cite ref=...>` RSC crash class), without false-flagging safe content
+# --------------------------------------------------------------------------- #
+@needs_node
+def test_validate_mdx_flags_cite_ref_prop() -> None:
+    # `<cite ref=...>` compiles as MDX, but `ref` is a reserved React prop that crashes
+    # Server Component prerender ("Refs cannot be used in Server Components"). The compile
+    # and bare-expression layers both pass it, so the allowlist scan must reject it.
+    errors = validate_mdx('定理 <cite ref="12.4-p011">表述</cite>。')
+    assert errors
+    assert any('disallowed prop "ref"' in error for error in errors)
+
+
+@needs_node
+def test_validate_mdx_flags_jsx_event_handler_prop() -> None:
+    errors = validate_mdx('<span onClick="doThing()">点我</span>')
+    assert errors
+    assert any('disallowed prop "onClick"' in error for error in errors)
+
+
+@needs_node
+def test_validate_mdx_flags_raw_script_element() -> None:
+    errors = validate_mdx("正文。\n\n<script>doThing()</script>\n")
+    assert errors
+    assert any("<script>" in error for error in errors)
+
+
+@needs_node
+def test_validate_mdx_allows_safe_components_and_html() -> None:
+    # SourceRef citations and plain inline HTML must not be false-flagged by the scan.
+    body = (
+        '结论成立 <SourceRef id={"12.4-p011"} quote={"theorem"} />。\n\n'
+        "下标 <sub>i</sub> 与 <strong>强调</strong> 都是安全的。\n"
+    )
+    assert validate_mdx(body) == []
 
 
 def test_mdx_validator_available_returns_bool() -> None:
@@ -114,7 +154,7 @@ async def test_check_node_flags_uncompilable_chapter_mdx(tmp_path: Path) -> None
 
 
 # --------------------------------------------------------------------------- #
-# ChapterMdxRepairAgent - rewrites the body given the diagnostics
+# ChapterMdxEditRepairAgent - surgical str_replace edits driven by diagnostics
 # --------------------------------------------------------------------------- #
 def _repair_input() -> dict[str, object]:
     return {
@@ -132,42 +172,47 @@ def _repair_input() -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_chapter_mdx_repair_agent_returns_fixed_body() -> None:
-    fixed = {
-        "chapter_id": "chapter-1",
-        "title": "Chapter 1",
-        "body_md": "# Chapter 1\n\n当 $n < 30$ 时不准确。",
-        "concepts": ["t-distribution"],
-        "citations": [{"ref_id": "src-p001", "quote": "small sample"}],
-        "owner_task_id": "chapter-1:chapter",
-    }
-    runtime = RecordingRuntime([fixed])
+async def test_chapter_mdx_edit_repair_agent_fixes_body_via_str_replace() -> None:
+    runtime = RecordingRuntime(
+        [{"status": "fixed", "notes": "wrapped the comparison in math"}],
+        tool_calls=[
+            ("view", {"start_line": 1, "end_line": 3}),
+            ("str_replace", {"old_str": "n<30", "new_str": "$n < 30$"}),
+        ],
+    )
 
-    result = await ChapterMdxRepairAgent().run(
+    result = await ChapterMdxEditRepairAgent().run(
         _repair_input(), model="deepseek-v4-pro", runtime=runtime
     )
 
     assert isinstance(result, ChapterResult)
+    # The repaired body comes from the editor state, not from the model's answer.
     assert "$n < 30$" in result.body_md
     assert "n<30" not in result.body_md
+    # Metadata is passed through unchanged (never re-generated by the model).
     assert result.owner_task_id == "chapter-1:chapter"
-    # The diagnostics and body reach the prompt so the model can locate the fix.
+    assert result.concepts == ["t-distribution"]
+    assert result.citations[0].ref_id == "src-p001"
+    # The diagnostics and an error-line window reach the prompt.
     prompt = runtime.calls[0]["user"]
     assert "Unexpected character" in prompt
     assert "n<30" in prompt
-    # Document mode carries allowed refs in the input and validates them while parsing.
-    assert '"allowed_source_refs"' in prompt
+    # Both tool invocations succeeded against the in-memory editor.
+    assert runtime.tool_results[0]["ok"] is True
+    assert "1: # Chapter 1" in runtime.tool_results[0]["content"]
+    assert runtime.tool_results[1]["ok"] is True
 
 
 @pytest.mark.asyncio
-async def test_chapter_mdx_repair_agent_echoes_draft_offline() -> None:
-    # Under TestLLMRuntime the draft (unchanged body) is echoed - the deterministic
-    # offline path keeps the agent runnable without a real model.
-    result = await ChapterMdxRepairAgent().run(
+async def test_chapter_mdx_edit_repair_agent_offline_keeps_body() -> None:
+    # Under TestLLMRuntime no tools run and the draft outcome is echoed - the body
+    # passes through unchanged and the agent stays runnable offline.
+    result = await ChapterMdxEditRepairAgent().run(
         _repair_input(), model="stub", runtime=TestLLMRuntime()
     )
     assert result.chapter_id == "chapter-1"
     assert result.owner_task_id == "chapter-1:chapter"
+    assert result.body_md == "# Chapter 1\n\n当 n<30 时不准确。"
 
 
 # --------------------------------------------------------------------------- #
@@ -197,7 +242,7 @@ async def test_check_node_flags_uncompilable_concept_mdx(tmp_path: Path) -> None
 
 
 # --------------------------------------------------------------------------- #
-# ConceptMdxRepairAgent - fixes bare math + strips stray inline <cite> tags
+# ConceptMdxEditRepairAgent - fixes bare math / stray inline tags surgically
 # --------------------------------------------------------------------------- #
 def _concept_repair_input() -> dict[str, object]:
     return {
@@ -215,18 +260,21 @@ def _concept_repair_input() -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_concept_mdx_repair_agent_returns_fixed_body() -> None:
-    fixed = {
-        "name": "Sample size",
-        "summary_md": "样本量确定。",
-        "body_md": "需要 $\\frac{a}{b} \\le 10$ 个观测。",
-        "related": ["Confidence interval"],
-        "citations": [{"ref_id": "p001", "quote": "solve"}],
-        "owner_task_id": "concept:Sample size",
-    }
-    runtime = RecordingRuntime([fixed])
+async def test_concept_mdx_edit_repair_agent_fixes_body_via_str_replace() -> None:
+    runtime = RecordingRuntime(
+        [{"status": "fixed", "notes": "replaced cite tag with inline math"}],
+        tool_calls=[
+            (
+                "str_replace",
+                {
+                    "old_str": '<cite ref_id="p001">Solve {\\frac{a}{b}} \\le 10</cite>',
+                    "new_str": "$\\frac{a}{b} \\le 10$",
+                },
+            ),
+        ],
+    )
 
-    result = await ConceptMdxRepairAgent().run(
+    result = await ConceptMdxEditRepairAgent().run(
         _concept_repair_input(), model="deepseek-v4-pro", runtime=runtime
     )
 
@@ -234,17 +282,18 @@ async def test_concept_mdx_repair_agent_returns_fixed_body() -> None:
     assert "<cite" not in result.body_md
     assert "$\\frac{a}{b} \\le 10$" in result.body_md
     assert result.owner_task_id == "concept:Sample size"
-    # The diagnostics + body reach the prompt so the model can locate the fix.
+    assert result.related == ["Confidence interval"]
+    assert result.citations[0].ref_id == "p001"
     prompt = runtime.calls[0]["user"]
     assert "closing tag for `<cite>`" in prompt
     assert "<cite" in prompt
-    assert '"allowed_source_refs"' in prompt
 
 
 @pytest.mark.asyncio
-async def test_concept_mdx_repair_agent_echoes_draft_offline() -> None:
-    result = await ConceptMdxRepairAgent().run(
+async def test_concept_mdx_edit_repair_agent_offline_keeps_body() -> None:
+    result = await ConceptMdxEditRepairAgent().run(
         _concept_repair_input(), model="stub", runtime=TestLLMRuntime()
     )
     assert result.name == "Sample size"
     assert result.owner_task_id == "concept:Sample size"
+    assert "<cite" in result.body_md

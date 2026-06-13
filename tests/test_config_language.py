@@ -210,7 +210,7 @@ def test_site_main_sets_site_language_from_book_config(
         book_dir / "site" / "public" / "bookwiki-assets" / "mini" / "figure.png"
     ).read_bytes() == b"image"
     assert sqlite_path.read_bytes() == b"sqlite fixture"
-    assert (next_cache / "next-development.log").read_text(encoding="utf-8") == "cache"
+    assert not next_cache.exists()
 
 
 def test_site_main_syncs_only_chat_env_to_site_env_file(tmp_path, monkeypatch) -> None:
@@ -280,6 +280,31 @@ def test_materialize_site_preserves_local_env_file(tmp_path) -> None:
     site.materialize_site(load_config(book_dir))
 
     assert env_path.read_text(encoding="utf-8") == "BOOKWIKI_CHAT_API_KEY=book-local\n"
+
+
+def test_materialize_site_removes_content_derived_caches(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    (book_dir / "book.config.json").write_text(
+        json.dumps({"book_id": "mini", "title": "Mini"}),
+        encoding="utf-8",
+    )
+    site_dir = book_dir / "site"
+    source_cache = site_dir / ".source"
+    next_cache = site_dir / ".next"
+    source_cache.mkdir(parents=True)
+    next_cache.mkdir()
+    (source_cache / "stale.txt").write_text("old mdx", encoding="utf-8")
+    (next_cache / "stale.txt").write_text("old build", encoding="utf-8")
+
+    site.materialize_site(load_config(book_dir))
+
+    assert not source_cache.exists()
+    assert not next_cache.exists()
 
 
 def test_site_main_fails_loudly_when_content_docs_is_missing(

@@ -55,8 +55,7 @@ const exprProcessor = unified()
   .use(remarkCjkFriendly)
   .use(remarkMath);
 
-function findBareExpressions(content) {
-  const tree = exprProcessor.parse(content);
+function findBareExpressions(tree) {
   const errors = [];
   visit(tree, (node) => {
     if (node.type !== "mdxTextExpression" && node.type !== "mdxFlowExpression") {
@@ -76,6 +75,66 @@ function findBareExpressions(content) {
   return errors;
 }
 
+// Render-time-unsafe JSX that still *compiles* and so slips past both compile() and the
+// bare-expression scan. The motivating case: `<cite ref="p001">` compiles as MDX but
+// crashes Next prerender with "Refs cannot be used in Server Components" because React
+// treats `ref` as a reserved field. These rules reject the dangerous shapes at
+// generation time instead of letting them reach the site build.
+const DANGEROUS_ELEMENTS = new Set([
+  "script",
+  "iframe",
+  "object",
+  "embed",
+  "style",
+  "link",
+  "meta",
+  "base",
+]);
+const UNSAFE_PROPS = new Set(["ref", "dangerouslySetInnerHTML"]);
+
+function isEventProp(name) {
+  // React DOM event handlers: onClick, onError, onMouseOver, ... (on + UpperCase).
+  return /^on[A-Z]/.test(name);
+}
+
+function findDisallowedJsx(tree) {
+  const errors = [];
+  visit(tree, (node) => {
+    if (node.type !== "mdxJsxFlowElement" && node.type !== "mdxJsxTextElement") {
+      return;
+    }
+    const name = node.name || "";
+    const start = (node.position && node.position.start) || {};
+    if (name && DANGEROUS_ELEMENTS.has(name)) {
+      errors.push({
+        message:
+          `disallowed raw HTML element <${name}>: it does not render safely in the site; ` +
+          "remove it",
+        line: start.line ?? null,
+        column: start.column ?? null,
+        rule: "no-raw-html-element",
+      });
+    }
+    for (const attr of node.attributes || []) {
+      if (attr.type !== "mdxJsxAttribute" || typeof attr.name !== "string") {
+        continue;
+      }
+      if (UNSAFE_PROPS.has(attr.name) || isEventProp(attr.name)) {
+        errors.push({
+          message:
+            `disallowed prop "${attr.name}" on <${name || "fragment"}>: it is a ` +
+            "reserved/unsafe React prop that breaks Server Component prerender; " +
+            "use <SourceRef ... /> for citations",
+          line: start.line ?? null,
+          column: start.column ?? null,
+          rule: "no-unsafe-jsx-prop",
+        });
+      }
+    }
+  });
+  return errors;
+}
+
 async function main() {
   const content = await readStdin();
   const errors = [];
@@ -88,7 +147,9 @@ async function main() {
   // a compile failure already pinpoints the syntax problem.
   if (errors.length === 0) {
     try {
-      errors.push(...findBareExpressions(content));
+      const tree = exprProcessor.parse(content);
+      errors.push(...findBareExpressions(tree));
+      errors.push(...findDisallowedJsx(tree));
     } catch {
       // A scan failure must not mask an otherwise-clean compile.
     }

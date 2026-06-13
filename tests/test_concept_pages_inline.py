@@ -59,8 +59,14 @@ async def test_concept_pages_inline_repairs_bare_cite_body(tmp_path: Path) -> No
     runtime = RecordingRuntime(
         [
             _concept_response("正文包含 <cite>{X} 这样的裸标签。"),
-            _concept_response("正文包含 `cite X` 这样的文本。"),
-        ]
+            {"status": "fixed", "notes": "replaced the bare cite tag"},
+        ],
+        tool_calls=[
+            (
+                "str_replace",
+                {"old_str": "<cite>{X} 这样的裸标签", "new_str": "`cite X` 这样的文本"},
+            ),
+        ],
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book", llm_runtime=runtime)
 
@@ -79,7 +85,8 @@ async def test_concept_pages_inline_exhaustion_surfaces_warning(tmp_path: Path) 
     runtime = RecordingRuntime(
         [
             _concept_response("正文包含 <cite>{X} 这样的裸标签。"),
-            _concept_response("正文仍包含 <cite>{X} 这样的裸标签。"),
+            # Repair round where the edit loop makes no effective edits.
+            {"status": "gave_up", "notes": "could not isolate the breakage"},
         ]
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book", llm_runtime=runtime)

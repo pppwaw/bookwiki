@@ -13,12 +13,12 @@ import yaml
 from bookwiki.agents import (
     ApplicationQuizAgent,
     CardAgent,
-    ChapterMdxRepairAgent,
+    ChapterMdxEditRepairAgent,
     ChapterSplitAgent,
     ConceptAgent,
     ConceptContentRewriteAgent,
     ConceptExtractAgent,
-    ConceptMdxRepairAgent,
+    ConceptMdxEditRepairAgent,
     ConceptReconcileAgent,
     KnowledgeQuizAgent,
     ReviewAgent,
@@ -48,7 +48,11 @@ from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.generate.sections import _body_too_short, generate_chapter_sections
 from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
-from bookwiki.integrator.markdown_renderers import convert_html_style_attrs, normalize_mdx_math
+from bookwiki.integrator.markdown_renderers import (
+    convert_html_style_attrs,
+    normalize_mdx_math,
+    normalize_source_cites,
+)
 from bookwiki.integrator.stitching import audit_stitching
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
@@ -1626,7 +1630,10 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
         out_dir / "proposed-structure.yaml", structure.result.proposed_structure_yaml
     )
     approved_path = out_dir / "approved-structure.yaml"
-    if not approved_path.exists():
+    approved_needs_seed = (
+        not approved_path.exists() or not approved_path.read_text(encoding="utf-8").strip()
+    )
+    if approved_needs_seed:
         write_text(
             approved_path,
             _pending_approved_structure_text(structure.result.proposed_structure_yaml),
@@ -1687,6 +1694,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
             "alignment": split.result.alignment,
             "coverage": split.result.coverage,
             "chapter_titles": titles,
+            "chapter_groups": split.result.chapter_groups,
         },
     )
     report_path = write_text(
@@ -1697,6 +1705,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
         "chapter_sources": chapter_sources,
         "chapter_titles": titles,
         "chapter_topics": _chapter_topics(approved_structure),
+        "chapter_groups": split.result.chapter_groups,
         "chapter_alignment": _rel(alignment_path, cfg.book_dir),
         "chapter_split_report": _rel(report_path, cfg.book_dir),
         "cache_hit": split.cache_hit,
@@ -1705,7 +1714,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
 
 def _clear_chapter_source_dirs(out_dir: Path) -> None:
     for child in out_dir.iterdir():
-        if child.is_dir() and re.fullmatch(r"(ch\d+|chapter-\d+|appendix)", child.name):
+        if child.is_dir() and re.fullmatch(r"(ch\d+|chapter-[\d-]+|appendix)", child.name):
             shutil.rmtree(child)
 
 
@@ -2165,7 +2174,7 @@ async def _validate_concept_artifact_inline(
                 break
             mdx_rounds += 1
             repaired = await run_with_cache(
-                ConceptMdxRepairAgent,
+                ConceptMdxEditRepairAgent,
                 {
                     **concept.model_dump(mode="json"),
                     "mdx_errors": [issue.message for issue in mdx_issues],
@@ -2307,22 +2316,36 @@ def _resolve_chapter_figures(body: str, index: dict[str, str]) -> tuple[str, str
 
 def integrate_node(state: State, cfg: BookConfig) -> State:
     content_dir = ensure_dir(cfg.content_dir)
-    chapters_dir = ensure_dir(content_dir / "chapters")
+    chapters_dir = content_dir / "chapters"
+    # Rebuilt from scratch each run: recursive removal clears both flat and nested
+    # (two-level group) chapter files/dirs so a rerun never leaves stale pages behind.
+    if chapters_dir.exists():
+        shutil.rmtree(chapters_dir)
+    chapters_dir = ensure_dir(chapters_dir)
     concepts_dir = ensure_dir(content_dir / "concepts")
-    _clear_generated_files(chapters_dir, "*.mdx")
     _clear_generated_files(concepts_dir, "*.mdx")
-    chapter_outputs: list[str] = []
     chapter_home_entries: list[dict[str, str]] = []
     concept_home_entries: list[dict[str, str]] = []
     concept_backlinks: dict[str, list[dict[str, str]]] = {}
     alias_map = _load_alias_map(state, cfg)
     concept_previews: dict[str, dict[str, str]] = {}
+    chapter_groups = state.get("chapter_groups", {}) or {}
+    leaf_to_group: dict[str, str] = {}
+    group_titles: dict[str, str] = {}
+    for group_id, group_info in chapter_groups.items():
+        info = group_info if isinstance(group_info, dict) else {}
+        group_titles[str(group_id)] = str(info.get("title") or group_id)
+        for leaf_id in info.get("leaf_ids", []) or []:
+            leaf_to_group[str(leaf_id)] = str(group_id)
+    group_page_lists: dict[str, list[str]] = {str(gid): [] for gid in chapter_groups}
+    top_level_pages: list[str] = []
+    seen_groups: set[str] = set()
     for name, rel_path in state.get("concept_pages", {}).items():
         concept = read_json(cfg.book_dir / rel_path)
         concept_name = str(concept.get("name") or name)
         stem = Path(rel_path).stem
         preview = {
-            "href": f"../concepts/{stem}",
+            "href": f"/docs/concepts/{stem}",
             "title": concept_name,
             "summary": _preview_summary(
                 str(concept.get("summary_md") or concept.get("body_md", ""))
@@ -2345,6 +2368,9 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         ]
         display_title = _display_chapter_title(ch_id, str(chapter["title"]))
         body_md = _normalize_chapter_body_heading(str(chapter["body_md"]), display_title)
+        group_id = leaf_to_group.get(ch_id)
+        doc_slug = f"{group_id}/{ch_id}" if group_id else ch_id
+        chapter_href = f"/docs/chapters/{doc_slug}"
         card_mdx = (
             f"<AnkiDeck {_jsx_prop('cardIds', card_ids)}>\n"
             f"{_card_items_mdx(card_items)}\n"
@@ -2355,21 +2381,27 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             concept_backlinks.setdefault(name, []).append(
                 {
                     "title": display_title,
-                    "href": f"../chapters/{ch_id}",
+                    "href": chapter_href,
                     "summary": str(summary["summary_md"]),
                 }
             )
         rendered_body = _insert_quiz_blocks(
             convert_html_style_attrs(
-                normalize_mdx_math(_normalize_concept_links(body_md, alias_map, concept_previews))
+                normalize_source_cites(
+                    normalize_mdx_math(
+                        _normalize_concept_links(body_md, alias_map, concept_previews)
+                    )
+                )
             ),
             quiz,
         )
         resolved_body, figures_md = _resolve_chapter_figures(
             rendered_body, _chapter_figure_index(state, cfg, ch_id)
         )
-        path = write_text(
-            chapters_dir / f"{ch_id}.mdx",
+        chapter_path = chapters_dir / f"{doc_slug}.mdx"
+        ensure_dir(chapter_path.parent)
+        write_text(
+            chapter_path,
             (
                 _frontmatter(
                     {
@@ -2387,11 +2419,17 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                 + f"## Anki Cards\n\n{card_mdx}\n"
             ),
         )
-        chapter_outputs.append(_rel(path, cfg.book_dir))
+        if group_id:
+            if group_id not in seen_groups:
+                seen_groups.add(group_id)
+                top_level_pages.append(group_id)
+            group_page_lists.setdefault(group_id, []).append(ch_id)
+        else:
+            top_level_pages.append(ch_id)
         chapter_home_entries.append(
             {
                 "title": display_title,
-                "href": f"/docs/chapters/{path.stem}",
+                "href": chapter_href,
                 "description": _homepage_summary(summary.get("summary_md", "")),
             }
         )
@@ -2412,7 +2450,9 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             concepts_dir / f"{safe_name}.mdx",
             _frontmatter({"title": concept["name"], "type": "concept"})
             + f"# {concept['name']}\n\n"
-            + convert_html_style_attrs(normalize_mdx_math(str(concept["body_md"])))
+            + convert_html_style_attrs(
+                normalize_source_cites(normalize_mdx_math(str(concept["body_md"])))
+            )
             + referenced_by,
         )
         concept_name = str(concept["name"])
@@ -2434,7 +2474,6 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             concept_home_entries,
         ),
     )
-    chapter_stems = [Path(path).stem for path in chapter_outputs]
     concept_stem_list = sorted(
         {Path(rel_path).stem for rel_path in state.get("concept_pages", {}).values()}
     )
@@ -2451,9 +2490,19 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             "title": "Chapters",
             "root": True,
             "icon": "BookOpen",
-            "pages": chapter_stems,
+            "pages": top_level_pages,
         },
     )
+    for group_id, leaf_ids in group_page_lists.items():
+        if not leaf_ids:
+            continue
+        write_json(
+            chapters_dir / group_id / "meta.json",
+            {
+                "title": group_titles.get(group_id, group_id),
+                "pages": leaf_ids,
+            },
+        )
     write_json(
         concepts_dir / "meta.json",
         {
@@ -2518,7 +2567,7 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                 owner_task_id="content:index",
             )
         )
-    for path in (cfg.content_dir / "chapters").glob("*.mdx"):
+    for path in (cfg.content_dir / "chapters").rglob("*.mdx"):
         text = path.read_text(encoding="utf-8")
         for error in validate_mdx(text):
             issues.append(
@@ -2752,7 +2801,7 @@ def _repair_round_limit(codes: set[str], cfg: BookConfig) -> int:
 async def _repair_chapter_mdx(
     target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
 ) -> Any | None:
-    """Rewrite a chapter's body to fix MDX compilation errors via ``ChapterMdxRepairAgent``.
+    """Rewrite a chapter's body to fix MDX compilation errors via ``ChapterMdxEditRepairAgent``.
 
     Reads the chapter artifact, feeds its ``body_md`` plus the ``MDX_PARSE_ERROR``
     diagnostics to the LLM, and writes the repaired ``ChapterResult`` back so the next
@@ -2778,7 +2827,7 @@ async def _repair_chapter_mdx(
         "allowed_source_refs": sorted(_allowed_source_refs(state, cfg)),
     }
     result = await run_with_cache(
-        ChapterMdxRepairAgent,
+        ChapterMdxEditRepairAgent,
         repair_input,
         model=cfg.model_for("mdx_repair"),
         cache_dir=_cache_dir(cfg),
@@ -2787,7 +2836,9 @@ async def _repair_chapter_mdx(
     )
     write_json(
         chapter_path,
-        _agent_result_payload(ChapterMdxRepairAgent, cfg.model_for("mdx_repair"), result.result),
+        _agent_result_payload(
+            ChapterMdxEditRepairAgent, cfg.model_for("mdx_repair"), result.result
+        ),
     )
     return result.result
 
@@ -2795,7 +2846,7 @@ async def _repair_chapter_mdx(
 async def _repair_concept_mdx(
     target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
 ) -> Any | None:
-    """Rewrite a concept page body to fix MDX compilation errors via ``ConceptMdxRepairAgent``.
+    """Rewrite a concept page body to fix MDX compilation errors via ``ConceptMdxEditRepairAgent``.
 
     The ``concept-mdx:<stem>`` target maps back to the concept artifact whose rendered
     filename is ``<stem>.mdx``. Feeds the concept ``body_md`` plus the ``MDX_PARSE_ERROR``
@@ -2825,7 +2876,7 @@ async def _repair_concept_mdx(
         "allowed_source_refs": sorted(_allowed_source_refs(state, cfg)),
     }
     result = await run_with_cache(
-        ConceptMdxRepairAgent,
+        ConceptMdxEditRepairAgent,
         repair_input,
         model=cfg.model_for("mdx_repair"),
         cache_dir=_cache_dir(cfg),

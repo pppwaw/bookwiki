@@ -455,11 +455,11 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "## Concepts" not in body
     assert "# [Point Estimation]" not in body
     assert (
-        '<PreviewLink href={"../concepts/似然函数"} title={"似然函数"} '
+        '<PreviewLink href={"/docs/concepts/似然函数"} title={"似然函数"} '
         'summary={"似然函数 measures parameter fit."}>似然函数</PreviewLink>' in body
     )
     assert (
-        '<PreviewLink href={"../concepts/Point-Estimation"} title={"Point Estimation"} '
+        '<PreviewLink href={"/docs/concepts/Point-Estimation"} title={"Point Estimation"} '
         'summary={"Point estimation may use formulas like $\\\\hat\\\\theta$. '
         'Display math may be written as $$ E(X)=\\\\theta $$"}>point estimation</PreviewLink>'
         in body
@@ -511,7 +511,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "$\\hat\\theta$" in concept_text
     assert "## Referenced By" in concept_text
     assert (
-        '- <PreviewLink href={"../chapters/chapter-6"} '
+        '- <PreviewLink href={"/docs/chapters/chapter-6"} '
         'title={"Chapter 6 Point Estimation"} '
         'summary={"Point estimation summary."}>Chapter 6 Point Estimation</PreviewLink>'
         in concept_text
@@ -521,8 +521,109 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert zh_concept_page.exists()
     zh_concept_text = zh_concept_page.read_text(encoding="utf-8")
     assert (
-        '- <PreviewLink href={"../chapters/chapter-6"} '
+        '- <PreviewLink href={"/docs/chapters/chapter-6"} '
         'title={"Chapter 6 Point Estimation"} '
         'summary={"Point estimation summary."}>Chapter 6 Point Estimation</PreviewLink>'
         in zh_concept_text
     )
+
+
+def _write_leaf_agent_results(result_dir, ch_id: str, title: str) -> dict[str, str]:
+    """Write minimal chapter/summary/quiz/card JSON for one leaf chapter."""
+    (result_dir / f"{ch_id}.chapter.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": ch_id,
+                    "title": title,
+                    "body_md": f"{title} body explanation.",
+                    "concepts": [],
+                    "citations": [],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (result_dir / f"{ch_id}.summary.json").write_text(
+        json.dumps({"result": {"summary_md": f"{title} summary."}}),
+        encoding="utf-8",
+    )
+    (result_dir / f"{ch_id}.quiz.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": ch_id,
+                    "items": [
+                        {
+                            "question": "Q?",
+                            "choices": ["A", "B"],
+                            "answer": "A",
+                            "explanation": "because.",
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (result_dir / f"{ch_id}.card.json").write_text(
+        json.dumps({"result": {"chapter_id": ch_id, "items": [{"front": "F", "back": "B"}]}}),
+        encoding="utf-8",
+    )
+    return {
+        "chapter": f"work/agent_results/{ch_id}.chapter.json",
+        "summary": f"work/agent_results/{ch_id}.summary.json",
+        "quiz": f"work/agent_results/{ch_id}.quiz.json",
+        "card": f"work/agent_results/{ch_id}.card.json",
+    }
+
+
+def test_integrate_node_writes_two_level_grouped_chapters(tmp_path) -> None:
+    book_dir = tmp_path / "book"
+    result_dir = book_dir / "work" / "agent_results"
+    result_dir.mkdir(parents=True)
+    chapters_root = book_dir / "content" / "docs" / "chapters"
+    chapters_root.mkdir(parents=True)
+    # Stale flat file from a previous (ungrouped) run must be cleared on rerun.
+    (chapters_root / "chapter-9-2.mdx").write_text("stale", encoding="utf-8")
+
+    state = {
+        "agent_results": {
+            "chapter-9-2": _write_leaf_agent_results(
+                result_dir, "chapter-9-2", "9.2 Infinite Series"
+            ),
+            "chapter-9-5": _write_leaf_agent_results(
+                result_dir, "chapter-9-5", "9.5 Alternating Series"
+            ),
+        },
+        "chapter_groups": {
+            "chapter-9": {
+                "title": "Chapter 9 Infinite Series",
+                "leaf_ids": ["chapter-9-2", "chapter-9-5"],
+            }
+        },
+        "concept_pages": {},
+    }
+    cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+
+    integrate_node(state, cfg)
+
+    # Leaves live nested under the group folder, not flat.
+    assert (chapters_root / "chapter-9" / "chapter-9-2.mdx").exists()
+    assert (chapters_root / "chapter-9" / "chapter-9-5.mdx").exists()
+    assert not (chapters_root / "chapter-9-2.mdx").exists()
+
+    group_meta = json.loads((chapters_root / "chapter-9" / "meta.json").read_text("utf-8"))
+    assert group_meta["title"] == "Chapter 9 Infinite Series"
+    assert group_meta["pages"] == ["chapter-9-2", "chapter-9-5"]
+
+    top_meta = json.loads((chapters_root / "meta.json").read_text("utf-8"))
+    assert top_meta["pages"] == ["chapter-9"]
+
+    leaf_text = (chapters_root / "chapter-9" / "chapter-9-2.mdx").read_text("utf-8")
+    assert "chapter_id: chapter-9-2" in leaf_text
+    assert leaf_text.split("---", 2)[2].lstrip().startswith("# 9.2 Infinite Series")
+
+    index_text = (book_dir / "content" / "docs" / "index.mdx").read_text("utf-8")
+    assert 'href={"/docs/chapters/chapter-9/chapter-9-2"}' in index_text

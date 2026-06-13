@@ -118,17 +118,6 @@ def _section_response_with_body(body_md: str) -> dict[str, Any]:
     return payload
 
 
-def _chapter_response_with_body(body_md: str) -> dict[str, Any]:
-    return {
-        "chapter_id": "chapter-1",
-        "title": "Search",
-        "body_md": body_md,
-        "concepts": [],
-        "citations": [{"ref_id": "src-p001", "quote": "content"}],
-        "owner_task_id": "chapter-1:chapter",
-    }
-
-
 def _application_quiz_response(items: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "chapter_id": "chapter-1",
@@ -211,11 +200,12 @@ async def test_generate_chapter_sections_inline_repairs_bare_mdx_math(
             _plan_response([]),
             _section_response_with_body("当 n<30 时使用 t 分布。"),
             _empty_knowledge_quiz_response(),
-            _chapter_response_with_body("# Search\n\n## S0\n\n当 $n < 30$ 时使用 t 分布。"),
+            {"status": "fixed", "notes": "wrapped the bare comparison in math"},
             _application_quiz_response(),
             _card_response(),
             _summary_response(),
-        ]
+        ],
+        tool_calls=[("str_replace", {"old_str": "n<30", "new_str": "$n < 30$"})],
     )
     cfg = _cfg(tmp_path / "book", runtime)
 
@@ -233,7 +223,7 @@ async def test_generate_chapter_sections_inline_repairs_bare_mdx_math(
     assert "$n < 30$" in result.chapter.body_md
     assert "n<30" not in result.chapter.body_md
     assert result.issues == []
-    assert "ChapterMdxRepairAgent" in runtime.calls[3]["user"]
+    assert "ChapterMdxEditRepairAgent" in runtime.calls[3]["user"]
 
 
 @pytest.mark.asyncio
@@ -245,8 +235,9 @@ async def test_generate_chapter_sections_inline_exhaustion_warns_and_completes(
             _plan_response([]),
             _section_response_with_body("当 n<30 时使用 t 分布。"),
             _empty_knowledge_quiz_response(),
-            _chapter_response_with_body("# Search\n\n## S0\n\n当 n<30 时使用 t 分布。"),
-            _chapter_response_with_body("# Search\n\n## S0\n\n当 n<30 时使用 t 分布。"),
+            # Two repair rounds where the edit loop makes no effective edits.
+            {"status": "gave_up", "notes": "could not isolate the breakage"},
+            {"status": "gave_up", "notes": "could not isolate the breakage"},
             _application_quiz_response(),
             _card_response(),
             _summary_response(),

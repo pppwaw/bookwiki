@@ -605,7 +605,7 @@ def test_integrate_uses_alias_map_embedded_in_reconciled_concepts(tmp_path) -> N
         encoding="utf-8"
     )
     assert (
-        '<PreviewLink href={"../concepts/递归"} title={"递归"} '
+        '<PreviewLink href={"/docs/concepts/递归"} title={"递归"} '
         'summary={"Concept."}>递归</PreviewLink>'
         in chapter
     )

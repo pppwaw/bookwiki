@@ -35,7 +35,9 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "providerImportSource" in source_config
     assert "remarkMath" in source_config
     assert "rehypeKatex" in source_config
-    assert "rehypePlugins: (v) => [rehypeKatex, ...v]" in source_config
+    assert "rehypePlugins: (v) => [" in source_config
+    assert '[rehypeKatex, { strict: false, output: "html" }],' in source_config
+    assert "...v," in source_config
     assert "katex/dist/katex.css" in root_layout
     assert "collections/server" in source
     assert "loader" in source
