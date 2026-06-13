@@ -1,3 +1,4 @@
+import { MathText } from './MathText';
 import { SourceRef } from './SourceRef';
 
 export function BookFigure({
@@ -16,7 +17,11 @@ export function BookFigure({
       {src ? <img src={src} alt={caption || sourceRef} loading="lazy" /> : null}
       {caption || sourceRef ? (
         <figcaption>
-          {caption ? <span>{caption}</span> : null}
+          {caption ? (
+            <span>
+              <MathText text={caption} />
+            </span>
+          ) : null}
           <SourceRef id={sourceRef} quote={caption} />
         </figcaption>
       ) : null}
