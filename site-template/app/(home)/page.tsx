@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { getSourcePage, source } from '@/lib/source';
 import { docsRoute } from '@/lib/shared';
+import { hasAnyCards } from '@/lib/anki';
 import { Markdown } from '@/components/markdown';
 
 type SourcePage = ReturnType<typeof source.getPages>[number];
@@ -47,6 +48,10 @@ export default function HomePage() {
 
   const monogram = Array.from(title)[0] ?? 'B';
   const startHref = chapters[0]?.url ?? docsRoute;
+  // Plain anchor (not <Link>): /api/anki returns a CSV download, not a page.
+  // Href kept as a variable so next/no-html-link-for-pages does not flag it.
+  const ankiExportHref = '/api/anki';
+  const showAnkiExport = hasAnyCards();
 
   return (
     <main className="bw-home">
@@ -76,6 +81,11 @@ export default function HomePage() {
               <Link href="#toc" className="bw-btn bw-btn-ghost">
                 浏览目录
               </Link>
+            )}
+            {showAnkiExport && (
+              <a href={ankiExportHref} className="bw-btn bw-btn-ghost">
+                ⬇ 导出全书 Anki 卡片
+              </a>
             )}
           </div>
         </div>

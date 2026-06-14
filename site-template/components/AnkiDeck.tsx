@@ -6,10 +6,10 @@ import {
   type ReactNode,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
 } from 'react';
+import { usePathname } from 'next/navigation';
 import { MathText } from './MathText';
 
 type Citation = {
@@ -38,6 +38,11 @@ export function AnkiDeck({
 }) {
   const [index, setIndex] = useState(0);
   const [showBack, setShowBack] = useState(false);
+  const pathname = usePathname();
+  // Plain anchor (not <Link>): /api/anki returns a CSV download, not a page, so
+  // client-side navigation would be wrong here. Href kept as a variable so the
+  // next/no-html-link-for-pages lint does not misread it as a page link.
+  const exportPageHref = pathname ? `/api/anki?pagePath=${encodeURIComponent(pathname)}` : null;
 
   const goTo = useCallback(
     (next: number) => {
@@ -142,6 +147,13 @@ export function AnkiDeck({
         <p className="anki-hint">
           Click the card to flip · ← → to move · Space to flip
         </p>
+        {exportPageHref ? (
+          <div className="anki-export">
+            <a className="anki-export-link" href={exportPageHref}>
+              ⬇ 导出本章卡片（Anki .csv）
+            </a>
+          </div>
+        ) : null}
       </section>
     </AnkiContext.Provider>
   );
