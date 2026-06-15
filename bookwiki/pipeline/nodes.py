@@ -2106,11 +2106,18 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
     cache_results: list[CacheResult] = []
     concept_generation_issues: list[dict[str, Any]] = []
     used_stems: set[str] = set()
+    # Canonical names of every concept in the book, so each ConceptAgent picks
+    # its `related` from a valid vocabulary (cuts down on unresolvable edges in
+    # the homepage concept graph).
+    glossary_names = [
+        str(c.get("canonical")) for c in data.get("concepts", []) if c.get("canonical")
+    ]
     for item in data.get("concepts", []):
         chapter_contexts = _concept_contexts(item, state, cfg)
         concept_input = {
             **item,
             "chapter_contexts": chapter_contexts,
+            "glossary": glossary_names,
             "language": cfg.language,
             "book_notes": cfg.book_notes,
         }
@@ -2315,6 +2322,139 @@ def _resolve_chapter_figures(body: str, index: dict[str, str]) -> tuple[str, str
     return resolved, figures_md
 
 
+# Homepage concept-graph pruning caps: keep the most-connected backbone only
+# (top-N nodes by degree, then top-M edges). Large books would otherwise emit a
+# hairball.
+_GRAPH_MAX_NODES = 120
+_GRAPH_MAX_EDGES = 400
+
+
+def _graph_summary(markdown: str, *, limit: int = 140) -> str:
+    """Short hover-card summary that KEEPS LaTeX (``$ \\ _ ^``).
+
+    Unlike ``_preview_summary`` (which strips ``_`` and other markers), this
+    preserves math so the site can render ``$...$`` spans with KaTeX in the
+    concept-graph tooltip. Truncation never cuts inside a ``$...$`` span.
+    """
+    text = re.sub(r"\s+", " ", str(markdown or "").strip())
+    text = text.replace("**", "").replace("`", "")
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    if cut.count("$") % 2 == 1:  # don't truncate inside a $...$ math span
+        cut = cut[: cut.rfind("$")]
+    return cut.rstrip() + "…"
+
+
+def _emit_concept_graph(state: State, cfg: BookConfig) -> Path | None:
+    """Emit ``work/concept-graph.json`` for the homepage force-directed graph.
+
+    Nodes are concepts (slug, display name, owning-chapter group for colour,
+    degree, LaTeX-preserving summary). Edges come from each concept's
+    ``related`` field, resolved to canonical slugs via the skeleton glossary +
+    ``alias_map``; unresolved targets are DROPPED (never fabricated). A double
+    Top-N prune keeps the backbone: top-N nodes by degree, then top-M edges,
+    with a connectivity guarantee, then any node left edgeless is dropped (the
+    homepage graph is about relationships). ``materialize_site`` copies the file
+    to ``site/public/concept-graph.json`` where the homepage fetches it.
+    """
+    concept_pages = state.get("concept_pages", {}) or {}
+    if not concept_pages:
+        return None
+
+    skeleton = _load_skeleton(state, cfg) or {}
+    glossary = skeleton.get("glossary", []) or []
+    alias_map = skeleton.get("alias_map", {}) or {}
+
+    chapter_of: dict[str, str] = {}
+    for entry in glossary:
+        canonical = str(entry.get("canonical", ""))
+        if canonical:
+            chapter_of[_concept_key(canonical)] = str(entry.get("first_chapter_id") or "misc")
+
+    nodes: dict[str, dict[str, Any]] = {}
+    name_to_slug: dict[str, str] = {}
+    raw_related: dict[str, list[str]] = {}
+    for name, rel_path in concept_pages.items():
+        slug = Path(rel_path).stem
+        if not slug:
+            continue
+        concept = read_json(cfg.book_dir / rel_path, default={})
+        concept_name = str(concept.get("name") or name)
+        nodes[slug] = {
+            "id": slug,
+            "name": concept_name,
+            "slug": slug,
+            "group": chapter_of.get(_concept_key(concept_name), "misc"),
+            "summary": _graph_summary(concept.get("summary_md") or concept.get("body_md", "")),
+            "degree": 0,
+        }
+        name_to_slug[_concept_key(concept_name)] = slug
+        raw_related[slug] = [str(r) for r in (concept.get("related") or [])]
+
+    # Skeleton aliases resolve to the owning concept's slug too.
+    for entry in glossary:
+        slug = name_to_slug.get(_concept_key(str(entry.get("canonical", ""))))
+        if not slug:
+            continue
+        for alias in [entry.get("canonical", ""), *entry.get("aliases", [])]:
+            name_to_slug.setdefault(_concept_key(str(alias)), slug)
+
+    def resolve(target: str) -> str | None:
+        key = _concept_key(target)
+        if key in name_to_slug:
+            return name_to_slug[key]
+        canon = alias_map.get(key) or alias_map.get(target)
+        if canon and _concept_key(str(canon)) in name_to_slug:
+            return name_to_slug[_concept_key(str(canon))]
+        return None
+
+    edges: dict[tuple[str, str], int] = {}
+    for slug, related in raw_related.items():
+        for target in related:
+            tslug = resolve(target)
+            if not tslug or tslug == slug or tslug not in nodes:
+                continue
+            key = tuple(sorted((slug, tslug)))
+            edges[key] = edges.get(key, 0) + 1
+
+    for a, b in edges:
+        nodes[a]["degree"] += 1
+        nodes[b]["degree"] += 1
+
+    # ---- Double Top-N: prune nodes by degree, then edges ----
+    ranked = sorted(nodes.values(), key=lambda n: (-n["degree"], n["name"]))
+    kept = {n["slug"] for n in ranked[:_GRAPH_MAX_NODES]}
+    within = sorted(
+        ((a, b, w) for (a, b), w in edges.items() if a in kept and b in kept),
+        key=lambda e: -(nodes[e[0]]["degree"] + nodes[e[1]]["degree"]),
+    )
+    kept_edges = [{"source": a, "target": b, "weight": w} for a, b, w in within[:_GRAPH_MAX_EDGES]]
+
+    # Connectivity guarantee: every kept node keeps at least its strongest edge.
+    connected = {e["source"] for e in kept_edges} | {e["target"] for e in kept_edges}
+    for a, b, w in within:
+        if a not in connected or b not in connected:
+            kept_edges.append({"source": a, "target": b, "weight": w})
+            connected.add(a)
+            connected.add(b)
+
+    # The graph is about relationships → drop nodes that ended up edgeless.
+    kept = {s for s in kept if s in connected}
+    kept_edges = [e for e in kept_edges if e["source"] in kept and e["target"] in kept]
+    kept_nodes = [nodes[s] for s in kept]
+
+    out_path = cfg.work_dir / "concept-graph.json"
+    write_json(out_path, {"nodes": kept_nodes, "edges": kept_edges})
+    _LOG.info(
+        "concept graph emitted book_id=%s nodes=%d edges=%d",
+        cfg.book_id,
+        len(kept_nodes),
+        len(kept_edges),
+    )
+    return out_path
+
+
 def integrate_node(state: State, cfg: BookConfig) -> State:
     content_dir = ensure_dir(cfg.content_dir)
     chapters_dir = content_dir / "chapters"
@@ -2516,6 +2656,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             "pages": concept_stem_list,
         },
     )
+    _emit_concept_graph(state, cfg)
     stitching = audit_stitching(content_dir, alias_map)
     if not stitching.ok:
         _LOG.warning(

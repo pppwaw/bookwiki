@@ -3,6 +3,7 @@ import { getSourcePage, source } from '@/lib/source';
 import { docsRoute } from '@/lib/shared';
 import { hasAnyCards } from '@/lib/anki';
 import { Markdown } from '@/components/markdown';
+import { ConceptGraph } from '@/components/concept-graph';
 
 type SourcePage = ReturnType<typeof source.getPages>[number];
 
@@ -135,17 +136,9 @@ export default function HomePage() {
         <section className="bw-section">
           <header className="bw-section-head">
             <h2 className="bw-section-title">核心概念</h2>
-            <p className="bw-section-note">点开任意概念，建立彼此的联系</p>
+            <p className="bw-section-note">在关系图中探索概念之间的联系，点击任意节点进入</p>
           </header>
-          <ul className="bw-chips">
-            {concepts.map((concept) => (
-              <li key={concept.url}>
-                <Link href={concept.url} className="bw-chip">
-                  {concept.data.title}
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <ConceptGraph />
         </section>
       )}
     </main>

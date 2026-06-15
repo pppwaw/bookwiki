@@ -85,6 +85,16 @@ def materialize_site(book: BookConfig | str | Path) -> Path:
         target_assets.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source_assets, target_assets)
 
+    # The homepage force-directed concept graph fetches `/concept-graph.json`,
+    # emitted by `integrate_node` into `work/`. Serve it from `public/`.
+    source_graph = cfg.work_dir / "concept-graph.json"
+    target_graph = site_dir / "public" / "concept-graph.json"
+    if target_graph.exists():
+        _remove_path(target_graph)
+    if source_graph.exists():
+        target_graph.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_graph, target_graph)
+
     return site_dir
 
 
