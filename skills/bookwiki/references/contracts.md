@@ -72,36 +72,48 @@ Path:
 books/<id>/work/agent_results/
 ```
 
-Chapter-level files:
+Chapter-level files (one set per chapter id):
 
 ```text
-<chapter-id>.chapter.json
-<chapter-id>.summary.json
-<chapter-id>.quiz.json
-<chapter-id>.card.json
-<chapter-id>.concepts.json
+<chapter-id>.chapter.json     # written tagged _agent=SectionAgent (assembled section pipeline body)
+<chapter-id>.summary.json     # _agent=SummaryAgent
+<chapter-id>.quiz.json        # _agent=ApplicationQuizAgent (knowledge + application items merged)
+<chapter-id>.card.json        # _agent=CardAgent
+<chapter-id>.concepts.json    # per-chapter concept candidates
 ```
 
-Wrapper shape:
+Wrapper shape (written by `_agent_result_payload` in `bookwiki/pipeline/nodes.py`):
 
 ```json
 {
   "_schema_version": "llm.v1",
-  "_agent": "LessonAgent",
+  "_agent": "SectionAgent",
   "_model": "deepseek-v4-pro",
   "result": {}
 }
 ```
 
-Agents return Pydantic models. Agents do not write final Markdown; scheduler nodes write JSON and the integrator renders MDX.
+`_agent` is the producing agent class name (e.g. `SectionAgent`, `SummaryAgent`, `ApplicationQuizAgent`, `CardAgent`, `SkeletonAgent`), not a single legacy "lesson" agent. Agents return Pydantic models. Agents do not write final Markdown; scheduler nodes write JSON and the integrator renders MDX.
+
+## Book Skeleton
+
+Path (written by `build_skeleton`, read-only downstream):
+
+```text
+books/<id>/work/skeleton.json
+```
+
+`SkeletonAgent` runs once over every chapter source to produce the book-wide contract: a canonical glossary with each concept's first-owning chapter, an `alias_map` (every variant -> canonical), and one-line `chapter_briefs`. `generate` injects each chapter's slice so chapters share terminology and can write neighbour transitions. It uses the same wrapper shape as agent results (`_agent=SkeletonAgent`).
 
 ## Reconciled Concepts
 
-Path:
+Path (canonical, written by `reconcile_concepts`):
 
 ```text
 books/<id>/work/concepts/reconciled.json
 ```
+
+The same payload is mirrored to `books/<id>/work/agent_results/concepts.reconciled.json`, and the alias map is also written standalone to `books/<id>/work/concepts/alias_map.json`.
 
 Shape:
 

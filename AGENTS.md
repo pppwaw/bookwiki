@@ -21,7 +21,7 @@ The `structure` stage is a hard review gate. Before running `split`, the user mu
 it with a line exactly `# bookwiki: approved-structure`.
 
 After `split`, `build_skeleton` runs `SkeletonAgent` once over every chapter's source to produce the
-book-wide read-only contract (`work/concepts/skeleton.json`): a canonical glossary with each concept's
+book-wide read-only contract (`work/skeleton.json`): a canonical glossary with each concept's
 first-owning chapter, an `alias_map` (every variant → canonical), and one-line `chapter_briefs`.
 `generate` injects each chapter's slice of that contract so chapters share terminology and can write
 neighbour transitions; `integrate` then converges terms (rewriting `[[alias]]` to canonical) and

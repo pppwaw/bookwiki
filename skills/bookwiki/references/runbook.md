@@ -4,15 +4,15 @@
 
 Use commands from the repository root. For real LLM runs, configure the needed API key before any stage that can miss cache:
 
-```powershell
-$env:DEEPSEEK_API_KEY = "..."
-$env:MOONSHOT_API_KEY = "..."
+```bash
+export DEEPSEEK_API_KEY="..."
+export MOONSHOT_API_KEY="..."
 ```
 
 For tests or smoke runs only:
 
-```powershell
-$env:BOOKWIKI_TEST_LLM = "1"
+```bash
+export BOOKWIKI_TEST_LLM=1
 ```
 
 ## Stage Commands
@@ -90,8 +90,11 @@ python scripts/run.py books/<id> --from generate --force
 Useful cases:
 
 - `--from structure --force`: converted source Markdown is valid; rebuild structure and downstream stages.
-- `--from generate --force`: split chapter sources are valid; regenerate agent content and downstream stages.
+- `--from build_skeleton --force`: split chapter sources are valid; rebuild `work/skeleton.json` (the book-wide term contract) and everything after it.
+- `--from generate --force`: split chapter sources and skeleton are valid; regenerate agent content and downstream stages.
 - `--from check --force`: MDX content is valid; rerun check and downstream routing.
+
+`build_skeleton`, `reconcile_concepts`, `concept_pages`, and `integrate` have no thin stage script; reach them only through `run.py` (e.g. pause at the concept-merge gate with `--pause-after reconcile_concepts`).
 
 Stop entry/exit points with `--to <stage>` or `--pause-after <stage>`, and preview without executing using `--dry-run`.
 
@@ -119,10 +122,18 @@ Decision rules:
 - Warnings only: show the warnings to the user; do not regenerate blindly.
 - Unknown source refs or broken links after repair: inspect the related `work/agent_results/*.json` and source manifests before rerunning broad stages.
 
+Notes on the current check/repair contract:
+
+- `generate` and `concept_pages` already self-heal each chapter/concept body inline, so most MDX/citation issues never reach the macro `check`.
+- The macro `check` compiles the rendered `.mdx` with the bundled Node validator `tools/mdx-validate` and raises `MDX_PARSE_ERROR` on render-time breakage. It refuses to run if the validator is missing (no Node / no `node_modules`) unless `generation.allowMissingMdxValidator=true`.
+- The macro `repair` is deterministic and prefers DROP over fabrication: it removes unverifiable citations, quiz items whose answer is not among the choices, and empty-sided cards. It does not rewrite content. Removals are logged to `work/logs/repair-actions.json`; targets that exhaust `maxRepairRounds` are recorded in `work/logs/repair-exhausted.json`.
+
 ## Common Failures
 
 - Missing API key: set `DEEPSEEK_API_KEY` or `MOONSHOT_API_KEY`; do not switch to fake runtime outside tests.
 - Structure gate failure: add the exact approval marker after user review.
 - Stale content after changing generation settings: use `--from generate --force`.
+- `check` aborts on a missing MDX validator: install Node and run the `tools/mdx-validate` install (`node_modules`), or set `generation.allowMissingMdxValidator=true` only if you accept skipping render-time MDX checks.
+- `BudgetExceeded`: the run crossed `budget.maxCostCny` (default `70.0`); raise it in `book.config.json` or set `<= 0` for unlimited, then `--resume`.
 - SQLite missing: run `python scripts/index.py books/<id>` after content exists and check passes.
 - Site has old docs: rerun `python scripts/site.py books/<id>` when preview is requested.
