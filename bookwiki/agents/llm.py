@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from bookwiki.agents.document import model_to_document, parse_frontmatter_document
 from bookwiki.agents.prompting import PromptTemplate, render_prompt
-from bookwiki.scheduler.llm import LLMRuntime
+from bookwiki.scheduler.llm import LLMRuntime, count_text_tokens, input_token_budget
 from bookwiki.utils.logging import get_logger
 
 _LOG = get_logger(__name__)
@@ -32,7 +32,7 @@ async def generate_with_llm(
         prompt_name=prompt_name,
         prompt_template=prompt_template,
         agent_name=agent_name,
-        inp=compact_input(inp),
+        inp=compact_input(inp, model=model),
         draft=draft,
         output_model=output_model,
     )
@@ -69,7 +69,7 @@ async def generate_document_with_llm(
         prompt_name=prompt_name,
         prompt_template=prompt_template,
         agent_name=agent_name,
-        inp=compact_input(inp),
+        inp=compact_input(inp, model=model),
         draft=draft,
         output_model=output_model,
     )
@@ -138,17 +138,53 @@ def _truncate_failed_doc(text: str, *, max_chars: int = 20_000) -> str:
     return f"{head}\n\n[... truncated {len(text) - max_chars} chars ...]\n\n{tail}"
 
 
-def compact_input(value: Any, *, max_chars: int = 40_000) -> Any:
+_TRUNCATION_SUFFIX = "\n\n[truncated]"
+
+
+def compact_input(value: Any, *, model: str, max_tokens: int | None = None) -> Any:
+    """Defensively cap each string field of ``value`` to a token budget.
+
+    The budget defaults to the model's input headroom (``input_token_budget``:
+    context window minus reserved output), so a single pathological field can
+    never crowd out the response or overflow the window — without truncating
+    ordinary large inputs the way the old flat 40k-char cap did. Recurses through
+    dict/list and leaves non-string scalars untouched. Pass ``max_tokens`` to
+    override the per-field budget (mainly for tests).
+    """
+    budget = input_token_budget(model) if max_tokens is None else max_tokens
+    return _compact(value, model=model, max_tokens=budget)
+
+
+def _compact(value: Any, *, model: str, max_tokens: int) -> Any:
     if isinstance(value, str):
-        if len(value) <= max_chars:
-            return value
-        _LOG.warning("compact_input truncated a %d-char string to %d", len(value), max_chars)
-        return value[:max_chars] + "\n\n[truncated]"
+        return _truncate_to_tokens(value, model=model, max_tokens=max_tokens)
     if isinstance(value, dict):
-        return {key: compact_input(item, max_chars=max_chars) for key, item in value.items()}
+        return {
+            key: _compact(item, model=model, max_tokens=max_tokens)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [compact_input(item, max_chars=max_chars) for item in value]
+        return [_compact(item, model=model, max_tokens=max_tokens) for item in value]
     return value
+
+
+def _truncate_to_tokens(text: str, *, model: str, max_tokens: int) -> str:
+    if max_tokens <= 0:
+        return ""
+    tokens = count_text_tokens(text, model=model)
+    if tokens <= max_tokens:
+        return text
+    # Proportional character slice (with a small margin) keyed on the token
+    # ratio. Exact token slicing would need the model's real tokenizer, which is
+    # unnecessary for a guard whose budget already dwarfs real inputs.
+    keep = max(1, int(len(text) * max_tokens / tokens * 0.97))
+    _LOG.warning(
+        "compact_input truncated a ~%d-token string to ~%d tokens (model=%s)",
+        tokens,
+        max_tokens,
+        model,
+    )
+    return text[:keep] + _TRUNCATION_SUFFIX
 
 
 def _document_user_prompt(user: str, *, draft_document: str) -> str:

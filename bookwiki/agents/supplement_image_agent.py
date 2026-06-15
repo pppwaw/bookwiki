@@ -109,7 +109,7 @@ matplotlib **写代码并调用 `run_plot` 工具**把它画出来。
             prompt_name=self.prompt_name,
             prompt_template=self.prompt_template,
             agent_name=self.__class__.__name__,
-            inp=compact_input(inp),
+            inp=compact_input(inp, model=model),
             draft=draft,
             output_model=ImageSupplementResult,
         )

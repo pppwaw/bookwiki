@@ -37,6 +37,20 @@ LLM_REQUEST_TIMEOUT_SECONDS = 600
 # Currency: CNY (¥). The configured endpoints (api.moonshot.cn, DeepSeek domestic) bill
 # in RMB, so we price in RMB to match the real invoice with no FX drift.
 #
+# ─────────────────────────────────────────────────────────────────────────────
+# ADDING / CHANGING A MODEL — update THESE places (all in this file unless noted):
+#   1. _model_list()        — register the Router deployment: model_name → provider
+#                             path, api_key, timeout, tpm/rpm.
+#   2. _MODEL_PRICES_CNY     — per-1M-token price (input / output / cache-hit). Skip
+#                             it and the call is billed as 0 — litellm has no built-in
+#                             price for our custom model names.
+#   3. _MODEL_CONTEXT_WINDOW — (context_window, max_output) for the input token
+#                             budget. litellm's own table does NOT know our custom
+#                             names (e.g. deepseek-v4-*), so a model missing here
+#                             silently falls back to _UNKNOWN_INPUT_TOKEN_BUDGET.
+#   4. _api_key_env()        — only when a NEW provider/prefix is introduced.
+#   (config.py DEFAULT_MODELS — only to change which agent uses which model.)
+# ─────────────────────────────────────────────────────────────────────────────
 # Cached vs uncached input: each tuple is (input_miss, output, input_cache_hit) per 1M
 # tokens. Context caching makes cache hits far cheaper on input, so we register the hit
 # rate separately (litellm prices ``cached_tokens`` at it). Source — official platform
@@ -62,6 +76,60 @@ def _price_params(model_name: str) -> dict[str, float]:
         "cache_read_input_token_cost": cache_read_cost,
     }
 
+
+
+# --- Input token budgeting -------------------------------------------------
+# Context windows (total tokens, shared input+output) and max output per the
+# official model cards (2026-04): deepseek-v4-pro/flash 1,048,576 ctx / 384,000
+# out; kimi-k2.6 262,144 ctx / 98,304 out. Reserving the model's full max output
+# as headroom guarantees a single oversized input field can never crowd out the
+# response or overflow the window.
+_MODEL_CONTEXT_WINDOW: dict[str, tuple[int, int]] = {
+    "deepseek-v4-flash": (1_048_576, 384_000),
+    "deepseek-v4-pro": (1_048_576, 384_000),
+    "kimi-k2.6": (262_144, 98_304),
+}
+_INPUT_BUDGET_SAFETY = 2_048
+# Unknown model: generous guard above the largest field seen in real runs
+# (~130k tokens) plus headroom, still bounded so a pathological field is capped.
+_UNKNOWN_INPUT_TOKEN_BUDGET = 200_000
+# When the ``runtime`` extra (litellm/tiktoken) is absent we cannot tokenize, so
+# we estimate token count from characters. cl100k on mixed Chinese/LaTeX/English
+# MDX runs roughly this many characters per token; budgets are several times
+# larger than real inputs, so the estimate only needs to be order-of-magnitude.
+_FALLBACK_CHARS_PER_TOKEN = 3
+
+
+def input_token_budget(model: str) -> int:
+    """Max tokens for a single input field before ``compact_input`` truncates it.
+
+    Equals ``context_window - max_output - safety`` so an oversized field can
+    never crowd out the model's response or overflow the window. Unknown models
+    fall back to a fixed generous guard.
+    """
+    entry = _MODEL_CONTEXT_WINDOW.get(model)
+    if entry is None:
+        return _UNKNOWN_INPUT_TOKEN_BUDGET
+    context_window, max_output = entry
+    budget = context_window - max_output - _INPUT_BUDGET_SAFETY
+    return budget if budget > 0 else context_window - _INPUT_BUDGET_SAFETY
+
+
+def count_text_tokens(text: str, *, model: str) -> int:
+    """Token count for ``text`` under ``model``.
+
+    Uses litellm's tokenizer when the ``runtime`` extra is installed (unknown
+    custom model names fall back to cl100k_base inside litellm — an approximation
+    that is fine for budgeting). Without litellm, estimates from character length.
+    """
+    try:
+        from litellm import token_counter
+    except Exception:
+        return max(1, len(text) // _FALLBACK_CHARS_PER_TOKEN)
+    try:
+        return int(token_counter(model=model, text=text))
+    except Exception:
+        return max(1, len(text) // _FALLBACK_CHARS_PER_TOKEN)
 
 
 _RATE_LIMIT_MARKERS = (

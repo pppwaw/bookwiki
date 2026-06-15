@@ -133,28 +133,52 @@ async def test_generate_document_with_llm_retries_with_validation_error() -> Non
     assert "document validation failed" in runtime.calls[1]["user"]
 
 
-def test_compact_input_warns_on_truncation(caplog) -> None:
+def test_compact_input_truncates_when_over_token_budget(caplog) -> None:
     import logging
 
     from bookwiki.agents.llm import compact_input
 
     long_value = "x" * 50_000
     with caplog.at_level(logging.WARNING, logger="bookwiki.agents.llm"):
-        result = compact_input(long_value)
+        result = compact_input(long_value, model="deepseek-v4-pro", max_tokens=100)
 
     assert result.endswith("[truncated]")
-    assert len(result) <= 40_000 + len("\n\n[truncated]")
+    assert len(result) < len(long_value)
     messages = [record.getMessage() for record in caplog.records]
-    assert any("50000" in msg and "40000" in msg for msg in messages)
+    assert any("truncated" in msg and "model=deepseek-v4-pro" in msg for msg in messages)
 
 
-def test_compact_input_no_warning_for_short_string(caplog) -> None:
+def test_compact_input_no_warning_within_budget(caplog) -> None:
     import logging
 
     from bookwiki.agents.llm import compact_input
 
     with caplog.at_level(logging.WARNING, logger="bookwiki.agents.llm"):
-        result = compact_input("x" * 1_000)
+        result = compact_input("x" * 1_000, model="deepseek-v4-pro")
 
     assert result == "x" * 1_000
     assert caplog.records == []
+
+
+def test_compact_input_recurses_into_mappings_and_lists() -> None:
+    from bookwiki.agents.llm import compact_input
+
+    out = compact_input(
+        {"big": "y" * 5_000, "nested": [{"small": "z" * 10}]},
+        model="deepseek-v4-pro",
+        max_tokens=50,
+    )
+
+    assert out["big"].endswith("[truncated]")
+    assert out["nested"][0]["small"] == "z" * 10
+
+
+def test_compact_input_keeps_large_real_world_field_within_model_budget() -> None:
+    from bookwiki.agents.llm import compact_input
+
+    # The largest field observed in real runs was ~91k chars. The model-aware
+    # budget must keep it intact rather than re-introducing the old 40k-char cap.
+    field = "数据" * 45_000  # 90k chars
+    result = compact_input(field, model="deepseek-v4-pro")
+
+    assert result == field

@@ -272,7 +272,8 @@ async def repair_body_with_edit_tools(
                 "mdx_errors": mdx_errors,
                 "total_lines": len(body_md.split("\n")),
                 "error_windows": _error_windows(editor, mdx_errors),
-            }
+            },
+            model=model,
         ),
         draft=_EditRepairOutcome(status="gave_up", notes=""),
         output_model=_EditRepairOutcome,
