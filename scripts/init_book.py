@@ -22,14 +22,6 @@ BOOK_NOTES_TEMPLATE = """# Book Notes
 """
 
 
-def default_source() -> Path | None:
-    candidates = [
-        ROOT / "tests" / "fixtures" / "mini-book" / "input" / "Prob_GZIC.pdf",
-        ROOT / "Prob_GZIC.pdf",
-    ]
-    return next((path for path in candidates if path.exists()), None)
-
-
 def init_book(book_dir: Path, source: Path | None = None, title: str | None = None) -> None:
     cfg = default_config(book_dir, title=title)
     for path in [
@@ -44,9 +36,8 @@ def init_book(book_dir: Path, source: Path | None = None, title: str | None = No
     if not cfg.notes_file.exists():
         cfg.notes_file.write_text(BOOK_NOTES_TEMPLATE, encoding="utf-8")
 
-    selected = source or default_source()
-    if selected is not None:
-        copy_file(selected, cfg.input_dir / selected.name)
+    if source is not None:
+        copy_file(source, cfg.input_dir / source.name)
 
 
 def main() -> None:
