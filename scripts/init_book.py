@@ -13,12 +13,6 @@ from bookwiki.utils.files import copy_file, ensure_dir  # noqa: E402
 
 BOOK_NOTES_TEMPLATE = """# Book Notes
 
-## Teaching Notes
-- Example: We are teaching in English, so every key term should include its English name.
-
-## Source Notes
-- Example: xxx.pdf is the official textbook.
-- Example: yyy.pdf is a helpful supplemental textbook from another course.
 """
 
 
