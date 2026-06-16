@@ -1,6 +1,6 @@
 'use client';
 
-import type { Graph as G6Graph } from '@antv/g6';
+import type { Graph as G6Graph, IElementEvent } from '@antv/g6';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 
@@ -215,7 +215,7 @@ export function ConceptGraph({ height = 560 }: { height?: number }) {
         ],
       });
 
-      graph.on('node:click', (evt: { target?: { id?: string } }) => {
+      graph.on<IElementEvent>('node:click', (evt) => {
         const id = evt.target?.id;
         if (id) router.push(`/docs/concepts/${id}`);
       });
