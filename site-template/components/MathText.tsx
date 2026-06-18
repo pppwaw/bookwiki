@@ -1,45 +1,10 @@
-import katex from 'katex';
+import { renderKatexToString } from '@/lib/katex';
 
 // Render runtime string props (e.g. citation `quote`) that contain `$...$` /
 // `$$...$$` math. These strings live inside JSX attribute expressions, so the
-// build-time remark-math + rehype-katex pipeline never sees them — math must be
-// rendered here, at runtime, with the same KaTeX engine the page already loads
-// (`katex` dep + global `katex/dist/katex.css`).
+// build-time remark-math pipeline never sees them — math must be rendered here,
+// at runtime, with the same shared KaTeX renderer the rest of the site uses.
 const TOKEN_RE = /(\$\$[\s\S]*?\$\$|\$[^$\n]*\$)/g;
-const KATEX_TEXT_MODE_DIGITS: Record<string, string> = {
-  '①': '1',
-  '②': '2',
-  '③': '3',
-  '④': '4',
-  '⑤': '5',
-  '⑥': '6',
-  '⑦': '7',
-  '⑧': '8',
-  '⑨': '9',
-  '⑩': '10',
-};
-
-function renderMath(tex: string, displayMode: boolean): string {
-  return katex.renderToString(normalizeKatexInput(tex), {
-    throwOnError: false,
-    strict: false,
-    output: 'html',
-    displayMode,
-  });
-}
-
-function normalizeKatexInput(tex: string): string {
-  return tex
-    .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, (value) => KATEX_TEXT_MODE_DIGITS[value] ?? value)
-    .replace(/\\text\{([^{}]*)\}/g, (_match, text: string) => {
-      if (!text.includes('θ')) return `\\text{${text}}`;
-
-      return text
-        .split('θ')
-        .map((part) => (part ? `\\text{${part}}` : ''))
-        .join('\\theta');
-    });
-}
 
 export function MathText({ text }: { text?: string }) {
   if (!text) return null;
@@ -55,7 +20,7 @@ export function MathText({ text }: { text?: string }) {
             <span
               key={index}
               className="math math-display"
-              dangerouslySetInnerHTML={{ __html: renderMath(segment.slice(2, -2).trim(), true) }}
+              dangerouslySetInnerHTML={{ __html: renderKatexToString(segment.slice(2, -2).trim(), true) }}
             />
           );
         }
@@ -65,7 +30,7 @@ export function MathText({ text }: { text?: string }) {
             <span
               key={index}
               className="math math-inline"
-              dangerouslySetInnerHTML={{ __html: renderMath(segment.slice(1, -1).trim(), false) }}
+              dangerouslySetInnerHTML={{ __html: renderKatexToString(segment.slice(1, -1).trim(), false) }}
             />
           );
         }

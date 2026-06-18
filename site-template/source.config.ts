@@ -1,10 +1,9 @@
 import { defineConfig, defineDocs } from "fumadocs-mdx/config";
 import { metaSchema, pageSchema } from "fumadocs-core/source/schema";
-import rehypeKatex from "rehype-katex";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkMath from "remark-math";
 import { z } from "zod";
-import strict from "node:assert/strict";
+import { rehypeMath } from "./lib/rehype-math";
 
 const bookwikiPageSchema = pageSchema.extend({
   chapter_id: z.string().optional(),
@@ -37,9 +36,6 @@ export default defineConfig({
   mdxOptions: {
     providerImportSource: "@/components/mdx",
     remarkPlugins: [remarkCjkFriendly, remarkMath],
-    rehypePlugins: (v) => [
-      [rehypeKatex, { strict: false, output: "html" }],
-      ...v,
-    ],
+    rehypePlugins: (v) => [rehypeMath, ...v],
   },
 });

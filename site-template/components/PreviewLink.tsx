@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { MathText } from './MathText';
 
 export function PreviewLink({
   href,
@@ -21,8 +22,16 @@ export function PreviewLink({
       </Link>
       {hasPreview ? (
         <span className="preview-link-card" role="tooltip">
-          {title ? <span className="preview-link-title">{title}</span> : null}
-          {summary ? <span className="preview-link-summary">{summary}</span> : null}
+          {title ? (
+            <span className="preview-link-title">
+              <MathText text={title} />
+            </span>
+          ) : null}
+          {summary ? (
+            <span className="preview-link-summary">
+              <MathText text={summary} />
+            </span>
+          ) : null}
         </span>
       ) : null}
     </span>

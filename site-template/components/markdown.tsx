@@ -4,7 +4,6 @@ import { remark } from 'remark';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkRehype from 'remark-rehype';
-import rehypeKatex from 'rehype-katex';
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime';
 import {
   Children,
@@ -19,8 +18,9 @@ import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { visit } from 'unist-util-visit';
-import type { ElementContent, Root, RootContent } from 'hast';
+import type { Element, ElementContent, Root, RootContent } from 'hast';
 import { SourceRef } from './SourceRef';
+import { renderKatexToString } from '@/lib/katex';
 
 export interface Processor {
   process: (content: string, options?: { inline?: boolean }) => Promise<ReactNode>;
@@ -107,12 +107,91 @@ function shouldSkipWrap(node: Extract<RootContent, { type: 'element' }>): boolea
   return classes.some((value) => String(value).includes('katex'));
 }
 
+function mathClasses(node: Element): string[] {
+  const value = node.properties?.className;
+  if (Array.isArray(value)) return value.map((entry) => String(entry));
+  if (typeof value === 'string') return value.split(/\s+/);
+  return [];
+}
+
+function rawTex(node: ElementContent): string {
+  if (node.type === 'text') return node.value;
+  if (node.type === 'element') return node.children.map(rawTex).join('');
+  return '';
+}
+
+function isMathCode(node: ElementContent): node is Element {
+  return (
+    node.type === 'element' &&
+    node.tagName === 'code' &&
+    mathClasses(node).includes('language-math')
+  );
+}
+
+function katexMathNode(tex: string, display: boolean): Element {
+  return {
+    type: 'element',
+    tagName: 'KatexMath',
+    properties: { tex, display: display ? 'block' : 'inline' },
+    children: [],
+  };
+}
+
+// Replace remark-math output (`<code class="language-math …">tex</code>` and the
+// `<pre>`-wrapped display variant) with a single `<KatexMath>` element carrying
+// the raw TeX. KaTeX runs in the component via `dangerouslySetInnerHTML`, so the
+// rendered tree keeps one element per formula instead of the hundreds of spans
+// `rehype-katex` would emit — lighter to reconcile on every streamed chunk.
+// Component lookup is safe here because this runs through `toJsxRuntime` with an
+// explicit components map (no MDX provider / bare-reference concerns).
+export function rehypeChatMath() {
+  return (tree: Root) => {
+    const walk = (node: { children: ElementContent[] }): void => {
+      const out: ElementContent[] = [];
+      for (const child of node.children) {
+        if (
+          child.type === 'element' &&
+          child.tagName === 'pre' &&
+          child.children.length === 1 &&
+          isMathCode(child.children[0])
+        ) {
+          out.push(katexMathNode(rawTex(child.children[0]), true));
+          continue;
+        }
+        if (isMathCode(child)) {
+          out.push(katexMathNode(rawTex(child), mathClasses(child).includes('math-display')));
+          continue;
+        }
+        if (child.type === 'element') walk(child);
+        out.push(child);
+      }
+      node.children = out;
+    };
+
+    walk(tree as unknown as { children: ElementContent[] });
+  };
+}
+
+function KatexMath({ tex, display }: { tex?: string; display?: string }) {
+  if (!tex) return null;
+
+  const isBlock = display === 'block';
+  const className = isBlock ? 'math math-display' : 'math math-inline';
+  const html = renderKatexToString(tex, isBlock);
+
+  return isBlock ? (
+    <div className={className} dangerouslySetInnerHTML={{ __html: html }} />
+  ) : (
+    <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
+  );
+}
+
 function createProcessor(): Processor {
   const processor = remark()
     .use(remarkGfm)
     .use(remarkMath)
     .use(remarkRehype)
-    .use(rehypeKatex)
+    .use(rehypeChatMath)
     .use(rehypeSourceRefs)
     .use(rehypeWrapWords);
 
@@ -132,6 +211,7 @@ function createProcessor(): Processor {
           ...(options?.inline ? { p: InlineParagraph } : {}),
           img: IgnoredImage,
           SourceRef,
+          KatexMath,
         },
       });
     },

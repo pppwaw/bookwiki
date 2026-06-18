@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "build": "next build --webpack",
+    "build": "next build",
     "dev": "next dev",
     "start": "next start",
     "types:check": "next typegen && fumadocs-mdx && tsc --noEmit",
@@ -28,7 +28,6 @@
     "next": "16.2.6",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "rehype-katex": "^7.0.1",
     "remark": "^15.0.1",
     "remark-cjk-friendly": "^2.0.1",
     "remark-gfm": "^4.0.1",
