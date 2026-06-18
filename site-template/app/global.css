@@ -779,23 +779,38 @@ body {
 }
 .bw-book {
   position: relative;
+  display: flex;
   width: clamp(11rem, 19vw, 14.5rem);
   aspect-ratio: 3 / 4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.35rem 0.7rem 0.7rem 0.35rem;
+  border-radius: 0.3rem 0.7rem 0.7rem 0.3rem;
   background: linear-gradient(
-    140deg,
-    color-mix(in oklab, var(--color-fd-primary) 24%, var(--color-fd-card)),
-    var(--color-fd-card) 62%
+    122deg,
+    color-mix(in oklab, var(--color-fd-primary) 32%, var(--color-fd-card)),
+    color-mix(in oklab, var(--color-fd-primary) 15%, var(--color-fd-card)) 52%,
+    var(--color-fd-card) 100%
   );
   border: 1px solid color-mix(in oklab, var(--color-fd-primary) 30%, var(--color-fd-border));
   box-shadow:
     inset 0 1px 0 color-mix(in oklab, var(--color-fd-card) 70%, white),
+    inset 0 0 0 1px color-mix(in oklab, var(--color-fd-card) 36%, transparent),
     26px 30px 60px -32px color-mix(in oklab, var(--color-fd-foreground) 55%, transparent);
-  transform: rotate(2.5deg);
+  transform: rotate(2.2deg);
 }
+/* Soft top-left sheen, as if the cloth catches the light. */
+.bw-book::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(
+    155deg,
+    color-mix(in oklab, var(--color-fd-card) 55%, transparent),
+    transparent 36%
+  );
+  pointer-events: none;
+}
+/* The stacked book/page resting behind the cover, for depth. */
 .bw-book::after {
   content: '';
   position: absolute;
@@ -806,20 +821,75 @@ body {
   border: 1px solid var(--color-fd-border);
   transform: translate(0.7rem, 0.7rem) rotate(-3.5deg);
 }
+/* A proper spine band hugging the binding edge. */
 .bw-book-spine {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0.55rem;
-  width: 1px;
-  background: color-mix(in oklab, var(--color-fd-foreground) 14%, transparent);
+  left: 0;
+  width: 0.85rem;
+  border-radius: 0.3rem 0 0 0.3rem;
+  background: linear-gradient(
+    to right,
+    color-mix(in oklab, var(--color-fd-primary) 42%, var(--color-fd-foreground) 10%),
+    color-mix(in oklab, var(--color-fd-primary) 22%, var(--color-fd-card)) 72%,
+    transparent
+  );
+  box-shadow:
+    inset -1px 0 0 color-mix(in oklab, var(--color-fd-foreground) 14%, transparent),
+    inset 1px 0 0 color-mix(in oklab, var(--color-fd-card) 50%, white);
 }
-.bw-book-monogram {
-  font-family: var(--bw-font-serif);
-  font-size: clamp(3.5rem, 7vw, 5rem);
-  font-weight: 600;
-  line-height: 1;
-  color: color-mix(in oklab, var(--color-fd-primary) 82%, var(--color-fd-foreground));
+.bw-book-face {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: clamp(2.4rem, 6vw, 3.4rem) clamp(1.1rem, 2.2vw, 1.6rem)
+    clamp(1.4rem, 2.6vw, 1.9rem);
+  padding-left: clamp(1.5rem, 2.8vw, 2.1rem);
+}
+/* Debossed title cartouche; abstract rules stand in for the title so the
+   graphic never depends on the (any-language) title text. */
+.bw-book-plate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  width: 86%;
+  padding: clamp(0.9rem, 2vw, 1.25rem) clamp(0.8rem, 1.8vw, 1.1rem);
+  border-radius: 0.2rem;
+  border: 1px solid color-mix(in oklab, var(--color-fd-primary) 28%, var(--color-fd-border));
+  background: color-mix(in oklab, var(--color-fd-card) 38%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-fd-card) 60%, white),
+    inset 0 -1px 0 color-mix(in oklab, var(--color-fd-foreground) 8%, transparent);
+}
+.bw-book-line {
+  width: 78%;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-fd-primary) 68%, var(--color-fd-foreground));
+}
+.bw-book-line:nth-child(2) {
+  width: 54%;
+}
+.bw-book-byline {
+  margin-top: 0.15rem;
+  width: 40%;
+  height: 0.2rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-fd-muted-foreground) 70%, transparent);
+}
+/* Publisher's colophon near the foot of the cover. */
+.bw-book-mark {
+  width: clamp(2.2rem, 4.5vw, 3rem);
+  height: auto;
+  color: color-mix(in oklab, var(--color-fd-primary) 70%, var(--color-fd-foreground));
+  opacity: 0.9;
 }
 
 .bw-section {

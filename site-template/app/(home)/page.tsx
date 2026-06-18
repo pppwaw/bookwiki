@@ -36,6 +36,29 @@ function ArrowRight({ className }: { className?: string }) {
   );
 }
 
+// Colophon / publisher's device for the book cover: a sunrise over a horizon
+// inside a seal — an editorial "dawn of understanding" mark that complements the
+// cover without duplicating the book metaphor. Purely decorative.
+function CoverMark({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 64 64"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="32" cy="32" r="22" strokeWidth="1.5" />
+      <path d="M15 41h34" />
+      <path d="M24 41a8 8 0 0 1 16 0" />
+      <path d="M32 28v-4M25 30l-3-3M39 30l3-3" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
 export default function HomePage() {
   const page = getSourcePage(undefined);
   const title = page?.data.title?.trim() || 'BookWiki';
@@ -47,7 +70,6 @@ export default function HomePage() {
   const chapters = pages.filter((p) => p.data.type === 'chapter').sort(byChapterOrder);
   const concepts = pages.filter((p) => p.data.type === 'concept').sort(byTitle);
 
-  const monogram = Array.from(title)[0] ?? 'B';
   const startHref = chapters[0]?.url ?? docsRoute;
   // Plain anchor (not <Link>): /api/anki returns a CSV download, not a page.
   // Href kept as a variable so next/no-html-link-for-pages does not flag it.
@@ -93,7 +115,14 @@ export default function HomePage() {
         <div className="bw-plate" aria-hidden="true">
           <div className="bw-book">
             <span className="bw-book-spine" />
-            <span className="bw-book-monogram">{monogram}</span>
+            <div className="bw-book-face">
+              <div className="bw-book-plate">
+                <span className="bw-book-line" />
+                <span className="bw-book-line" />
+                <span className="bw-book-byline" />
+              </div>
+              <CoverMark className="bw-book-mark" />
+            </div>
           </div>
         </div>
       </section>
