@@ -56,14 +56,15 @@ export function searchChunks(query: string, limit = 8, chapterId?: string) {
   })) satisfies SearchChunk[];
 }
 
-export async function currentArticleFromPath(pagePath?: string, maxChars = 16000) {
+export async function currentArticleFromPath(pagePath?: string, maxChars?: number) {
   const slug = slugFromPagePath(pagePath);
   if (slug === undefined) return null;
 
   const page = getSourcePage(slug.length ? slug.split('/') : undefined);
   if (!page) return null;
 
-  const text = truncateText(await getLLMText(page), maxChars);
+  const fullText = await getLLMText(page);
+  const text = maxChars && maxChars > 0 ? truncateText(fullText, maxChars) : fullText;
 
   return {
     slug: page.url.replace(/^\/docs\/?/, '') || 'index',

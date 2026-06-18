@@ -1,9 +1,20 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { stepCountIs, streamText, tool, type UIMessage } from 'ai';
+import { convertToModelMessages, stepCountIs, streamText, tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import { currentArticleFromPath, searchChunks, type CurrentArticle, type SearchChunk } from '@/lib/rag';
+import {
+  articleTokenBudget,
+  modelContextTokens,
+  positiveIntFromEnv,
+  truncateToTokenBudget,
+} from '@/lib/model-context';
 
 export const runtime = 'nodejs';
+
+const DefaultModel = 'google/gemma-4-31b-it';
+const DefaultBaseURL = 'https://openrouter.ai/api/v1';
+const DefaultContextTokens = 32000;
+const OutputTokens = 2048;
 
 type ChatSource = {
   ref_id: string;
@@ -12,6 +23,7 @@ type ChatSource = {
 };
 
 type ChatRequest = {
+  messages?: unknown;
   message?: unknown;
   question?: unknown;
   chapterId?: unknown;
@@ -28,12 +40,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const question = questionFromBody(body);
     const chapterId = typeof body.chapterId === 'string' ? body.chapterId : undefined;
     const pagePath = typeof body.pagePath === 'string' ? body.pagePath : undefined;
+    const uiMessages = messagesFromBody(body);
 
-    if (!question) {
-      return Response.json({ error: 'question is required' }, { status: 400 });
+    if (uiMessages.length === 0) {
+      return Response.json({ error: 'a message is required' }, { status: 400 });
     }
 
     const apiKey = process.env.BOOKWIKI_CHAT_API_KEY;
@@ -44,26 +56,29 @@ export async function POST(request: Request) {
       );
     }
 
+    const model = process.env.BOOKWIKI_CHAT_MODEL ?? DefaultModel;
+    const baseURL = process.env.BOOKWIKI_CHAT_BASE_URL ?? DefaultBaseURL;
+
     const sources = new Map<string, ChatSource>();
-    const openrouter = createOpenRouter({
-      apiKey,
-      baseURL: process.env.BOOKWIKI_CHAT_BASE_URL ?? 'https://openrouter.ai/api/v1',
-      appName: 'BookWiki',
-    });
+    const openrouter = createOpenRouter({ apiKey, baseURL, appName: 'BookWiki' });
+
+    // Trim the grounding article to the model's context window so large pages do
+    // not overflow it. Falls back to an env-configured window when unknown.
+    const fallbackContext = positiveIntFromEnv('BOOKWIKI_CHAT_CONTEXT_TOKENS') ?? DefaultContextTokens;
+    const contextTokens = (await modelContextTokens(model, apiKey, baseURL)) ?? fallbackContext;
+    const tokenBudget = articleTokenBudget(contextTokens, OutputTokens);
+
     const currentArticle = await currentArticleFromPath(pagePath);
+    const groundingText = currentArticle ? budgetArticleText(currentArticle.text, tokenBudget) : '';
     if (currentArticle) addArticleSources(sources, currentArticle);
+
     let answerText = '';
 
     const result = streamText({
-      model: openrouter(process.env.BOOKWIKI_CHAT_MODEL ?? 'google/gemma-4-31b-it'),
-      system: [
-        'You answer questions about a single BookWiki vault.',
-        'The current article is provided in the user message when available.',
-        'Use search_book when the current article does not contain enough evidence.',
-        'Answer only from the current article context and tool results. If evidence is insufficient, say so.',
-        chatFormatInstructions(),
-      ].join(' '),
-      prompt: promptFromQuestion(question, currentArticle),
+      model: openrouter(model),
+      system: systemPrompt(currentArticle, groundingText),
+      messages: await convertHistory(uiMessages),
+      maxOutputTokens: OutputTokens,
       providerOptions: {
         openrouter: {
           reasoning: {
@@ -76,7 +91,7 @@ export async function POST(request: Request) {
       stopWhen: stepCountIs(4),
       tools: {
         get_current_article: tool({
-          description: 'Return the full current documentation article as markdown for grounding.',
+          description: 'Return the current documentation article as markdown for grounding.',
           inputSchema: z.object({}),
           execute: async () => {
             if (!currentArticle) {
@@ -90,7 +105,7 @@ export async function POST(request: Request) {
               slug: currentArticle.slug,
               title: currentArticle.title,
               sourceRefs: currentArticle.sourceRefs,
-              text: currentArticle.text,
+              text: groundingText,
             };
           },
         }),
@@ -148,17 +163,71 @@ function chatFormatInstructions() {
   ].join(' ');
 }
 
-function questionFromBody(body: ChatRequest) {
-  if (typeof body.question === 'string') return body.question.trim();
-  return textFromMessage(body.message).trim();
+function systemPrompt(article: CurrentArticle | null, groundingText: string) {
+  const parts = [
+    'You answer questions about a single BookWiki vault.',
+    'The current article is provided below when available.',
+    'Use search_book when the current article does not contain enough evidence.',
+    'Answer only from the current article context and tool results. If evidence is insufficient, say so.',
+    'Earlier turns of this conversation are included; stay consistent with them.',
+    chatFormatInstructions(),
+  ];
+
+  if (article) {
+    parts.push(
+      [
+        `Current article: ${article.title} (${article.slug})`,
+        `Source refs on current article: ${article.sourceRefs.join(', ') || 'none'}`,
+        '<current_article>',
+        groundingText,
+        '</current_article>',
+      ].join('\n'),
+    );
+  }
+
+  return parts.join('\n\n');
 }
 
-function textFromMessage(value: unknown) {
-  if (!isUiMessage(value)) return '';
-  return value.parts
-    .filter((part): part is Extract<UIMessage['parts'][number], { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n');
+function budgetArticleText(text: string, tokenBudget: number) {
+  let trimmed = truncateToTokenBudget(text, tokenBudget);
+
+  const hardCap = positiveIntFromEnv('BOOKWIKI_CHAT_MAX_ARTICLE_CHARS');
+  if (hardCap && trimmed.length > hardCap) trimmed = trimmed.slice(0, hardCap);
+
+  return trimmed.length < text.length ? `${trimmed}\n\n[truncated to fit model context]` : trimmed;
+}
+
+function messagesFromBody(body: ChatRequest): UIMessage[] {
+  if (Array.isArray(body.messages)) {
+    return body.messages.filter(isUiMessage);
+  }
+  if (isUiMessage(body.message)) {
+    return [body.message];
+  }
+  if (typeof body.question === 'string' && body.question.trim()) {
+    return [
+      {
+        id: 'question',
+        role: 'user',
+        parts: [{ type: 'text', text: body.question.trim() }],
+      } as UIMessage,
+    ];
+  }
+  return [];
+}
+
+async function convertHistory(messages: UIMessage[]) {
+  try {
+    return await convertToModelMessages(messages);
+  } catch {
+    const textOnly = messages
+      .map((message) => ({
+        ...message,
+        parts: message.parts.filter((part) => part.type === 'text'),
+      }))
+      .filter((message) => message.parts.length > 0);
+    return await convertToModelMessages(textOnly);
+  }
 }
 
 function isUiMessage(value: unknown): value is UIMessage {
@@ -168,21 +237,6 @@ function isUiMessage(value: unknown): value is UIMessage {
     'parts' in value &&
     Array.isArray((value as { parts?: unknown }).parts)
   );
-}
-
-function promptFromQuestion(question: string, article: CurrentArticle | null) {
-  if (!article) {
-    return `Question: ${question}`;
-  }
-
-  return [
-    `Current article: ${article.title} (${article.slug})`,
-    `Source refs on current article: ${article.sourceRefs.join(', ') || 'none'}`,
-    '<current_article>',
-    article.text,
-    '</current_article>',
-    `Question: ${question}`,
-  ].join('\n\n');
 }
 
 function addChunkSources(sources: Map<string, ChatSource>, chunks: SearchChunk[]) {

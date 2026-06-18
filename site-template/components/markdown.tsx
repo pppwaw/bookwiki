@@ -120,7 +120,7 @@ function rawTex(node: ElementContent): string {
   return '';
 }
 
-function isMathCode(node: ElementContent): node is Element {
+function isMathCode(node: ElementContent): boolean {
   return (
     node.type === 'element' &&
     node.tagName === 'code' &&
@@ -158,7 +158,7 @@ export function rehypeChatMath() {
           out.push(katexMathNode(rawTex(child.children[0]), true));
           continue;
         }
-        if (isMathCode(child)) {
+        if (child.type === 'element' && isMathCode(child)) {
           out.push(katexMathNode(rawTex(child), mathClasses(child).includes('math-display')));
           continue;
         }

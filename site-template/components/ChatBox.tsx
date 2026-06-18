@@ -31,7 +31,7 @@ export function ChatBox() {
         prepareSendMessagesRequest: ({ id, messages }) => ({
           body: {
             id,
-            message: messages.at(-1),
+            messages,
             pagePath,
           },
         }),
