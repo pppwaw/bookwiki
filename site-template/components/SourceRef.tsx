@@ -13,7 +13,7 @@ export function SourceRef({ id, quote }: { id: string; quote?: string }) {
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
       onBlur={() => setOpen(false)}
-      title={quote}
+      aria-label={quote}
     >
       <span className="source-ref-id">{id}</span>
       {quote && open ? (

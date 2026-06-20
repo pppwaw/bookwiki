@@ -102,8 +102,8 @@ def test_raw_cite_ref_is_rewritten_to_source_ref_component() -> None:
         '<cite ref="12.4-p011">If $f_x$ and $f_y$ are continuous</cite>。'
     )
 
+    # The quote lives only in the SourceRef hover tooltip; it is NOT duplicated inline.
     assert out == (
-        'If $f_x$ and $f_y$ are continuous '
         '<SourceRef id={"12.4-p011"} quote={"If $f_x$ and $f_y$ are continuous"} />。'
     )
     assert " ref=" not in out
@@ -112,16 +112,15 @@ def test_raw_cite_ref_is_rewritten_to_source_ref_component() -> None:
 def test_raw_cite_ref_id_variant_is_rewritten() -> None:
     out = normalize_source_cites("<cite ref_id='p001'>quoted text</cite>")
 
-    assert out == 'quoted text <SourceRef id={"p001"} quote={"quoted text"} />'
+    assert out == '<SourceRef id={"p001"} quote={"quoted text"} />'
 
 
-def test_raw_cite_text_escapes_mdx_braces_outside_math() -> None:
+def test_raw_cite_quote_prop_preserves_braces() -> None:
     out = normalize_source_cites('<cite ref="p001">Solve {a} with $x_{1}$</cite>')
 
-    assert out == (
-        'Solve &#123;a&#125; with $x_{1}$ '
-        '<SourceRef id={"p001"} quote={"Solve {a} with $x_{1}$"} />'
-    )
+    # Braces are preserved verbatim inside the JSON-encoded `quote` prop (a JS string,
+    # not MDX text), so they must NOT be MDX-escaped to &#123;/&#125;.
+    assert out == '<SourceRef id={"p001"} quote={"Solve {a} with $x_{1}$"} />'
 
 
 def test_raw_cite_inside_code_is_untouched() -> None:

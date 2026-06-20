@@ -86,6 +86,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
             "answer": "states",
             "explanation": "Search expands states.",
             "citations": [{"ref_id": "source-p001", "quote": "State space"}],
+            "figure_ref": "",
         },
     ),
     (
@@ -125,6 +126,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
                     "answer": "states",
                     "explanation": "Search expands states.",
                     "citations": [{"ref_id": "source-p001", "quote": "State space"}],
+                    "figure_ref": "",
                 }
             ],
             "placements": [

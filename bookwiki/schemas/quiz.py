@@ -11,6 +11,13 @@ class QuizItem(VersionedModel):
     answer: str
     explanation: str
     citations: list[Citation] = Field(default_factory=list)
+    figure_ref: str = Field(
+        default="",
+        description=(
+            "Optional id of an existing chapter <BookFigure> the question depends on; "
+            "the figure is shown under the question. Empty when no figure is needed."
+        ),
+    )
 
 
 class QuizPlacement(VersionedModel):

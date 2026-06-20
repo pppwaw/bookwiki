@@ -16,6 +16,7 @@
 // A non-zero exit code is reserved for internal failures (e.g. the toolchain itself broke),
 // NOT for invalid MDX — invalid MDX is a normal result reported via {"ok": false, ...}.
 import { compile } from "@mdx-js/mdx";
+import katex from "katex";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkMath from "remark-math";
 import remarkMdx from "remark-mdx";
@@ -135,6 +136,73 @@ function findDisallowedJsx(tree) {
   return errors;
 }
 
+// Mirror of the site's `normalizeKatexInput` (site-template/lib/katex.ts): the page
+// rewrites circled digits and θ-in-\text before KaTeX runs, so validation MUST apply the
+// same rewrite or it would flag math that actually renders fine on the site.
+const KATEX_TEXT_MODE_DIGITS = {
+  "①": "1",
+  "②": "2",
+  "③": "3",
+  "④": "4",
+  "⑤": "5",
+  "⑥": "6",
+  "⑦": "7",
+  "⑧": "8",
+  "⑨": "9",
+  "⑩": "10",
+};
+
+function normalizeKatexInput(tex) {
+  return tex
+    .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, (value) => KATEX_TEXT_MODE_DIGITS[value] ?? value)
+    .replace(/\\text\{([^{}]*)\}/g, (_match, text) => {
+      if (!text.includes("θ")) return `\\text{${text}}`;
+      return text
+        .split("θ")
+        .map((part) => (part ? `\\text{${part}}` : ""))
+        .join("\\theta");
+    });
+}
+
+// remark-math parses `$...$`/`$$...$$` into math nodes but does NOT interpret the TeX,
+// so invalid LaTeX (undefined control sequences, mismatched braces) compiles cleanly and
+// then renders as raw text on the site, because the client KaTeX runs with
+// `throwOnError: false`. Re-render every math node here with `throwOnError: true` (same
+// `strict: false` + normalization as the site) so broken math is caught at validation
+// time instead of silently degrading on the page.
+function findBrokenMath(tree) {
+  const errors = [];
+  visit(tree, (node) => {
+    if (node.type !== "math" && node.type !== "inlineMath") {
+      return;
+    }
+    const start = (node.position && node.position.start) || {};
+    const tex = String(node.value || "");
+    try {
+      katex.renderToString(normalizeKatexInput(tex), {
+        throwOnError: true,
+        strict: false,
+        output: "html",
+        displayMode: node.type === "math",
+      });
+    } catch (err) {
+      const reason = String((err && (err.message || err.reason)) || err)
+        .replace(/\s+/g, " ")
+        .slice(0, 160);
+      const snippet = tex.replace(/\s+/g, " ").slice(0, 40);
+      errors.push({
+        message:
+          `invalid LaTeX math ($${snippet}$): ${reason}; it renders as raw text on the ` +
+          "site (KaTeX throwOnError is off) — fix the TeX",
+        line: start.line ?? null,
+        column: start.column ?? null,
+        rule: "math-render-error",
+      });
+    }
+  });
+  return errors;
+}
+
 async function main() {
   const content = await readStdin();
   const errors = [];
@@ -150,6 +218,7 @@ async function main() {
       const tree = exprProcessor.parse(content);
       errors.push(...findBareExpressions(tree));
       errors.push(...findDisallowedJsx(tree));
+      errors.push(...findBrokenMath(tree));
     } catch {
       // A scan failure must not mask an otherwise-clean compile.
     }

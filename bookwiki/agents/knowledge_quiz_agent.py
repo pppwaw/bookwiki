@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents._helpers import chapter_document, chapter_id, source_refs
+from bookwiki.agents._helpers import (
+    body_figure_refs,
+    chapter_document,
+    chapter_id,
+    prune_figure_refs,
+    source_refs,
+)
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.scheduler.llm import LLMRuntime
@@ -37,6 +43,9 @@ class KnowledgeQuizAgent:
 - 产出 1-2 道 `QuizItem`；若本段正文信息不足以安全命题，则 `items` 为空。
 - 只出定义题、辨析题、概念理解题；**不得**出计算、代入数值、估计、推导或数值结论题。
 - 每道题的 `question` 必须具体，能直接对应本段正文的一处教学点。
+- 若题目确实需要配图，把 `figure_ref` 设为 `available_figure_refs` 中的一个 id（必须逐字出现在
+  本段 `body_md` 的某个 `<BookFigure>` 里），系统会自动把该图渲染到题干下方；**不要编造** id，
+  也不要写裸“如图/见下图”却不设 `figure_ref`。不需要配图时 `figure_ref` 留空，题干须自洽。
 - `choices` 至少两个，干扰项要合理但只有一个与 `answer` 完全一致。
 - `explanation` 用一到两句话说明为什么答案正确，并点出一个容易混淆之处。
 - 每题带扎根源文本的 `citations`，其 `ref_id` 必须来自 `allowed_source_refs`；无法扎根时可为空数组，
@@ -73,7 +82,9 @@ class KnowledgeQuizAgent:
             draft=draft,
             allowed_citation_refs=refs,
         )
-        return KnowledgeQuizResult.model_validate(result)
+        validated = KnowledgeQuizResult.model_validate(result)
+        prune_figure_refs(validated.items, body_figure_refs(str(inp.get("body_md") or "")))
+        return validated
 
 
 def _section_index(inp: dict[str, Any]) -> int:
@@ -102,6 +113,7 @@ def _content_input(inp: dict[str, Any], refs: set[str]) -> dict[str, Any]:
         "title": str(inp.get("title") or ""),
         "body_md": str(inp.get("body_md") or ""),
         "concepts": [str(concept) for concept in inp.get("concepts", [])],
+        "available_figure_refs": body_figure_refs(str(inp.get("body_md") or "")),
         "allowed_source_refs": sorted(refs),
         "language": inp.get("language", "zh-CN"),
         "book_notes": inp.get("book_notes", ""),

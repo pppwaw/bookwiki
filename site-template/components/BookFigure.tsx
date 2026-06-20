@@ -12,9 +12,12 @@ export function BookFigure({
   sourceRef: string;
   caption?: string;
 }) {
+  // A figure with no image asset is just a caption-only box that reads as a phantom
+  // "missing image" (e.g. next to a quiz). Only render when there's an actual image.
+  if (!src) return null;
   return (
     <figure id={id} className="book-figure">
-      {src ? <img src={src} alt={caption || sourceRef} loading="lazy" /> : null}
+      <img src={src} alt={caption || sourceRef} loading="lazy" />
       {caption || sourceRef ? (
         <figcaption>
           {caption ? (

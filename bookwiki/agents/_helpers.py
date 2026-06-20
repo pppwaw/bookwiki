@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from html import escape, unescape
 from typing import Any
 
@@ -39,6 +40,37 @@ def citation(inp: dict[str, Any]) -> Citation:
     text = source_md(inp).strip().splitlines()
     quote = next((line.strip("# <!->") for line in text if line.strip()), "stub source text")
     return Citation(ref_id=source_ref(inp), quote=quote[:240] or "stub source text")
+
+
+def body_figure_refs(text: str) -> list[str]:
+    """Return the de-duplicated, in-order ``<BookFigure>`` ids present in ``text``.
+
+    Quiz agents use this as the allow-list of figures a question may reference: a
+    quiz can only point at a figure that actually appears in the body it is built
+    from, never an invented id.
+    """
+    refs: list[str] = []
+    seen: set[str] = set()
+    for tag in BOOK_FIGURE_TAG_RE.findall(text):
+        figure_id = unescape(parse_book_figure_tag(tag).get("id", "")).strip()
+        if figure_id and figure_id not in seen:
+            seen.add(figure_id)
+            refs.append(figure_id)
+    return refs
+
+
+def prune_figure_refs(items: Iterable[Any], allowed: Iterable[str]) -> None:
+    """Clear any quiz item ``figure_ref`` not present in the allowed figure id set.
+
+    A quiz may only reference a figure that actually appears in the body it was built
+    from; a hallucinated id would otherwise resolve to nothing downstream, so we drop it
+    here and let the question stand on its own text.
+    """
+    allow = {str(ref).strip() for ref in allowed if str(ref).strip()}
+    for item in items:
+        ref = str(getattr(item, "figure_ref", "") or "").strip()
+        if ref and ref not in allow:
+            item.figure_ref = ""
 
 
 def _placeholder_figures(text: str) -> str:

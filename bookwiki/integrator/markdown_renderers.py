@@ -283,9 +283,9 @@ def _cite_to_source_ref(match: re.Match[str]) -> str:
     if not ref_id:
         return _escape_mdx_text_outside_math(quote)
 
-    source_ref = _source_ref_component(ref_id, quote)
-    visible_quote = _escape_mdx_text_outside_math(quote)
-    return f"{visible_quote} {source_ref}".strip()
+    # The quote is shown in the SourceRef hover tooltip (and stays searchable in the
+    # chapter "## Sources" list), so it must NOT also be duplicated as inline prose.
+    return _source_ref_component(ref_id, quote)
 
 
 def _source_ref_component(ref_id: str, quote: str) -> str:

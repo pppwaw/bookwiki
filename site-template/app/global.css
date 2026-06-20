@@ -618,6 +618,13 @@ html > body[data-scroll-locked] {
   font-size: 0.88rem;
   line-height: 1.45;
 }
+/* A figure a quiz question depends on: sit it snugly under the prompt. */
+.quiz-item .book-figure {
+  margin: 0.35rem 0 0.85rem;
+}
+.quiz-item .book-figure img {
+  max-width: min(100%, 26rem);
+}
 
 @media (max-width: 640px) {
   .chat-form {

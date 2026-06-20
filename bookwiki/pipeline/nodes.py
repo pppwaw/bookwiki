@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import shutil
-from html import unescape
+from html import escape, unescape
 from pathlib import Path
 from typing import Any
 
@@ -370,18 +370,23 @@ def _quiz_item_mdx(item: dict[str, Any], index: int) -> str:
         f"<QuizChoice {_jsx_prop('id', _choice_id(choice_index))}>\n{choice}\n</QuizChoice>"
         for choice_index, choice in enumerate(choices, start=1)
     )
-    return "\n".join(
-        [
-            f"<QuizItem {props}>",
-            _mdx_child("QuizQuestion", item.get("question", "")),
-            "<QuizChoices>",
-            choice_mdx,
-            "</QuizChoices>",
-            "<QuizCheck />",
-            _mdx_child("QuizExplanation", item.get("explanation", "")),
-            "</QuizItem>",
-        ]
-    )
+    figure_ref = str(item.get("figure_ref") or "").strip()
+    # A <BookFigure id=.. /> placeholder here is resolved against the chapter figure
+    # index by `_resolve_chapter_figures` (which runs after quiz insertion), so the quiz
+    # shows the real image. An unknown/missing id is dropped there, leaving no figure.
+    figure_mdx = f'<BookFigure id="{escape(figure_ref, quote=True)}" />' if figure_ref else ""
+    children = [
+        f"<QuizItem {props}>",
+        _mdx_child("QuizQuestion", item.get("question", "")),
+        *([figure_mdx] if figure_mdx else []),
+        "<QuizChoices>",
+        choice_mdx,
+        "</QuizChoices>",
+        "<QuizCheck />",
+        _mdx_child("QuizExplanation", item.get("explanation", "")),
+        "</QuizItem>",
+    ]
+    return "\n".join(children)
 
 
 def _quiz_items_mdx(items: list[dict[str, Any]], item_indexes: list[int] | None = None) -> str:
@@ -2295,7 +2300,15 @@ def _chapter_figure_index(state: State, cfg: BookConfig, ch_id: str) -> dict[str
     if isinstance(generated, dict):
         for figure_id, tag in generated.items():
             index.setdefault(str(figure_id), str(tag))
-    return index
+    # A <BookFigure/> without a `src` has no image asset; keeping it would render an
+    # empty caption-only box (a phantom "missing image", e.g. next to a quiz) and would
+    # also pad a trailing "## Figures" section with image-less entries. Drop those so
+    # only figures that actually show the referenced image survive.
+    return {
+        figure_id: tag
+        for figure_id, tag in index.items()
+        if unescape(parse_book_figure_tag(tag).get("src", "")).strip()
+    }
 
 
 def _resolve_chapter_figures(body: str, index: dict[str, str]) -> tuple[str, str]:

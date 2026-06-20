@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@mdx-js/mdx": "^3.1.1",
+    "katex": "^0.16.25",
     "remark-math": "^6.0.0"
   },
   "devDependencies": {

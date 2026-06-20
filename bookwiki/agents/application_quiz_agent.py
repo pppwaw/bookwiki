@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from bookwiki.agents._helpers import chapter_document, chapter_id, chapter_title, source_refs
+from bookwiki.agents._helpers import (
+    body_figure_refs,
+    chapter_document,
+    chapter_id,
+    chapter_title,
+    prune_figure_refs,
+    source_refs,
+)
 from bookwiki.agents.card_agent import chapter_body_blocks
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
@@ -38,6 +45,10 @@ class ApplicationQuizAgent:
 - 每条 request 恰好产出一道应用/计算 `QuizItem`；没有 request 时 `items` 为空。
 - 题干必须给出具体情境和必要数值/条件（扎根于正文或源文本），让学习者运用本章概念计算、
   估计、推导或判断结论；不要出纯定义/辨析题。
+- 若题目确实需要配图，把 `figure_ref` 设为 `available_figure_refs` 中的一个 id（必须逐字出现在
+  `chapter_body_md` 的某个 `<BookFigure>` 里），系统会自动把该图渲染到题干下方；**不要编造** id，
+  也不要写裸“如图/见下图”却不设 `figure_ref`。不需要配图时 `figure_ref` 留空，
+  并把数值/条件直接写进题干。
 - `choices` 是互相区分的数值或结论，至少两个，且只有一个与 `answer` 完全一致。
 - `explanation` 先说明答案，再展示关键计算/推理步骤，并点出一个常见误算或误解。
 - 每题带扎根源文本的 `citations`，其 `ref_id` 必须来自 `allowed_source_refs`；优先使用 request
@@ -66,7 +77,9 @@ class ApplicationQuizAgent:
             draft=draft,
             allowed_citation_refs=refs,
         )
-        return QuizResult.model_validate(result)
+        validated = QuizResult.model_validate(result)
+        prune_figure_refs(validated.items, body_figure_refs(_body_md(inp)))
+        return validated
 
 
 def _allowed_refs(inp: dict[str, Any]) -> set[str]:
@@ -76,8 +89,12 @@ def _allowed_refs(inp: dict[str, Any]) -> set[str]:
     return source_refs(inp)
 
 
+def _body_md(inp: dict[str, Any]) -> str:
+    return str(inp.get("chapter_body_md") or inp.get("body_md") or "")
+
+
 def _content_input(inp: dict[str, Any], refs: set[str]) -> dict[str, Any]:
-    body_md = str(inp.get("chapter_body_md") or inp.get("body_md") or "")
+    body_md = _body_md(inp)
     return {
         "chapter_id": chapter_id(inp),
         "title": chapter_title(inp),
@@ -85,6 +102,7 @@ def _content_input(inp: dict[str, Any], refs: set[str]) -> dict[str, Any]:
         "book_notes": inp.get("book_notes", ""),
         "chapter_body_md": body_md,
         "chapter_body_blocks": chapter_body_blocks(body_md),
+        "available_figure_refs": body_figure_refs(body_md),
         "requests": inp.get("requests", []),
         "mdx_errors": inp.get("mdx_errors", []),
         "source_document": chapter_document(inp) if source_refs(inp) else "",
