@@ -520,3 +520,28 @@ def test_normalize_concept_links_leaves_unknown_chapter_wikilink_bare() -> None:
     assert "[[不存在的章]]" in out
     assert "<PreviewLink" not in out
 
+
+def test_normalize_concept_links_auto_link_false_only_resolves_explicit_wikilinks() -> None:
+    """Concept pages pass auto_link=False: an explicit [[chapter title]] still resolves to the
+    chapter page, but a bare prose mention of a concept term is NOT auto-linked (no self-noise)."""
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    alias_map = {"点估计": "点估计"}
+    concept_previews = {
+        "点估计": {"href": "/docs/concepts/点估计", "title": "点估计", "summary": "s"}
+    }
+    chapter_previews = {
+        "向量函数": {"href": "/docs/chapters/向量函数", "title": "向量函数", "summary": "v"}
+    }
+
+    body = "点估计是一种方法，详见 [[向量函数]] 一章。"
+    out = _normalize_concept_links(
+        body, alias_map, concept_previews, chapter_previews, auto_link=False
+    )
+
+    # Explicit chapter wikilink resolves.
+    assert '<PreviewLink href={"/docs/chapters/向量函数"}' in out
+    # The bare prose mention of the concept "点估计" is left as plain text (not auto-linked).
+    assert out.count("<PreviewLink") == 1
+    assert "/docs/concepts/点估计" not in out
+

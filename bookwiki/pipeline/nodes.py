@@ -610,6 +610,8 @@ def _normalize_concept_links(
     alias_map: dict[str, str],
     concept_previews: dict[str, dict[str, str]],
     chapter_previews: dict[str, dict[str, str]] | None = None,
+    *,
+    auto_link: bool = True,
 ) -> str:
     markdown, fence_stash = _stash_code_fences(markdown)
     markdown, quiz_stash = _stash_quiz_blocks(markdown)
@@ -642,10 +644,14 @@ def _normalize_concept_links(
         return f"[[{canonical}]]"
 
     normalized = re.sub(r"\[\[([^\]]+)\]\]", replace, markdown)
-    linked = _auto_link_concept_terms(
-        normalized, _concept_link_terms(alias_map, concept_previews), linked_canonicals
-    )
-    return _unstash_code_fences(_unstash_quiz_blocks(linked, quiz_stash), fence_stash)
+    # ``auto_link`` turns bare prose terms into concept links (chapter bodies). Concept pages pass
+    # ``auto_link=False`` so they only resolve explicit ``[[...]]`` wikilinks — auto-linking a
+    # concept page's own name throughout its body would be noise.
+    if auto_link:
+        normalized = _auto_link_concept_terms(
+            normalized, _concept_link_terms(alias_map, concept_previews), linked_canonicals
+        )
+    return _unstash_code_fences(_unstash_quiz_blocks(normalized, quiz_stash), fence_stash)
 
 
 def _concept_link_terms(
@@ -2665,7 +2671,17 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             _frontmatter({"title": concept["name"], "type": "concept"})
             + f"# {concept['name']}\n\n"
             + convert_html_style_attrs(
-                normalize_source_cites(normalize_mdx_math(str(concept["body_md"])))
+                normalize_source_cites(
+                    normalize_mdx_math(
+                        _normalize_concept_links(
+                            str(concept["body_md"]),
+                            alias_map,
+                            concept_previews,
+                            chapter_previews,
+                            auto_link=False,
+                        )
+                    )
+                )
             )
             + referenced_by,
         )
