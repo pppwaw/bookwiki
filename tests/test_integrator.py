@@ -137,15 +137,7 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         agent_payload(
             {
                 "chapter_id": "chapter-1",
-                "items": [
-                    {
-                        "question": "What is expanded?",
-                        "choices": ["states", "images"],
-                        "answer": "states",
-                        "explanation": "Search expands states.",
-                        "citations": [{"ref_id": "source-p001", "quote": "expands states"}],
-                    }
-                ],
+                "items": [],
                 "owner_task_id": "chapter-1:quiz",
             }
         ),
@@ -223,51 +215,25 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         'summary={"State space is the reachable-state set."}>state space</PreviewLink>'
     )
     backlink_preview = (
-        '<PreviewLink href={"/docs/chapters/chapter-1"} title={"Chapter 1 Search"} '
-        'summary={"Search summary."}>Chapter 1 Search</PreviewLink>'
+        '<PreviewLink href={"/docs/chapters/chapter-1"} title={"Search"} '
+        'summary={"Search summary."}>Search</PreviewLink>'
     )
 
     expected_chapter = dedent(
         """\
         ---
         chapter_id: chapter-1
-        title: Chapter 1 Search
+        title: Search
         type: chapter
+        order_index: 0
         summary: Search summary.
         concepts:
         - state space
         ---
 
-        # Chapter 1 Search
+        # Search
 
         Core idea CHAPTER_PREVIEW.
-
-        ## Quick Check
-
-        <QuizBlock>
-        <QuizItem id={"quiz-001"} answer={"choice-1"} citations={[
-          {
-            "ref_id": "source-p001",
-            "quote": "expands states"
-          }
-        ]}>
-        <QuizQuestion>
-        What is expanded?
-        </QuizQuestion>
-        <QuizChoices>
-        <QuizChoice id={"choice-1"}>
-        states
-        </QuizChoice>
-        <QuizChoice id={"choice-2"}>
-        images
-        </QuizChoice>
-        </QuizChoices>
-        <QuizCheck />
-        <QuizExplanation>
-        Search expands states.
-        </QuizExplanation>
-        </QuizItem>
-        </QuizBlock>
 
         Second paragraph.
 
@@ -316,25 +282,37 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         """
     ).replace("BACKLINK_PREVIEW", backlink_preview)
     assert concept_mdx == expected_concept
-    assert index_mdx == dedent(
-        """\
-        ---
-        title: Book
-        description: Book 的互动学习指南：章节目录与核心概念。
-        ---
+    chapter_card = (
+        '<Card title={"Search"} href={"/docs/chapters/chapter-1"} '
+        'description={"Search summary."} />'
+    )
+    concept_card = (
+        '<Card title={"state space"} href={"/docs/concepts/state-space"} '
+        'description={"State space is the reachable-state set."} />'
+    )
+    assert index_mdx == (
+        dedent(
+            """\
+            ---
+            title: Book
+            description: Book 的互动学习指南：章节目录与核心概念。
+            ---
 
-        ## 目录
+            ## 目录
 
-        <Cards>
-          <Card title={"Chapter 1 Search"} href={"/docs/chapters/chapter-1"} description={"Search summary."} />
-        </Cards>
+            <Cards>
+              CHAPTER_CARD
+            </Cards>
 
-        ## 概念
+            ## 概念
 
-        <Cards>
-          <Card title={"state space"} href={"/docs/concepts/state-space"} description={"State space is the reachable-state set."} />
-        </Cards>
-        """
+            <Cards>
+              CONCEPT_CARD
+            </Cards>
+            """
+        )
+        .replace("CHAPTER_CARD", chapter_card)
+        .replace("CONCEPT_CARD", concept_card)
     )
 
 

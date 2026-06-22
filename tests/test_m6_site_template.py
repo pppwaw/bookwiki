@@ -17,7 +17,7 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "fumadocs-ui" in deps
     assert "better-sqlite3" in deps
     assert "remark-math" in deps
-    assert "rehype-katex" in deps
+    assert "remark-rehype" in deps
     assert "katex" in deps
 
     source_config = (SITE / "source.config.ts").read_text(encoding="utf-8")
@@ -35,10 +35,9 @@ def test_site_template_uses_fumadocs_official_mdx_collection_shape() -> None:
     assert "BOOKWIKI_CONTENT_DIR" not in source_config
     assert "providerImportSource" in source_config
     assert "remarkMath" in source_config
-    assert "rehypeKatex" in source_config
+    assert "rehypeMath" in source_config
     assert "rehypePlugins: (v) => [" in source_config
-    assert '[rehypeKatex, { strict: false, output: "html" }],' in source_config
-    assert "...v," in source_config
+    assert "rehypePlugins: (v) => [rehypeMath, ...v]" in source_config
     assert "webpackBuildWorker: true" in next_config
     assert "katex/dist/katex.css" in root_layout
     assert "collections/server" in source
@@ -122,10 +121,13 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "children" in quiz_block
     assert "children" in anki_deck
     assert "remarkMath" in markdown
-    assert "rehypeKatex" in markdown
+    assert "rehypeChatMath" in markdown
     math_text = (SITE / "components" / "MathText.tsx").read_text(encoding="utf-8")
-    assert "normalizeKatexInput" in math_text
-    assert "KATEX_TEXT_MODE_DIGITS" in math_text
+    katex_lib = (SITE / "lib" / "katex.ts").read_text(encoding="utf-8")
+    # Math normalization moved into lib/katex.ts; MathText renders via renderKatexToString.
+    assert "renderKatexToString" in math_text
+    assert "normalizeKatexInput" in katex_lib
+    assert "KATEX_TEXT_MODE_DIGITS" in katex_lib
     assert "role=\"tooltip\"" in preview_link
     assert "preview-link-card" in preview_link
     assert ".preview-link-wrap:focus-within .preview-link-card" in global_css
@@ -209,7 +211,7 @@ def test_official_ai_panel_is_backed_by_bookwiki_chat_api() -> None:
     assert "get_current_article" in chat_route
     assert "chatFormatInstructions" in chat_route
     assert "[^Week-10-p008]" in chat_route
-    assert "promptFromQuestion" in chat_route
+    assert "systemPrompt" in chat_route
     assert "<current_article>" in chat_route
     assert "answerText += part.text" in chat_route
     assert "citedSourcesFromText" in chat_route

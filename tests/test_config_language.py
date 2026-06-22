@@ -96,9 +96,9 @@ def test_init_book_creates_editable_book_notes_template(tmp_path) -> None:
     notes_path = book_dir / "book.notes.md"
     assert notes_path.exists()
     notes = notes_path.read_text(encoding="utf-8")
-    assert "Teaching Notes" in notes
-    assert "Source Notes" in notes
-    assert "xxx.pdf" in notes
+    # The template is intentionally minimal (the teaching/source guidance was removed); it only
+    # seeds an editable "# Book Notes" heading for the user to fill in.
+    assert notes.strip() == "# Book Notes"
 
 
 def test_load_config_merges_source_layout_repair_defaults(tmp_path) -> None:
