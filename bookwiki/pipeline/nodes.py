@@ -288,16 +288,9 @@ def _source_quote_markdown(quote: str) -> str:
 
 
 def _display_chapter_title(chapter_id: str, title: str) -> str:
-    clean = str(title).strip()
-    if re.match(r"^(chapter\s+\d+\b|第\s*\d+\s*章)", clean, flags=re.IGNORECASE):
-        return clean
-    match = re.fullmatch(r"chapter-(\d+)", str(chapter_id)) or re.fullmatch(
-        r"ch0*(\d+)", str(chapter_id)
-    )
-    if match:
-        prefix = f"Chapter {int(match.group(1))}"
-        return f"{prefix} {clean}".strip()
-    return clean or str(chapter_id)
+    # The chapter title is the verbatim free-form name; the id is just a slug derived from it.
+    # No "Chapter N" prefix is synthesised — a title that wants one already contains it.
+    return str(title).strip() or str(chapter_id)
 
 
 def _normalize_chapter_body_heading(body_md: str, display_title: str) -> str:
@@ -1656,7 +1649,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
         chapter_dir = ensure_dir(out_dir / ch_id)
         path = write_text(
             chapter_dir / "source.md",
-            md if md.startswith("#") else f"# {ch_id} {title}\n\n{md.strip()}\n",
+            md if md.startswith("#") else f"# {title}\n\n{md.strip()}\n",
         )
         chapter_sources[ch_id] = _rel(path, cfg.book_dir)
     alignment_path = write_json(

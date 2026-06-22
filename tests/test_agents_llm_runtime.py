@@ -89,7 +89,7 @@ async def test_chapter_split_agent_audits_without_sending_full_source_bodies(tmp
 
     assert runtime.calls
     assert body_marker not in str(runtime.calls[0]["user"])
-    assert body_marker in result.chapters["chapter-6"]
+    assert body_marker in result.chapters["Chapter-6-Point-Estimation"]
     assert result.report_md == "# Split Audit\n\nLLM reviewed compact split metadata."
 
 

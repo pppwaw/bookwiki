@@ -199,7 +199,7 @@ def test_structure_then_split_allows_manual_approved_structure_edit(tmp_path) ->
 
     run_script("scripts/split.py", str(book_dir))
 
-    ch01 = book_dir / "work" / "chapter_sources" / "chapter-1" / "source.md"
-    ch02 = book_dir / "work" / "chapter_sources" / "chapter-2" / "source.md"
+    ch01 = book_dir / "work" / "chapter_sources" / "Chapter-1-Intro-Search" / "source.md"
+    ch02 = book_dir / "work" / "chapter_sources" / "Chapter-2-Heuristic-Search" / "source.md"
     assert "State space search" in ch01.read_text(encoding="utf-8")
     assert "A star" in ch02.read_text(encoding="utf-8")

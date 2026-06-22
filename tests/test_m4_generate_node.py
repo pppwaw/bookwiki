@@ -167,7 +167,8 @@ async def test_generate_node_passes_display_chapter_title_to_agents(tmp_path) ->
 
     chapter_path = book_dir / result["agent_results"]["chapter-6"]["chapter"]
     payload = json.loads(chapter_path.read_text(encoding="utf-8"))
-    assert payload["result"]["title"] == "Chapter 6 Point Estimation"
+    # The display title is now the verbatim chapter title (no synthesised "Chapter N" prefix).
+    assert payload["result"]["title"] == "Point Estimation"
 
 
 @pytest.mark.asyncio
@@ -406,7 +407,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
         "---\ntitle: Book\ndescription: Book 的互动学习指南：章节目录与核心概念。\n---\n\n## 目录"
     )
     assert (
-        '<Card title={"Chapter 6 Point Estimation"} href={"/docs/chapters/chapter-6"} '
+        '<Card title={"Point Estimation"} href={"/docs/chapters/chapter-6"} '
         'description={"Point estimation summary."} />'
     ) in index_text
     assert (
@@ -421,12 +422,12 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     chapter_text = chapter_page.read_text(encoding="utf-8")
     frontmatter = chapter_text.split("---", 2)[1]
     body = chapter_text.split("---", 2)[2]
-    assert "title: Chapter 6 Point Estimation" in frontmatter
+    assert "title: Point Estimation" in frontmatter
     assert "summary: Point estimation summary." in frontmatter
     assert "concepts:" in frontmatter
     assert "- Point Estimation" in frontmatter
     assert "- 似然函数" in frontmatter
-    assert body.lstrip().startswith("# Chapter 6 Point Estimation")
+    assert body.lstrip().startswith("# Point Estimation")
     assert "## Summary" not in body
     assert "## Concepts" not in body
     assert "# [Point Estimation]" not in body
@@ -488,8 +489,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "## Referenced By" in concept_text
     assert (
         '- <PreviewLink href={"/docs/chapters/chapter-6"} '
-        'title={"Chapter 6 Point Estimation"} '
-        'summary={"Point estimation summary."}>Chapter 6 Point Estimation</PreviewLink>'
+        'title={"Point Estimation"} '
+        'summary={"Point estimation summary."}>Point Estimation</PreviewLink>'
         in concept_text
     )
 
@@ -498,8 +499,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     zh_concept_text = zh_concept_page.read_text(encoding="utf-8")
     assert (
         '- <PreviewLink href={"/docs/chapters/chapter-6"} '
-        'title={"Chapter 6 Point Estimation"} '
-        'summary={"Point estimation summary."}>Chapter 6 Point Estimation</PreviewLink>'
+        'title={"Point Estimation"} '
+        'summary={"Point estimation summary."}>Point Estimation</PreviewLink>'
         in zh_concept_text
     )
 
