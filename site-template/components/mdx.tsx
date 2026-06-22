@@ -5,6 +5,7 @@ import { ChapterSummary } from './ChapterSummary';
 import { ChatBox } from './ChatBox';
 import { BookFigure } from './BookFigure';
 import { ConceptLink } from './ConceptLink';
+import { Mermaid } from './Mermaid';
 import { PreviewLink } from './PreviewLink';
 import {
   QuizBlock,
@@ -37,6 +38,7 @@ export function getMDXComponents(components?: MDXComponents) {
     SourceRef,
     ChatBox,
     BookFigure,
+    Mermaid,
     ...components,
   } satisfies MDXComponents;
 }

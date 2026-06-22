@@ -57,7 +57,9 @@ def test_source_citations_wrap_pure_bare_latex_in_inline_math() -> None:
     )
 
     assert r"`9.2-p008`: $\frac{1}{(k+2)(k+3)} = \frac{1}{(k+2)} - \frac{1}{(k+3)}$" in markdown
-    assert r"`9.2-p010`: $S_{n} = \ln \frac{2}{1} + \dots = \ln(n+1) \rightarrow \infty$" in markdown
+    assert (
+        r"`9.2-p010`: $S_{n} = \ln \frac{2}{1} + \dots = \ln(n+1) \rightarrow \infty$" in markdown
+    )
     # raw braces must survive inside the wrapped math (no HTML-escaping) so KaTeX parses.
     assert "&#123;" not in markdown
 
@@ -93,10 +95,12 @@ def test_source_citations_leave_already_delimited_and_plain_prose_untouched() ->
     )
 
     # Already-delimited math is idempotent: not re-wrapped, dollars preserved.
-    assert r"`9.2-p013`: A geometric series $\sum_{k=1}^{\infty} a r^{k-1}$ with $a \neq 0$." in markdown
+    assert (
+        r"`9.2-p013`: A geometric series $\sum_{k=1}^{\infty} a r^{k-1}$ with $a \neq 0$."
+        in markdown
+    )
     # Plain prose with no LaTeX signal is never wrapped.
     assert "`9.2-p006`: The infinite series converges and has sum S." in markdown
-
 
 
 def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Path) -> None:
@@ -446,3 +450,38 @@ def test_integrate_node_resolves_chapter_figures_from_source(tmp_path: Path) -> 
     assert canonical_b002 in chapter_mdx
     assert chapter_mdx.index("## Figures") < chapter_mdx.index("## Sources")
     assert "## Anki Cards" in chapter_mdx
+
+
+def test_normalize_concept_links_preserves_mermaid_fences() -> None:
+    """Concept-link normalization must never inject ``<PreviewLink>`` into a fenced
+    code block (e.g. ```mermaid), even when a concept first appears inside the fence
+    or a node uses the ``[[label]]`` subroutine shape."""
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    alias_map = {"欧姆定律": "Ohm's Law", "电阻": "Resistance"}
+    previews = {
+        "Ohm's Law": {"href": "/c/Ohm", "title": "Ohm's Law", "summary": "v=iR"},
+        "Resistance": {"href": "/c/Res", "title": "Resistance", "summary": "R"},
+    }
+    body = (
+        "开场白，先不提概念。\n\n"
+        "```mermaid\n"
+        "graph TD\n"
+        "  A[电压源] --> B[电阻 R]\n"
+        "  B --> C{欧姆定律}\n"
+        "  D[[电阻]] --> B\n"
+        "```\n\n"
+        "围栏后再讲电阻与欧姆定律。"
+    )
+
+    out = _normalize_concept_links(body, alias_map, previews)
+    fence = out.split("```mermaid", 1)[1].split("```", 1)[0]
+    after = out.split("```", 2)[2]
+
+    # Fence content is byte-for-byte preserved: no PreviewLink injected, node shapes intact.
+    assert "<PreviewLink" not in fence
+    assert "A[电压源] --> B[电阻 R]" in fence
+    assert "C{欧姆定律}" in fence
+    assert "D[[电阻]] --> B" in fence
+    # Prose outside the fence is still linked as usual.
+    assert "<PreviewLink" in after

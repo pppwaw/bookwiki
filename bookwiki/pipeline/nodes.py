@@ -525,6 +525,29 @@ def _unstash_quiz_blocks(markdown: str, stash: list[str]) -> str:
     return markdown
 
 
+# Fenced code blocks (```lang ... ```, e.g. ```mermaid) must survive concept-link
+# normalization untouched: their inner text is not prose, so injecting <PreviewLink>
+# or rewriting ``[[node]]`` shapes would corrupt the diagram / code. The per-line
+# auto-linker only protects same-line spans, so multi-line fences are stashed whole.
+_CODE_FENCE_RE = re.compile(r"(?ms)^[ \t]*(`{3,}|~{3,})[^\n]*\n.*?^[ \t]*\1[ \t]*$")
+
+
+def _stash_code_fences(markdown: str) -> tuple[str, list[str]]:
+    stash: list[str] = []
+
+    def _sub(match: re.Match[str]) -> str:
+        stash.append(match.group(0))
+        return f"\x00CODEFENCE{len(stash) - 1}\x00"
+
+    return _CODE_FENCE_RE.sub(_sub, markdown), stash
+
+
+def _unstash_code_fences(markdown: str, stash: list[str]) -> str:
+    for index, original in enumerate(stash):
+        markdown = markdown.replace(f"\x00CODEFENCE{index}\x00", original)
+    return markdown
+
+
 def _resolve_item_slots(body_md: str, quiz: dict[str, Any]) -> str:
     """Replace each inline ``<QuizItemSlot id=X/>`` with its filled application ``<QuizItem>``.
 
@@ -592,6 +615,7 @@ def _inline_quiz_answer_issues(text: str, stem: str) -> list[Issue]:
 def _normalize_concept_links(
     markdown: str, alias_map: dict[str, str], concept_previews: dict[str, dict[str, str]]
 ) -> str:
+    markdown, fence_stash = _stash_code_fences(markdown)
     markdown, quiz_stash = _stash_quiz_blocks(markdown)
     linked_canonicals: set[str] = set()
 
@@ -610,7 +634,7 @@ def _normalize_concept_links(
     linked = _auto_link_concept_terms(
         normalized, _concept_link_terms(alias_map, concept_previews), linked_canonicals
     )
-    return _unstash_quiz_blocks(linked, quiz_stash)
+    return _unstash_code_fences(_unstash_quiz_blocks(linked, quiz_stash), fence_stash)
 
 
 def _concept_link_terms(
@@ -2445,9 +2469,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         concept_previews[str(name)] = preview
         concept_previews[concept_name] = preview
 
-    for chapter_order_index, (ch_id, paths) in enumerate(
-        state.get("agent_results", {}).items()
-    ):
+    for chapter_order_index, (ch_id, paths) in enumerate(state.get("agent_results", {}).items()):
         chapter = _agent_result(read_json(cfg.book_dir / paths["chapter"]))
         summary = _agent_result(read_json(cfg.book_dir / paths["summary"]))
         quiz = _agent_result(read_json(cfg.book_dir / paths["quiz"]))

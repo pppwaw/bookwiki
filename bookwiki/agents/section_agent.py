@@ -90,6 +90,21 @@ class SectionAgent:
 - 不需要新图时 `figure_requests` 留空；每个 `figure_requests` 项的 `figure_ref` 都必须
    与正文中的某个 <BookFigure id="..."/> 占位一致。不要滥用，只在图能显著帮助理解时请求。
 
+=== 结构/流程图（mermaid，直接写进 body_md）===
+- 当你需要表达**结构、流程或关系**（流程图、电路拓扑骨架、状态机、时序、层级树、因果链、
+  概念关系图等）、而源文没有现成图、且这类图用 matplotlib 画并不自然时，可在正文最能支撑处
+  **单独成行**写一个 ```mermaid 代码围栏，里面是合法 mermaid 语法（如 `flowchart`、`graph`、
+  `sequenceDiagram`、`stateDiagram-v2`、`erDiagram`、`classDiagram`、`mindmap`）。
+- 分工：**定量**曲线/分布/函数图仍走 `figure_requests`（matplotlib）；**结构/流程/关系**图用
+  mermaid。mermaid 直接内联，不需要 `figure_requests`，也不要写 <BookFigure> 占位。
+- 写法与约束：
+  - 围栏内文本**原样书写、无需任何转义**（不要 JSON/JSX 转义）。
+  - 节点 id 用 ASCII（如 `A`、`N1`、`R1`）；节点**标签**可用中文。
+  - 标签里**绝不要**写 LaTeX、`$...$` 或裸花括号——mermaid 不渲染数学；要带式子就用纯文本
+    （如 `v=iR`），并把含空格或特殊符号的标签用引号包裹，例如 `A["电压源 v=iR"]`。
+  - 避免在标签里直接使用会破坏 mermaid 语法的未转义字符（`()[]{};:` 等），必要时加引号。
+  - 不滥用：仅当图能显著帮助理解时才画，一段最多一到两个。
+
 === 测验题（直接写进 body_md，不进 frontmatter）===
 测验题由你**在正文的自然位置直接写成 MDX**：把题放在它所考查的内容刚讲完之后，让行文自然。
 你自行决定放几块 `<QuizBlock>`、放在哪、每块几题、知识题与应用题如何搭配。一块一般放约 3 题
