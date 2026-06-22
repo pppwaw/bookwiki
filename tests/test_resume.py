@@ -15,6 +15,7 @@ from bookwiki.scheduler.resume import (
     NODE_ORDER,
     config_hash,
     draw_mermaid,
+    existing_split_state,
     state_after_config_change,
     state_for_force_from,
 )
@@ -125,3 +126,70 @@ def test_state_after_config_change_falls_back_to_convert(tmp_path: Path) -> None
 
     assert start_index == 0
     assert state == {"book_id": cfg.book_id}
+
+
+def _write_split_on_disk(
+    cfg: Any, chapter_ids: list[str], *, alignment: dict[str, Any]
+) -> None:
+    """Write chapter source dirs (created in a deliberately non-YAML filesystem order) plus the
+    given ``_alignment.json`` payload, so resume reconstruction can be exercised in isolation."""
+    import json
+
+    base = cfg.work_dir / "chapter_sources"
+    # Create dirs sorted lexicographically (the order a glob would yield), to prove reconstruction
+    # does NOT depend on directory iteration order.
+    for ch_id in sorted(chapter_ids):
+        source_path = base / ch_id / "source.md"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(f"# {ch_id}\n", encoding="utf-8")
+    (base / "_alignment.json").write_text(json.dumps(alignment), encoding="utf-8")
+
+
+def test_existing_split_state_preserves_chapter_order_over_glob(tmp_path: Path) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    # Double-digit chapter: lexicographic glob would put "chapter-10" before "chapter-2".
+    _write_split_on_disk(
+        cfg,
+        ["chapter-2", "chapter-10"],
+        alignment={
+            "chapter_titles": {"chapter-2": "Two", "chapter-10": "Ten"},
+            "chapter_order": ["chapter-2", "chapter-10"],
+        },
+    )
+
+    chapter_sources, _titles, _groups, _align, chapter_order = existing_split_state(cfg)
+
+    assert list(chapter_sources.keys()) == ["chapter-2", "chapter-10"]
+    assert chapter_order == ["chapter-2", "chapter-10"]
+
+
+def test_existing_split_state_legacy_alignment_uses_title_order(tmp_path: Path) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    # Legacy _alignment.json written before chapter_order existed: fall back to chapter_titles
+    # key order (also YAML order), never lexicographic glob order.
+    _write_split_on_disk(
+        cfg,
+        ["chapter-2", "chapter-10"],
+        alignment={"chapter_titles": {"chapter-2": "Two", "chapter-10": "Ten"}},
+    )
+
+    chapter_sources, _titles, _groups, _align, _order = existing_split_state(cfg)
+
+    assert list(chapter_sources.keys()) == ["chapter-2", "chapter-10"]
+
+
+def test_existing_split_state_fails_loud_on_extra_dir(tmp_path: Path) -> None:
+    import pytest
+
+    cfg = default_config(tmp_path / "books" / "mini")
+    _write_split_on_disk(
+        cfg,
+        ["chapter-1", "chapter-stale"],
+        alignment={
+            "chapter_titles": {"chapter-1": "One"},
+            "chapter_order": ["chapter-1"],
+        },
+    )
+
+    with pytest.raises(ValueError, match="stale split state"):
+        existing_split_state(cfg)

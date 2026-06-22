@@ -36,7 +36,10 @@ class ConceptReconcileAgent:
         for item in candidates:
             canonical = str(item["name"])
             aliases = [str(alias) for alias in item.get("aliases", [])]
-            chapter_id = str(item.get("source_chapter_id", "ch01"))
+            chapter_id = str(item.get("source_chapter_id") or "").strip()
+            if not chapter_id:
+                msg = f"concept candidate {canonical!r} is missing required 'source_chapter_id'"
+                raise ValueError(msg)
             names = [canonical, *aliases]
             matched_key = next(
                 (

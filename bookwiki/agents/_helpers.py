@@ -12,7 +12,11 @@ SOURCE_REF_RE = re.compile(r"<!--\s*source_ref:\s*([A-Za-z0-9_.:-]+)\s*-->")
 
 
 def chapter_id(inp: dict[str, Any]) -> str:
-    return str(inp.get("chapter_id") or inp.get("chapter") or "ch01")
+    value = str(inp.get("chapter_id") or inp.get("chapter") or "").strip()
+    if not value:
+        msg = "agent input is missing required 'chapter_id'"
+        raise ValueError(msg)
+    return value
 
 
 def chapter_title(inp: dict[str, Any]) -> str:

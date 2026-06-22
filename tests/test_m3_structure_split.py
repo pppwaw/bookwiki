@@ -123,6 +123,83 @@ def test_parse_approved_structure_accepts_yaml_contract() -> None:
     assert chapters[0].source_refs == ["Week-9-p001", "Week-10-p001"]
 
 
+NON_ORIGINAL = """chapters:
+  - title: Chapter 1 Search Foundations
+    topics:
+      - State space search
+    source_refs:
+      - textbook-p001
+  - id: knowledge-overview
+    title: 知识图谱总览
+    topics:
+      - Concept map
+    source_refs:
+      - textbook-p002
+"""
+
+
+def test_parse_approved_structure_accepts_non_chapter_title_with_explicit_id() -> None:
+    chapters = parse_approved_structure(NON_ORIGINAL)
+
+    assert [chapter.chapter_id for chapter in chapters] == ["chapter-1", "knowledge-overview"]
+    # The non-original chapter keeps its free-form title verbatim (no "Chapter N" prefix stripped).
+    assert chapters[1].title == "知识图谱总览"
+    assert chapters[1].source_refs == ["textbook-p002"]
+
+
+def test_parse_approved_structure_rejects_non_chapter_title_without_id() -> None:
+    missing_id = NON_ORIGINAL.replace(
+        "  - id: knowledge-overview\n    title: 知识图谱总览\n",
+        "  - title: 知识图谱总览\n",
+    )
+
+    with pytest.raises(ValueError, match="chapter titles"):
+        parse_approved_structure(missing_id)
+
+
+def test_parse_approved_structure_rejects_reserved_explicit_id() -> None:
+    reserved = NON_ORIGINAL.replace("id: knowledge-overview", "id: chapter-3")
+
+    with pytest.raises(ValueError, match="reserved"):
+        parse_approved_structure(reserved)
+
+
+def test_parse_approved_structure_rejects_non_ascii_explicit_id() -> None:
+    non_ascii = NON_ORIGINAL.replace("id: knowledge-overview", "id: 知识图谱")
+
+    with pytest.raises(ValueError, match="ASCII slug"):
+        parse_approved_structure(non_ascii)
+
+
+def test_parse_approved_structure_non_original_still_requires_source_refs() -> None:
+    empty_refs = NON_ORIGINAL.replace("      - textbook-p002\n", "")
+
+    with pytest.raises(ValueError, match="source_refs"):
+        parse_approved_structure(empty_refs)
+
+
+def test_split_renders_non_original_chapter_with_verbatim_heading(tmp_path: Path) -> None:
+    source = tmp_path / "textbook.md"
+    source.write_text(
+        "# Textbook\n\n"
+        "<!-- source_ref: textbook-p001 -->\n\n"
+        "States, actions, goals, and search trees.\n\n"
+        "<!-- source_ref: textbook-p002 -->\n\n"
+        "A bird's-eye concept map of the whole book.\n",
+        encoding="utf-8",
+    )
+
+    result = split_sources_by_structure([source], NON_ORIGINAL)
+
+    assert "knowledge-overview" in result.chapters
+    body = result.chapters["knowledge-overview"]
+    # H1 is the human title verbatim — neither the slug id nor a "Chapter N" prefix is injected.
+    assert body.startswith("# 知识图谱总览")
+    assert "knowledge-overview 知识图谱总览" not in body
+    assert "textbook-p002" in body
+    assert result.chapter_titles["knowledge-overview"] == "知识图谱总览"
+
+
 def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_path: Path) -> None:
     source = tmp_path / "Week-10.md"
     source.write_text(
@@ -379,6 +456,100 @@ def test_parse_approved_structure_rejects_group_mixed_with_source_refs() -> None
     )
     with pytest.raises(ValueError, match="must not mix"):
         parse_approved_structure(bad)
+
+
+NON_ORIGINAL_GROUP = """chapters:
+  - id: appendix-pack
+    title: 附录合集
+    sections:
+      - id: appendix-tables
+        title: 常用分布表
+        topics:
+          - distribution tables
+        source_refs:
+          - appendix-p001
+      - id: appendix-formulas
+        title: 公式速查
+        topics:
+          - formula sheet
+        source_refs:
+          - appendix-p002
+"""
+
+
+def test_parse_approved_structure_accepts_non_chapter_group_with_explicit_ids() -> None:
+    specs = parse_approved_structure(NON_ORIGINAL_GROUP)
+
+    assert [spec.chapter_id for spec in specs] == ["appendix-tables", "appendix-formulas"]
+    # Group and section titles are kept verbatim (no "Chapter N" prefix injected).
+    assert specs[0].group_id == "appendix-pack"
+    assert specs[0].group_title == "附录合集"
+    assert specs[0].title == "常用分布表"
+    groups = chapter_groups_from_specs(specs)
+    assert groups["appendix-pack"]["title"] == "附录合集"
+    assert groups["appendix-pack"]["leaf_ids"] == ["appendix-tables", "appendix-formulas"]
+
+
+def test_parse_approved_structure_rejects_non_chapter_group_without_id() -> None:
+    missing_group_id = NON_ORIGINAL_GROUP.replace(
+        "  - id: appendix-pack\n    title: 附录合集\n",
+        "  - title: 附录合集\n",
+    )
+
+    with pytest.raises(ValueError, match="explicit ASCII 'id'"):
+        parse_approved_structure(missing_group_id)
+
+
+def test_parse_approved_structure_rejects_non_numbered_section_without_id() -> None:
+    missing_section_id = NON_ORIGINAL_GROUP.replace(
+        "      - id: appendix-tables\n        title: 常用分布表\n",
+        "      - title: 常用分布表\n",
+    )
+
+    with pytest.raises(ValueError, match="explicit ASCII 'id'"):
+        parse_approved_structure(missing_section_id)
+
+
+def test_parse_approved_structure_allows_numbered_section_under_non_chapter_group() -> None:
+    mixed = """chapters:
+  - id: review-pack
+    title: 综合复习
+    sections:
+      - title: 9.2 Infinite Series
+        topics:
+          - series
+        source_refs:
+          - review-p001
+"""
+
+    specs = parse_approved_structure(mixed)
+
+    # Numbered section keeps its derived id; parent-number check is skipped for non-chapter groups.
+    assert specs[0].chapter_id == "chapter-9-2"
+    assert specs[0].group_id == "review-pack"
+    assert specs[0].title == "9.2 Infinite Series"
+
+
+def test_split_renders_non_chapter_group_leaf_with_verbatim_heading(tmp_path: Path) -> None:
+    source = tmp_path / "appendix.md"
+    source.write_text(
+        "<!-- source_ref: appendix-p001 -->\n\nCommon distribution tables.\n\n"
+        "<!-- source_ref: appendix-p002 -->\n\nFormula quick reference.\n",
+        encoding="utf-8",
+    )
+
+    result = split_sources_by_structure([source], NON_ORIGINAL_GROUP)
+
+    assert set(result.chapters) >= {"appendix-tables", "appendix-formulas"}
+    assert "appendix-pack" not in result.chapters
+    body = result.chapters["appendix-tables"]
+    assert body.startswith("# 常用分布表")
+    assert "appendix-tables 常用分布表" not in body
+    assert result.chapter_groups["appendix-pack"]["title"] == "附录合集"
+    assert result.chapter_groups["appendix-pack"]["leaf_ids"] == [
+        "appendix-tables",
+        "appendix-formulas",
+    ]
 
 
 def test_split_sources_by_structure_keeps_leaves_flat_with_group_metadata(

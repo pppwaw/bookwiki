@@ -42,6 +42,7 @@ NODE_OUTPUT_KEYS: dict[str, set[str]] = {
     "split": {
         "chapter_sources",
         "chapter_titles",
+        "chapter_order",
         "chapter_groups",
         "chapter_alignment",
         "chapter_split_report",
@@ -121,7 +122,9 @@ def state_for_force_from(cfg: BookConfig, checkpoint_state: dict[str, Any]) -> d
         and start_index >= NODE_ORDER.index("generate")
         and not state.get("chapter_sources")
     ):
-        chapter_sources, chapter_titles, chapter_groups, alignment_path = existing_split_state(cfg)
+        chapter_sources, chapter_titles, chapter_groups, alignment_path, chapter_order = (
+            existing_split_state(cfg)
+        )
         if chapter_sources:
             state["chapter_sources"] = chapter_sources
             if chapter_titles:
@@ -130,6 +133,8 @@ def state_for_force_from(cfg: BookConfig, checkpoint_state: dict[str, Any]) -> d
                 state["chapter_groups"] = chapter_groups
             if alignment_path:
                 state["chapter_alignment"] = alignment_path
+            if chapter_order:
+                state["chapter_order"] = chapter_order
     return state
 
 
@@ -157,11 +162,11 @@ def existing_source_ref_manifests(cfg: BookConfig) -> list[str]:
 
 def existing_split_state(
     cfg: BookConfig,
-) -> tuple[dict[str, str], dict[str, str], dict[str, Any], str | None]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, Any], str | None, list[str]]:
     chapter_sources_dir = cfg.work_dir / "chapter_sources"
     if not chapter_sources_dir.exists():
-        return {}, {}, {}, None
-    chapter_sources = {
+        return {}, {}, {}, None, []
+    on_disk = {
         path.parent.name: path.relative_to(cfg.book_dir).as_posix()
         for path in sorted(chapter_sources_dir.glob("*/source.md"))
         if path.is_file()
@@ -170,6 +175,7 @@ def existing_split_state(
     alignment_rel = None
     chapter_titles: dict[str, str] = {}
     chapter_groups: dict[str, Any] = {}
+    persisted_order: list[str] = []
     if alignment_path.exists():
         alignment_rel = alignment_path.relative_to(cfg.book_dir).as_posix()
         alignment = read_json(alignment_path, default={})
@@ -179,7 +185,32 @@ def existing_split_state(
         raw_groups = alignment.get("chapter_groups", {})
         if isinstance(raw_groups, dict):
             chapter_groups = raw_groups
-    return chapter_sources, chapter_titles, chapter_groups, alignment_rel
+        raw_order = alignment.get("chapter_order")
+        if isinstance(raw_order, list):
+            persisted_order = [str(cid) for cid in raw_order if str(cid)]
+    if not on_disk:
+        return {}, chapter_titles, chapter_groups, alignment_rel, []
+    # Authoritative reading order: the persisted ``chapter_order``; for a legacy ``_alignment.json``
+    # written before this field existed, fall back to the ``chapter_titles`` key order (also YAML
+    # order, since JSON preserves insertion order). Never fall back to lexicographic glob order,
+    # which silently corrupts the reading order once chapter ids are free-form slugs.
+    order = persisted_order or [cid for cid in chapter_titles if cid in on_disk]
+    if not order:
+        msg = (
+            f"cannot determine chapter reading order from {alignment_path} "
+            "(missing chapter_order); rerun from split"
+        )
+        raise ValueError(msg)
+    ordered_ids = [cid for cid in order if cid in on_disk]
+    extra = sorted(set(on_disk) - set(ordered_ids))
+    if extra:
+        msg = (
+            f"chapter_sources has directories absent from chapter_order {extra}; "
+            "stale split state — rerun from split"
+        )
+        raise ValueError(msg)
+    chapter_sources = {cid: on_disk[cid] for cid in ordered_ids}
+    return chapter_sources, chapter_titles, chapter_groups, alignment_rel, ordered_ids
 
 
 def clear_for_force(cfg: BookConfig) -> None:

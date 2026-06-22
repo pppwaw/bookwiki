@@ -36,6 +36,7 @@ class ChapterSplitAgent:
             coverage=result.coverage,
             report_md=result.report_md,
             chapter_groups=result.chapter_groups,
+            chapter_order=result.chapter_order,
         )
         audit = await generate_with_llm(
             runtime=runtime,
@@ -55,6 +56,7 @@ class ChapterSplitAgent:
             coverage=deterministic.coverage,
             report_md=audited.report_md or deterministic.report_md,
             chapter_groups=deterministic.chapter_groups,
+            chapter_order=deterministic.chapter_order,
         )
 
 

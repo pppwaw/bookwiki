@@ -1644,10 +1644,14 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     )
 
     out_dir = ensure_dir(cfg.work_dir / "chapter_sources")
-    _clear_chapter_source_dirs(out_dir)
     chapter_sources: dict[str, str] = {}
     titles = split.result.chapter_titles or dict(_chapter_titles(approved_structure))
-    for ch_id, md in split.result.chapters.items():
+    # Authoritative reading order (approved-structure / YAML order, appendix last). Fall back to
+    # the rendered chapters dict order for any legacy cached split result without chapter_order.
+    chapter_order = list(split.result.chapter_order) or list(split.result.chapters.keys())
+    _clear_chapter_source_dirs(out_dir, set(chapter_order))
+    for ch_id in chapter_order:
+        md = split.result.chapters[ch_id]
         title = titles.get(ch_id, ch_id)
         chapter_dir = ensure_dir(out_dir / ch_id)
         path = write_text(
@@ -1662,6 +1666,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
             "coverage": split.result.coverage,
             "chapter_titles": titles,
             "chapter_groups": split.result.chapter_groups,
+            "chapter_order": chapter_order,
         },
     )
     report_path = write_text(
@@ -1671,6 +1676,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     return {
         "chapter_sources": chapter_sources,
         "chapter_titles": titles,
+        "chapter_order": chapter_order,
         "chapter_topics": _chapter_topics(approved_structure),
         "chapter_groups": split.result.chapter_groups,
         "chapter_alignment": _rel(alignment_path, cfg.book_dir),
@@ -1679,9 +1685,16 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     }
 
 
-def _clear_chapter_source_dirs(out_dir: Path) -> None:
+def _clear_chapter_source_dirs(out_dir: Path, keep_ids: set[str]) -> None:
+    """Remove stale chapter source directories before writing the fresh split.
+
+    Any subdirectory whose name is not in ``keep_ids`` is removed. This intentionally does NOT
+    rely on a ``chapter-N`` naming pattern, so free-form / CJK chapter slugs from a previous run
+    that are no longer present are still cleaned up (a leftover dir would otherwise be picked up
+    by a stale resume).
+    """
     for child in out_dir.iterdir():
-        if child.is_dir() and re.fullmatch(r"(ch\d+|chapter-[\d-]+|appendix)", child.name):
+        if child.is_dir() and child.name not in keep_ids:
             shutil.rmtree(child)
 
 
@@ -2030,7 +2043,10 @@ def _merge_candidates_with_skeleton(
         if not canonical:
             continue
         aliases = [str(a) for a in cand.get("aliases", []) if str(a).strip()]
-        chapter_id = str(cand.get("source_chapter_id", "ch01"))
+        chapter_id = str(cand.get("source_chapter_id") or "").strip()
+        if not chapter_id:
+            msg = f"concept candidate {canonical!r} is missing required 'source_chapter_id'"
+            raise ValueError(msg)
         names = [canonical, *aliases]
         matched_key = next(
             (alias_to_key[_concept_key(n)] for n in names if _concept_key(n) in alias_to_key),
@@ -2469,7 +2485,18 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         concept_previews[str(name)] = preview
         concept_previews[concept_name] = preview
 
-    for chapter_order_index, (ch_id, paths) in enumerate(state.get("agent_results", {}).items()):
+    agent_results = state.get("agent_results", {})
+    # ``order_index`` must follow the authoritative reading order (approved-structure / YAML order
+    # persisted at split), never the iteration order of the ``agent_results`` dict — which can be
+    # polluted by a partial regenerate, a stale checkpoint, or a reconcile merge.
+    authoritative_order = list(state.get("chapter_order") or list(agent_results.keys()))
+    order_index_by_id = {ch_id: idx for idx, ch_id in enumerate(authoritative_order)}
+    next_order_index = len(order_index_by_id)
+    for ch_id, paths in agent_results.items():
+        chapter_order_index = order_index_by_id.get(ch_id)
+        if chapter_order_index is None:
+            chapter_order_index = next_order_index
+            next_order_index += 1
         chapter = _agent_result(read_json(cfg.book_dir / paths["chapter"]))
         summary = _agent_result(read_json(cfg.book_dir / paths["summary"]))
         quiz = _agent_result(read_json(cfg.book_dir / paths["quiz"]))

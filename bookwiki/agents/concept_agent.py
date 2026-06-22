@@ -62,7 +62,10 @@ class ConceptAgent:
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> ConceptResult:
         name = str(inp.get("canonical") or inp.get("name") or "Concept")
-        chapters = [str(ch) for ch in inp.get("source_chapter_ids", ["ch01"])]
+        chapters = [str(ch).strip() for ch in inp.get("source_chapter_ids", []) if str(ch).strip()]
+        if not chapters:
+            msg = f"concept {name!r} is missing required 'source_chapter_ids'"
+            raise ValueError(msg)
         contexts = [item for item in inp.get("chapter_contexts", []) if isinstance(item, dict)]
         citations = _context_citations(contexts)
         allowed_refs = _context_source_refs(contexts)

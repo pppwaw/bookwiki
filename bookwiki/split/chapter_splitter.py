@@ -38,6 +38,9 @@ class SplitResult:
     coverage: dict[str, float | int]
     report_md: str
     chapter_groups: dict[str, dict[str, object]] = field(default_factory=dict)
+    # Authoritative reading order: rendered chapter ids in approved-structure (YAML) order,
+    # appendix last. Persisted so resume never has to reconstruct order from a directory glob.
+    chapter_order: list[str] = field(default_factory=list)
 
 
 def parse_approved_structure(structure_yaml: str) -> list[ChapterSpec]:
@@ -52,6 +55,19 @@ def parse_approved_structure(structure_yaml: str) -> list[ChapterSpec]:
 
     A group entry must not also carry ``topics``/``source_refs``, and every section's leading
     chapter number must match the group's number.
+
+    A flat leaf whose ``title`` does **not** start with ``Chapter N`` is treated as a non-original
+    (supplementary) chapter — preface, overview, review, etc. Such an entry must declare an explicit
+    ASCII ``id`` (lowercase slug, e.g. ``id: knowledge-overview``) because the free-form title
+    yields no chapter number; ``topics``/``source_refs`` stay required. The ``id`` becomes the
+    chapter's directory name and site URL slug, and must not collide with the reserved
+    ``chapter-<n>`` / ``ch<n>`` / ``appendix`` namespace.
+
+    The same escape hatch applies to two-level entries: a group whose ``title`` is not ``Chapter N``
+    needs an explicit ``id`` (and its ``group_number`` constraint on sections is dropped), and any
+    section whose ``title`` does not start with a number needs its own explicit ``id``. Numbered
+    sections under a non-chapter group are still allowed (their derived ``chapter-<n>-<m>`` id is
+    used as-is, with no parent-number check).
     """
     try:
         payload = yaml.safe_load(structure_yaml)
@@ -93,17 +109,63 @@ def chapter_groups_from_specs(specs: list[ChapterSpec]) -> dict[str, dict[str, o
 
 
 def _parse_leaf(item: dict[str, object]) -> ChapterSpec:
-    parsed = _parse_chapter_heading(str(item.get("title") or ""))
-    if not parsed:
-        msg = "approved structure chapter titles must look like 'Chapter 6 Point Estimation'"
-        raise ValueError(msg)
-    chapter_id, title = parsed
+    raw_title = str(item.get("title") or "").strip()
+    parsed = _parse_chapter_heading(raw_title)
+    if parsed:
+        # Original book chapter: id derived from the "Chapter N" number, title is the remainder.
+        chapter_id, title = parsed
+    else:
+        # Non-original chapter (preface, overview, review, ...): the title may be anything, but
+        # the entry must carry an explicit ASCII ``id`` because the title yields no chapter number.
+        chapter_id = _normalize_chapter_id(item.get("id"))
+        if not chapter_id:
+            msg = (
+                "approved structure chapter titles must look like 'Chapter 6 Point Estimation'; "
+                "for a non-chapter title, add an explicit ASCII 'id' (e.g. id: knowledge-overview)"
+            )
+            raise ValueError(msg)
+        if not raw_title:
+            msg = f"chapter {chapter_id!r} must include a non-empty title"
+            raise ValueError(msg)
+        title = raw_title
     topics = _string_list(item.get("topics"))
     source_refs = _string_list(item.get("source_refs"))
     if not topics or not source_refs:
         msg = f"chapter {chapter_id!r} must include non-empty topics and source_refs lists"
         raise ValueError(msg)
     return ChapterSpec(chapter_id=chapter_id, title=title, topics=topics, source_refs=source_refs)
+
+
+_RESERVED_CHAPTER_ID_RE = re.compile(r"^(?:chapter-\d+|ch\d+|appendix)$", flags=re.IGNORECASE)
+
+
+def _normalize_chapter_id(value: object) -> str | None:
+    """Validate an explicit chapter ``id`` (used as both the directory name and the site URL slug).
+
+    Returns the normalised id, or ``None`` when no id is provided. Raises ``ValueError`` when the
+    id is not a lowercase ASCII slug, or collides with the namespace reserved for original
+    ``Chapter N`` chapters (``chapter-<n>`` / ``ch<n>``) or the ``appendix`` catch-all — those would
+    otherwise get a "Chapter N" prefix re-injected by the display helpers or clash with the
+    unassigned-fragment bucket.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", text):
+        msg = (
+            f"chapter id {text!r} must be a lowercase ASCII slug of letters/digits "
+            "joined by single hyphens, e.g. 'knowledge-overview'"
+        )
+        raise ValueError(msg)
+    if _RESERVED_CHAPTER_ID_RE.match(text):
+        msg = (
+            f"chapter id {text!r} is reserved for original 'Chapter N' chapters; "
+            "choose a descriptive slug such as 'preface' or 'knowledge-overview'"
+        )
+        raise ValueError(msg)
+    return text
 
 
 def _parse_group(item: dict[str, object], index: int) -> list[ChapterSpec]:
@@ -114,34 +176,58 @@ def _parse_group(item: dict[str, object], index: int) -> list[ChapterSpec]:
     if not isinstance(sections, list) or not sections:
         msg = f"chapter group entry {index} 'sections' must be a non-empty list"
         raise ValueError(msg)
-    group = _parse_chapter_heading(str(item.get("title") or ""))
-    if not group:
-        msg = "approved structure group titles must look like 'Chapter 9 Infinite Series'"
-        raise ValueError(msg)
-    group_id, _ = group
-    group_number = int(group_id.split("-", 1)[1])
+    raw_group_title = str(item.get("title") or "").strip()
+    group = _parse_chapter_heading(raw_group_title)
+    if group:
+        # Original book group: id/number derived from the "Chapter N" heading.
+        group_id, _ = group
+        group_number: int | None = int(group_id.split("-", 1)[1])
+    else:
+        # Non-original group (appendix pack, supplementary collection, ...): free-form title needs
+        # an explicit ASCII ``id``; sections are not constrained to the group's chapter number.
+        group_id = _normalize_chapter_id(item.get("id"))
+        if not group_id:
+            msg = (
+                "approved structure group titles must look like 'Chapter 9 Infinite Series'; "
+                "for a non-chapter group, add an explicit ASCII 'id' (e.g. id: appendix-pack)"
+            )
+            raise ValueError(msg)
+        if not raw_group_title:
+            msg = f"chapter group {group_id!r} must include a non-empty title"
+            raise ValueError(msg)
+        group_number = None
     # Use the raw heading as the display title so a bare "Chapter 9" is not duplicated into
     # "Chapter 9 Chapter 9"; a descriptive "Chapter 9 Infinite Series" is kept verbatim.
-    group_title = str(item.get("title") or "").strip()
+    group_title = raw_group_title
     leaves: list[ChapterSpec] = []
     for sub_index, section in enumerate(sections, start=1):
         if not isinstance(section, dict):
             msg = f"section entry {sub_index} in group {group_id!r} must be a mapping"
             raise ValueError(msg)
-        parsed = _parse_section_heading(str(section.get("title") or ""))
-        if not parsed:
-            msg = (
-                f"section titles in group {group_id!r} must start with a number "
-                "like '9.2 Infinite Series'"
-            )
-            raise ValueError(msg)
-        leaf_id, leaf_number, leaf_title = parsed
-        if leaf_number != group_number:
-            msg = (
-                f"section {leaf_title!r} (chapter {leaf_number}) does not belong to "
-                f"group 'Chapter {group_number}'"
-            )
-            raise ValueError(msg)
+        raw_section_title = str(section.get("title") or "").strip()
+        parsed = _parse_section_heading(raw_section_title)
+        if parsed:
+            # Numbered section (e.g. "9.2 Infinite Series"): id/number derived from the heading.
+            leaf_id, leaf_number, leaf_title = parsed
+            if group_number is not None and leaf_number != group_number:
+                msg = (
+                    f"section {leaf_title!r} (chapter {leaf_number}) does not belong to "
+                    f"group 'Chapter {group_number}'"
+                )
+                raise ValueError(msg)
+        else:
+            # Non-numbered section: free-form title needs an explicit ASCII ``id``.
+            leaf_id = _normalize_chapter_id(section.get("id"))
+            if not leaf_id:
+                msg = (
+                    f"section titles in group {group_id!r} must start with a number "
+                    "like '9.2 Infinite Series', or carry an explicit ASCII 'id'"
+                )
+                raise ValueError(msg)
+            if not raw_section_title:
+                msg = f"section {leaf_id!r} must include a non-empty title"
+                raise ValueError(msg)
+            leaf_title = raw_section_title
         topics = _string_list(section.get("topics"))
         source_refs = _string_list(section.get("source_refs"))
         if not topics or not source_refs:
@@ -287,6 +373,7 @@ def split_sources_by_structure(
         coverage,
         report_md,
         chapter_groups=chapter_groups_from_specs(specs),
+        chapter_order=list(chapters.keys()),
     )
 
 
@@ -373,7 +460,8 @@ def _display_chapter_heading(chapter_id: str, title: str) -> str:
     chapter = re.fullmatch(r"chapter-(\d+)", chapter_id)
     if chapter:
         return f"Chapter {int(chapter.group(1))} {clean}".strip()
-    return f"{chapter_id} {clean}".strip() if clean else chapter_id
+    # Non-original chapter (explicit slug id): keep the human title verbatim, never prefix the slug.
+    return clean or chapter_id
 
 
 def _render_report(

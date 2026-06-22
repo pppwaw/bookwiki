@@ -79,6 +79,8 @@ class ChapterSplitResult(VersionedModel):
     # Two-level grouping: group_id -> {"title": str, "leaf_ids": [chapter_id, ...]}.
     # Empty for flat (ungrouped) structures.
     chapter_groups: dict[str, dict[str, object]] = Field(default_factory=dict)
+    # Authoritative reading order (rendered chapter ids, approved-structure order, appendix last).
+    chapter_order: list[str] = Field(default_factory=list)
 
 
 class ChapterSplitAuditResult(VersionedModel):
