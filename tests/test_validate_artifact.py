@@ -100,3 +100,59 @@ async def test_validate_artifact_clean_chinese_returns_empty(tmp_path: Path) -> 
     )
 
     assert issues == []
+
+
+@pytest.mark.asyncio
+async def test_validate_artifact_flags_source_meta_reference_with_quality_off(
+    tmp_path: Path,
+) -> None:
+    runtime = RecordingRuntime([])
+
+    issues = await validate_artifact(
+        body_md=(
+            "若两个网络响应一致（源材料中对此有清晰的描述："
+            "`N1 and N2 are equivalent`），则二者等效。"
+        ),
+        kind="chapter",
+        allowed_refs=set(),
+        cfg=_cfg(tmp_path / "book", runtime),
+    )
+
+    quality = [issue for issue in issues if issue.kind == "quality"]
+    assert len(quality) == 1
+    # The flagged span is a verbatim slice of body_md (so the rewrite agent can find it),
+    # and it captures the whole leaking parenthetical, not just the trigger word.
+    assert quality[0].quote == ("（源材料中对此有清晰的描述：`N1 and N2 are equivalent`）")
+    # Deterministic detection makes no LLM call when qualityCheck is off.
+    assert runtime.calls == []
+
+
+@pytest.mark.asyncio
+async def test_validate_artifact_flags_source_text_reference(tmp_path: Path) -> None:
+    issues = await validate_artifact(
+        body_md="但根据实际参考方向，源文中最终得到的是 $-1$ V，叠加时注意符号。",
+        kind="chapter",
+        allowed_refs=set(),
+        cfg=_cfg(tmp_path / "book", RecordingRuntime([])),
+    )
+
+    quality = [issue for issue in issues if issue.kind == "quality"]
+    assert len(quality) == 1
+    assert "源文中" in quality[0].quote
+
+
+@pytest.mark.asyncio
+async def test_validate_artifact_does_not_flag_circuit_source_terms(
+    tmp_path: Path,
+) -> None:
+    issues = await validate_artifact(
+        body_md=(
+            "# 章\n\n电压源与电流源是基本元件；电源向电路供能，"
+            "多个串联电压源可等效为一个源。资源文件不受影响。"
+        ),
+        kind="chapter",
+        allowed_refs=set(),
+        cfg=_cfg(tmp_path / "book", RecordingRuntime([])),
+    )
+
+    assert [issue for issue in issues if issue.kind == "quality"] == []
