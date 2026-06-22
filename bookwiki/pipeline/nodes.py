@@ -606,11 +606,15 @@ def _inline_quiz_answer_issues(text: str, stem: str) -> list[Issue]:
 
 
 def _normalize_concept_links(
-    markdown: str, alias_map: dict[str, str], concept_previews: dict[str, dict[str, str]]
+    markdown: str,
+    alias_map: dict[str, str],
+    concept_previews: dict[str, dict[str, str]],
+    chapter_previews: dict[str, dict[str, str]] | None = None,
 ) -> str:
     markdown, fence_stash = _stash_code_fences(markdown)
     markdown, quiz_stash = _stash_quiz_blocks(markdown)
     linked_canonicals: set[str] = set()
+    chapters = chapter_previews or {}
 
     def replace(match: re.Match[str]) -> str:
         label = match.group(1).strip()
@@ -618,8 +622,22 @@ def _normalize_concept_links(
         preview = concept_previews.get(canonical)
         if preview:
             linked_canonicals.add(canonical)
+            # A concept always wins a name it shares with a chapter; record the collision so the
+            # author can disambiguate (e.g. give the chapter a more specific title).
+            if label in chapters or _concept_key(label) in chapters:
+                _LOG.warning(
+                    "AMBIGUOUS_WIKILINK label=%r resolves to both a concept and a chapter; "
+                    "concept wins",
+                    label,
+                )
             return _preview_link_mdx(
                 preview["href"], preview["title"], preview["summary"], canonical
+            )
+        # No concept matched: fall back to a chapter-to-chapter link by (exact or normalized) title.
+        chapter = chapters.get(label) or chapters.get(_concept_key(label))
+        if chapter:
+            return _preview_link_mdx(
+                chapter["href"], chapter["title"], chapter["summary"], chapter["title"]
             )
         return f"[[{canonical}]]"
 
@@ -2485,6 +2503,23 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     authoritative_order = list(state.get("chapter_order") or list(agent_results.keys()))
     order_index_by_id = {ch_id: idx for idx, ch_id in enumerate(authoritative_order)}
     next_order_index = len(order_index_by_id)
+    # Pre-pass: build chapter-to-chapter link previews keyed by the chapter's display title (and
+    # its normalized key), so a ``[[chapter title]]`` wikilink in any chapter body resolves to the
+    # owning chapter page. Runs before the render loop, which normalizes each body inline.
+    chapter_previews: dict[str, dict[str, str]] = {}
+    for ch_id, paths in agent_results.items():
+        ch = _agent_result(read_json(cfg.book_dir / paths["chapter"]))
+        summ = _agent_result(read_json(cfg.book_dir / paths["summary"]))
+        display_title = _display_chapter_title(ch_id, str(ch["title"]))
+        group_id = leaf_to_group.get(ch_id)
+        doc_slug = f"{group_id}/{ch_id}" if group_id else ch_id
+        preview = {
+            "href": f"/docs/chapters/{doc_slug}",
+            "title": display_title,
+            "summary": _preview_summary(str(summ.get("summary_md", ""))),
+        }
+        chapter_previews[display_title] = preview
+        chapter_previews[_concept_key(display_title)] = preview
     for ch_id, paths in agent_results.items():
         chapter_order_index = order_index_by_id.get(ch_id)
         if chapter_order_index is None:
@@ -2524,7 +2559,9 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             convert_html_style_attrs(
                 normalize_source_cites(
                     normalize_mdx_math(
-                        _normalize_concept_links(body_md, alias_map, concept_previews)
+                        _normalize_concept_links(
+                            body_md, alias_map, concept_previews, chapter_previews
+                        )
                     )
                 )
             ),

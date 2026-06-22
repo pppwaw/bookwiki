@@ -485,3 +485,38 @@ def test_normalize_concept_links_preserves_mermaid_fences() -> None:
     assert "D[[电阻]] --> B" in fence
     # Prose outside the fence is still linked as usual.
     assert "<PreviewLink" in after
+
+
+def test_normalize_concept_links_resolves_chapter_wikilinks() -> None:
+    """A ``[[chapter title]]`` with no matching concept resolves to a chapter PreviewLink;
+    a name shared by a concept and a chapter resolves to the concept (concept wins)."""
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    alias_map = {"点估计": "点估计"}
+    concept_previews = {
+        "点估计": {"href": "/docs/concepts/点估计", "title": "点估计", "summary": "估计量"},
+    }
+    chapter_previews = {
+        "向量函数": {"href": "/docs/chapters/向量函数", "title": "向量函数", "summary": "向量"},
+        "点估计": {"href": "/docs/chapters/dian-gu-ji", "title": "点估计", "summary": "ch"},
+    }
+
+    body = "参见 [[向量函数]] 一章，以及概念 [[点估计]]。"
+    out = _normalize_concept_links(body, alias_map, concept_previews, chapter_previews)
+
+    # Chapter-only label resolves to the chapter page.
+    assert '<PreviewLink href={"/docs/chapters/向量函数"}' in out
+    assert ">向量函数</PreviewLink>" in out
+    # A label shared by concept + chapter resolves to the concept (concept wins).
+    assert '<PreviewLink href={"/docs/concepts/点估计"}' in out
+    assert '/docs/chapters/dian-gu-ji' not in out
+
+
+def test_normalize_concept_links_leaves_unknown_chapter_wikilink_bare() -> None:
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    chapter_previews = {"别的章": {"href": "x", "title": "别的章", "summary": "s"}}
+    out = _normalize_concept_links("见 [[不存在的章]]。", {}, {}, chapter_previews)
+    assert "[[不存在的章]]" in out
+    assert "<PreviewLink" not in out
+

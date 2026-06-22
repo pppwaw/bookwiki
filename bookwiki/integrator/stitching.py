@@ -24,8 +24,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
-# PreviewLink hrefs render as ``href={"../concepts/<slug>"}`` (JSX expression form).
+# PreviewLink hrefs render as ``href={"/docs/concepts/<slug>"}`` (JSX expression form). Chapter
+# cross-links share the same ``<PreviewLink>`` shape but point at ``/docs/chapters/<doc_slug>``.
 _PREVIEW_HREF_RE = re.compile(r'href=\{?"[^"]*?concepts/([^"]+?)"\}?')
+_CHAPTER_HREF_RE = re.compile(r'href=\{?"[^"]*?chapters/([^"]+?)"\}?')
 
 
 def _concept_key(value: str) -> str:
@@ -53,19 +55,29 @@ def find_term_drift(mdx: str, alias_map: dict[str, str]) -> list[str]:
     return drift
 
 
-def find_unresolved_concept_links(mdx: str, concept_slugs: set[str]) -> list[str]:
-    """Return cross-reference targets that do not resolve to a concept page.
+def find_unresolved_concept_links(
+    mdx: str,
+    concept_slugs: set[str],
+    chapter_slugs: set[str] | None = None,
+) -> list[str]:
+    """Return cross-reference targets that do not resolve to a page.
 
-    Two kinds of dangling references are reported:
-    - a ``<PreviewLink>`` whose ``href`` slug is not among ``concept_slugs``;
-    - a bare ``[[name]]`` wikilink (it was never turned into a PreviewLink, so no
-      concept page backs it).
+    Three kinds of dangling references are reported:
+    - a concept ``<PreviewLink>`` whose ``href`` slug is not among ``concept_slugs``;
+    - a chapter ``<PreviewLink>`` whose ``href`` slug is not among ``chapter_slugs``
+      (only checked when ``chapter_slugs`` is provided — a chapter-to-chapter link);
+    - a bare ``[[name]]`` wikilink (it was never turned into a PreviewLink, so no page backs it).
     """
     unresolved: list[str] = []
     for match in _PREVIEW_HREF_RE.finditer(mdx):
         slug = match.group(1).strip()
         if slug and slug not in concept_slugs:
             unresolved.append(slug)
+    if chapter_slugs is not None:
+        for match in _CHAPTER_HREF_RE.finditer(mdx):
+            slug = match.group(1).strip()
+            if slug and slug not in chapter_slugs:
+                unresolved.append(slug)
     for match in _WIKILINK_RE.finditer(mdx):
         unresolved.append(f"[[{match.group(1).strip()}]]")
     return unresolved
@@ -91,11 +103,21 @@ def audit_stitching(content_dir: Path, alias_map: dict[str, str]) -> StitchingRe
     """Audit a rendered vault for term drift and unresolved cross-references.
 
     ``content_dir`` is the docs root (it contains ``chapters/`` and ``concepts/``).
-    Concept slugs are taken from the rendered ``concepts/*.mdx`` filenames, which is
-    exactly what a ``<PreviewLink href>`` points at.
+    Concept slugs are taken from the rendered ``concepts/*.mdx`` filenames; chapter slugs from the
+    ``chapters/**/*.mdx`` paths (relative, without suffix, so a nested ``group/leaf`` matches the
+    ``/docs/chapters/group/leaf`` href) — exactly what a ``<PreviewLink href>`` points at.
     """
     concepts_dir = content_dir / "concepts"
     concept_slugs = {path.stem for path in concepts_dir.glob("*.mdx")}
+    chapters_dir = content_dir / "chapters"
+    chapter_slugs = (
+        {
+            path.relative_to(chapters_dir).with_suffix("").as_posix()
+            for path in chapters_dir.rglob("*.mdx")
+        }
+        if chapters_dir.exists()
+        else set()
+    )
 
     drift: list[tuple[str, str]] = []
     unresolved: list[tuple[str, str]] = []
@@ -104,6 +126,7 @@ def audit_stitching(content_dir: Path, alias_map: dict[str, str]) -> StitchingRe
         text = mdx_path.read_text(encoding="utf-8")
         drift.extend((rel, label) for label in find_term_drift(text, alias_map))
         unresolved.extend(
-            (rel, target) for target in find_unresolved_concept_links(text, concept_slugs)
+            (rel, target)
+            for target in find_unresolved_concept_links(text, concept_slugs, chapter_slugs)
         )
     return StitchingReport(term_drift=drift, unresolved_xrefs=unresolved)
