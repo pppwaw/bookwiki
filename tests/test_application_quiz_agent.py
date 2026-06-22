@@ -10,22 +10,15 @@ SOURCE_MD = "<!-- source_ref: src-p001 -->\nA sample of size n=31 estimates a me
 
 
 @pytest.mark.asyncio
-async def test_application_quiz_agent_returns_requested_application_items() -> None:
+async def test_application_quiz_agent_returns_one_application_item() -> None:
     runtime = RecordingRuntime(
         [
             {
-                "chapter_id": "chapter-1",
-                "items": [
-                    {
-                        "question": "A study has $n=31$ observations. Which method is appropriate?",
-                        "choices": ["Use the large-sample approximation", "Treat $n$ as $3$"],
-                        "answer": "Use the large-sample approximation",
-                        "explanation": "Because $n=31$ exceeds $30$, the approximation applies.",
-                        "citations": [{"ref_id": "src-p001", "quote": "n=31"}],
-                    }
-                ],
-                "placements": [],
-                "owner_task_id": "chapter-1:quiz",
+                "question": "A study has $n=31$ observations. Which method is appropriate?",
+                "choices": ["Use the large-sample approximation", "Treat $n$ as $3$"],
+                "answer": "Use the large-sample approximation",
+                "explanation": "Because $n=31$ exceeds $30$, the approximation applies.",
+                "citations": [{"ref_id": "src-p001", "quote": "n=31"}],
             }
         ]
     )
@@ -36,38 +29,41 @@ async def test_application_quiz_agent_returns_requested_application_items() -> N
             "title": "Point Estimation",
             "source_md": SOURCE_MD,
             "chapter_body_md": "# Point Estimation\n\nUse sample size rules.",
-            "requests": [
-                {
-                    "topic": "sample size threshold",
-                    "concept": "large-sample approximation",
-                    "rationale": "The section teaches the threshold.",
-                    "source_refs": ["src-p001"],
-                }
-            ],
+            "request": {
+                "topic": "sample size threshold",
+                "concept": "large-sample approximation",
+                "source_refs": ["src-p001"],
+            },
             "allowed_source_refs": ["src-p001"],
         },
         model="deepseek-v4-pro",
         runtime=runtime,
     )
 
-    assert "$n=31$" in result.items[0].question
-    assert result.items[0].citations[0].ref_id == "src-p001"
+    assert "$n=31$" in result.question
+    assert result.citations[0].ref_id == "src-p001"
     assert runtime.calls[0]["context"] == {"allowed_citation_refs": {"src-p001"}}
 
 
 @pytest.mark.asyncio
-async def test_application_quiz_agent_offline_echoes_empty_items() -> None:
+async def test_application_quiz_agent_offline_returns_draft_item() -> None:
     result = await ApplicationQuizAgent().run(
         {
             "chapter_id": "chapter-1",
             "title": "Point Estimation",
             "source_md": SOURCE_MD,
             "chapter_body_md": "# Point Estimation\n\nUse sample size rules.",
-            "requests": [],
+            "request": {
+                "topic": "sample size threshold",
+                "concept": "large-sample approximation",
+                "source_refs": ["src-p001"],
+            },
             "allowed_source_refs": ["src-p001"],
         },
         model="deepseek-v4-pro",
         runtime=TestLLMRuntime(),
     )
 
-    assert result.items == []
+    # Offline runtime returns the deterministic draft (one QuizItem seeded from the topic).
+    assert result.question == "sample size threshold"
+    assert len(result.choices) >= 2

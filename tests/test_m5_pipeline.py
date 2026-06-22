@@ -82,7 +82,13 @@ async def test_check_routes_bad_quiz_answer_and_repair_drops_invalid_item(tmp_pa
                 "result": {
                     "chapter_id": "chapter-1",
                     "title": "Search",
-                    "body_md": "Search uses [[递推]].",
+                    "body_md": (
+                        "Search uses [[递推]].\n\n"
+                        '<QuizBlock>\n<QuizItemSlot id="chapter-1:s0:slot-000" '
+                        'topic="t" sourceRefs={["source-p001"]} />\n'
+                        '<QuizItemSlot id="chapter-1:s0:slot-001" '
+                        'topic="t" sourceRefs={["source-p001"]} />\n</QuizBlock>'
+                    ),
                     "concepts": ["递归"],
                     "citations": [{"ref_id": "source-p001", "quote": "Search source"}],
                     "owner_task_id": "chapter-1:chapter",
@@ -111,6 +117,7 @@ async def test_check_routes_bad_quiz_answer_and_repair_drops_invalid_item(tmp_pa
                             "answer": "A",
                             "explanation": "Valid.",
                             "citations": [],
+                            "slot_id": "chapter-1:s0:slot-000",
                         },
                         {
                             "question": "What is search?",
@@ -118,6 +125,7 @@ async def test_check_routes_bad_quiz_answer_and_repair_drops_invalid_item(tmp_pa
                             "answer": "C",
                             "explanation": "Because.",
                             "citations": [{"ref_id": "source-p001", "quote": "Search source"}],
+                            "slot_id": "chapter-1:s0:slot-001",
                         },
                     ],
                     "owner_task_id": "chapter-1:quiz",
@@ -202,7 +210,11 @@ async def test_check_accepts_hyphenated_source_refs_from_sources_md(tmp_path) ->
                 "result": {
                     "chapter_id": "chapter-6",
                     "title": "Point Estimation",
-                    "body_md": "Body.",
+                    "body_md": (
+                        "Body.\n\n"
+                        '<QuizBlock>\n<QuizItemSlot id="chapter-6:s0:slot-000" '
+                        'topic="t" sourceRefs={["Week-10-p001"]} />\n</QuizBlock>'
+                    ),
                     "concepts": [],
                     "citations": [{"ref_id": "Week-10-p001", "quote": "Source text"}],
                     "owner_task_id": "chapter-6:chapter",
@@ -235,6 +247,7 @@ async def test_check_accepts_hyphenated_source_refs_from_sources_md(tmp_path) ->
                             "answer": "A",
                             "explanation": "E.",
                             "citations": [{"ref_id": "Week-10-p001", "quote": "Source text"}],
+                            "slot_id": "chapter-6:s0:slot-000",
                         }
                     ],
                     "owner_task_id": "chapter-6:quiz",
@@ -297,7 +310,11 @@ async def test_check_accepts_custom_quiz_headings_when_quizblock_exists(tmp_path
                 "result": {
                     "chapter_id": "chapter-6",
                     "title": "Point Estimation",
-                    "body_md": "Opening explanation.\n\nClosing explanation.",
+                    "body_md": (
+                        "Opening explanation.\n\nClosing explanation.\n\n"
+                        '<QuizBlock>\n<QuizItemSlot id="chapter-6:s0:slot-000" '
+                        'topic="t" sourceRefs={["Week-10-p001"]} />\n</QuizBlock>'
+                    ),
                     "concepts": [],
                     "citations": [],
                     "owner_task_id": "chapter-6:chapter",
@@ -330,10 +347,8 @@ async def test_check_accepts_custom_quiz_headings_when_quizblock_exists(tmp_path
                             "answer": "A",
                             "explanation": "E.",
                             "citations": [],
+                            "slot_id": "chapter-6:s0:slot-000",
                         }
-                    ],
-                    "placements": [
-                        {"after_block": 0, "item_indexes": [1], "title": "Checkpoint"}
                     ],
                     "owner_task_id": "chapter-6:quiz",
                 }
@@ -560,6 +575,7 @@ def test_integrate_uses_alias_map_embedded_in_reconciled_concepts(tmp_path) -> N
                             "choices": ["A", "B"],
                             "answer": "A",
                             "explanation": "E.",
+                            "slot_id": "chapter-1:s0:slot-000",
                         }
                     ],
                     "owner_task_id": "chapter-1:quiz",
@@ -630,7 +646,11 @@ async def test_check_routes_unknown_refs_for_concept_and_quiz_owners(tmp_path) -
                 "result": {
                     "chapter_id": "chapter-1",
                     "title": "Search",
-                    "body_md": "Body.",
+                    "body_md": (
+                        "Body.\n\n"
+                        '<QuizBlock>\n<QuizItemSlot id="chapter-1:s0:slot-000" '
+                        'topic="t" sourceRefs={["source-p001"]} />\n</QuizBlock>'
+                    ),
                     "concepts": ["递归"],
                     "citations": [{"ref_id": "source-p001", "quote": "Text"}],
                     "owner_task_id": "chapter-1:chapter",
@@ -656,6 +676,7 @@ async def test_check_routes_unknown_refs_for_concept_and_quiz_owners(tmp_path) -
                             "answer": "A",
                             "explanation": "E.",
                             "citations": [{"ref_id": "missing-p999", "quote": "Nope"}],
+                            "slot_id": "chapter-1:s0:slot-000",
                         }
                     ],
                     "owner_task_id": "chapter-1:quiz",

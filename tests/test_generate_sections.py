@@ -118,13 +118,9 @@ def _section_response_with_body(body_md: str) -> dict[str, Any]:
     return payload
 
 
-def _application_quiz_response(items: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    return {
-        "chapter_id": "chapter-1",
-        "items": items or [],
-        "placements": [],
-        "owner_task_id": "chapter-1:quiz",
-    }
+def _application_quiz_response(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """One ApplicationQuizAgent call now returns a single QuizItem (per-slot contract)."""
+    return items[0]
 
 
 def _card_response() -> dict[str, Any]:
@@ -161,8 +157,6 @@ async def test_generate_chapter_sections_records_fallback_warning(tmp_path: Path
             _plan_response(["Owned Concept"]),
             _section_response(["Owned Concept"]),  # initial: violates ownership
             _section_response(["Owned Concept"]),  # repair response reused by cache in round 2
-            _empty_knowledge_quiz_response(),
-            _application_quiz_response(),
             _card_response(),
             _summary_response(),
         ]
@@ -199,9 +193,7 @@ async def test_generate_chapter_sections_inline_repairs_bare_mdx_math(
         [
             _plan_response([]),
             _section_response_with_body("当 n<30 时使用 t 分布。"),
-            _empty_knowledge_quiz_response(),
             {"status": "fixed", "notes": "wrapped the bare comparison in math"},
-            _application_quiz_response(),
             _card_response(),
             _summary_response(),
         ],
@@ -223,7 +215,7 @@ async def test_generate_chapter_sections_inline_repairs_bare_mdx_math(
     assert "$n < 30$" in result.chapter.body_md
     assert "n<30" not in result.chapter.body_md
     assert result.issues == []
-    assert "ChapterMdxEditRepairAgent" in runtime.calls[3]["user"]
+    assert "ChapterMdxEditRepairAgent" in runtime.calls[2]["user"]
 
 
 @pytest.mark.asyncio
@@ -234,11 +226,9 @@ async def test_generate_chapter_sections_inline_exhaustion_warns_and_completes(
         [
             _plan_response([]),
             _section_response_with_body("当 n<30 时使用 t 分布。"),
-            _empty_knowledge_quiz_response(),
             # Two repair rounds where the edit loop makes no effective edits.
             {"status": "gave_up", "notes": "could not isolate the breakage"},
             {"status": "gave_up", "notes": "could not isolate the breakage"},
-            _application_quiz_response(),
             _card_response(),
             _summary_response(),
         ]
@@ -302,43 +292,14 @@ def _section_response_at(index: int, title: str) -> dict[str, Any]:
     }
 
 
-def _section_response_with_practice(index: int, title: str) -> dict[str, Any]:
+def _section_response_with_slot(index: int, title: str) -> dict[str, Any]:
     payload = _section_response_at(index, title)
-    payload["application_question_requests"] = [
-        {
-            "topic": f"{title} application",
-            "concept": title,
-            "rationale": "The section supports a concrete scenario.",
-            "source_refs": ["src-p001"],
-        }
-    ]
+    payload["body_md"] = (
+        "Section body about the concept.\n\n"
+        '<QuizBlock>\n<QuizItemSlot id="auto" topic="application scenario" '
+        f'concept="{title}" sourceRefs={{["src-p001"]}} />\n</QuizBlock>'
+    )
     return payload
-
-
-def _knowledge_quiz_response(index: int, title: str) -> dict[str, Any]:
-    return {
-        "chapter_id": "chapter-1",
-        "section_index": index,
-        "items": [
-            {
-                "question": f"What does {title} define?",
-                "choices": [title, "Unrelated topic"],
-                "answer": title,
-                "explanation": "This section introduces the concept directly.",
-                "citations": [{"ref_id": "src-p001", "quote": "content"}],
-            }
-        ],
-        "owner_task_id": f"chapter-1:section:{index:03d}:knowledge_quiz",
-    }
-
-
-def _empty_knowledge_quiz_response(index: int = 0) -> dict[str, Any]:
-    return {
-        "chapter_id": "chapter-1",
-        "section_index": index,
-        "items": [],
-        "owner_task_id": f"chapter-1:section:{index:03d}:knowledge_quiz",
-    }
 
 
 def _application_item(index: int, question: str | None = None) -> dict[str, Any]:
@@ -359,10 +320,7 @@ async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path
         [
             _two_section_plan(),
             _section_response_at(0, "Foundations"),
-            _empty_knowledge_quiz_response(0),
             _section_response_at(1, "Estimators"),
-            _empty_knowledge_quiz_response(1),
-            _application_quiz_response(),
             _card_response(),
             _summary_response(),
         ]
@@ -380,10 +338,10 @@ async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path
         skeleton_payload={},
     )
 
-    # calls: [plan, section-0, knowledge-0, section-1, knowledge-1, application_quiz, card, summary]
+    # calls: [plan, section-0, section-1, card, summary]
     section0 = runtime.calls[1]["user"]
-    section1 = runtime.calls[3]["user"]
-    summary = runtime.calls[7]["user"]
+    section1 = runtime.calls[2]["user"]
+    summary = runtime.calls[4]["user"]
 
     # Section 0 can see the later section's title only via the injected outline.
     assert '"chapter_outline"' in section0
@@ -397,17 +355,18 @@ async def test_section_and_summary_receive_chapter_outline_and_position(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_generate_chapter_sections_merges_section_knowledge_and_application_quiz(
+async def test_generate_chapter_sections_fills_application_slots_from_sections(
     tmp_path: Path,
 ) -> None:
+    # Two sections each author an application <QuizItemSlot/>; the application quiz agent
+    # fills both, and each item is bound to its section's canonical slot id by order.
     runtime = RecordingRuntime(
         [
             _two_section_plan(),
-            _section_response_with_practice(0, "Foundations"),
-            _knowledge_quiz_response(0, "Foundations"),
-            _section_response_with_practice(1, "Estimators"),
-            _knowledge_quiz_response(1, "Estimators"),
-            _application_quiz_response([_application_item(1), _application_item(2)]),
+            _section_response_with_slot(0, "Foundations"),
+            _section_response_with_slot(1, "Estimators"),
+            _application_quiz_response([_application_item(1)]),
+            _application_quiz_response([_application_item(2)]),
             _card_response(),
             _summary_response(),
         ]
@@ -425,20 +384,15 @@ async def test_generate_chapter_sections_merges_section_knowledge_and_applicatio
         skeleton_payload={},
     )
 
-    assert [item.answer for item in result.quiz.items] == [
-        "Foundations",
-        "Estimators",
-        "$2$",
-        "$3$",
+    assert [item.answer for item in result.quiz.items] == ["$2$", "$3$"]
+    # Each filled item carries its section's canonical slot id (bound by order, not by the LLM).
+    assert [item.slot_id for item in result.quiz.items] == [
+        "chapter-1:s0:slot-000",
+        "chapter-1:s1:slot-000",
     ]
-    placed = sorted(
-        index for placement in result.quiz.placements for index in placement.item_indexes
-    )
-    assert placed == [1, 2, 3, 4]
-    assert runtime.calls[2]["output_model"].__name__ == "KnowledgeQuizResult"
-    assert '"body_md"' in runtime.calls[2]["user"]
-    assert runtime.calls[5]["output_model"].__name__ == "QuizResult"
-    assert '"requests"' in runtime.calls[5]["user"]
+    # Only the application quiz agent runs now (no separate knowledge agent).
+    assert runtime.calls[3]["output_model"].__name__ == "QuizItem"
+    assert '"request"' in runtime.calls[3]["user"]
 
 
 @pytest.mark.asyncio
@@ -448,8 +402,7 @@ async def test_generate_chapter_sections_repairs_invalid_application_quiz_mdx(
     runtime = RecordingRuntime(
         [
             _plan_response([]),
-            _section_response([]),
-            _empty_knowledge_quiz_response(),
+            _section_response_with_slot(0, "S0"),
             _application_quiz_response([_application_item(1, question="When n<30, what follows?")]),
             _application_quiz_response(
                 [_application_item(1, question="When $n < 30$, what follows?")]
@@ -473,8 +426,8 @@ async def test_generate_chapter_sections_repairs_invalid_application_quiz_mdx(
 
     assert "When $n < 30$" in result.quiz.items[0].question
     assert result.issues == []
-    assert runtime.calls[4]["output_model"].__name__ == "QuizResult"
-    assert "mdx_errors" in runtime.calls[4]["user"]
+    assert runtime.calls[3]["output_model"].__name__ == "QuizItem"
+    assert "mdx_errors" in runtime.calls[3]["user"]
 
 
 @pytest.mark.asyncio
@@ -484,8 +437,7 @@ async def test_generate_chapter_sections_warns_when_application_quiz_mdx_stays_b
     runtime = RecordingRuntime(
         [
             _plan_response([]),
-            _section_response([]),
-            _empty_knowledge_quiz_response(),
+            _section_response_with_slot(0, "S0"),
             _application_quiz_response([_application_item(1, question="When n<30, what follows?")]),
             _application_quiz_response([_application_item(1, question="When n<30, what follows?")]),
             _application_quiz_response([_application_item(1, question="When n<30, what follows?")]),

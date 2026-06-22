@@ -144,18 +144,11 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
                 "owner_task_id": "chapter-1:section:000",
             },
             {
-                "chapter_id": "chapter-1",
-                "items": [
-                    {
-                        "question": "Given $3$ states, what is expanded?",
-                        "choices": ["$3$ states", "$3$ colors"],
-                        "answer": "$3$ states",
-                        "explanation": "The source says search expands states.",
-                        "citations": [{"ref_id": "source-p001", "quote": "expands states"}],
-                    }
-                ],
-                "placements": [],
-                "owner_task_id": "chapter-1:quiz",
+                "question": "Given $3$ states, what is expanded?",
+                "choices": ["$3$ states", "$3$ colors"],
+                "answer": "$3$ states",
+                "explanation": "The source says search expands states.",
+                "citations": [{"ref_id": "source-p001", "quote": "expands states"}],
             },
             {
                 "chapter_id": "chapter-1",
@@ -244,7 +237,15 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     )
     section = await SectionAgent().run(chapter_payload, model="deepseek-v4-pro", runtime=runtime)
     application_quiz = await ApplicationQuizAgent().run(
-        {**chapter_payload, "chapter_body_md": section.body_md, "requests": []},
+        {
+            **chapter_payload,
+            "chapter_body_md": section.body_md,
+            "request": {
+                "topic": "count expanded states",
+                "concept": "search",
+                "source_refs": ["source-p001"],
+            },
+        },
         model="deepseek-v4-pro",
         runtime=runtime,
     )
@@ -311,7 +312,7 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert [chapter.title for chapter in structure.chapters] == ["Chapter 1 Search"]
     assert split.report_md == "# Split Audit\n\nMock audit."
     assert section.owner_task_id == "chapter-1:section:000"
-    assert application_quiz.items[0].answer == "$3$ states"
+    assert application_quiz.answer == "$3$ states"
     assert card.items[0].front == "State space search"
     assert summary.key_points == ["States", "Goals"]
     assert extracted.concepts[0].name == "state space"
@@ -325,7 +326,7 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert len(runtime.calls) == 12
     assert runtime.responses == []
     assert {call["output_model"] for call in runtime.calls} >= {
-        "QuizResult",
+        "QuizItem",
         "CardResult",
         "SourceLayoutRepairResult",
         "VisionCaptionResult",

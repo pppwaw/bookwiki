@@ -112,24 +112,6 @@ def _quality_report(findings: list[dict[str, str]]) -> dict[str, Any]:
     return {"owner_task_id": "inline", "findings": findings}
 
 
-def _application_quiz_response() -> dict[str, Any]:
-    return {
-        "chapter_id": "chapter-1",
-        "items": [],
-        "placements": [],
-        "owner_task_id": "chapter-1:quiz",
-    }
-
-
-def _knowledge_quiz_response() -> dict[str, Any]:
-    return {
-        "chapter_id": "chapter-1",
-        "section_index": 0,
-        "items": [],
-        "owner_task_id": "chapter-1:section:000:knowledge_quiz",
-    }
-
-
 def _card_response() -> dict[str, Any]:
     return {"chapter_id": "chapter-1", "items": [], "owner_task_id": "chapter-1:card"}
 
@@ -177,7 +159,6 @@ async def test_generate_inline_quality_rewrites_language_leak(tmp_path: Path) ->
         [
             _plan_response(),
             _section_response("随后查得select the cutoff value来控制错误率。"),
-            _knowledge_quiz_response(),
             _quality_report(
                 [
                     {
@@ -189,7 +170,6 @@ async def test_generate_inline_quality_rewrites_language_leak(tmp_path: Path) ->
             ),
             _chapter_response("# Search\n\n## S0\n\n随后查得用于选择临界值来控制错误率。"),
             _quality_report([]),
-            _application_quiz_response(),
             _card_response(),
             _summary_response(),
         ]

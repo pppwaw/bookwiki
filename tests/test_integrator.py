@@ -142,9 +142,6 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
                         "citations": [{"ref_id": "source-p001", "quote": "expands states"}],
                     }
                 ],
-                "placements": [
-                    {"after_block": 0, "item_indexes": [1], "title": "Quick Check"}
-                ],
                 "owner_task_id": "chapter-1:quiz",
             }
         ),
@@ -391,7 +388,6 @@ def test_integrate_node_resolves_chapter_figures_from_source(tmp_path: Path) -> 
             {
                 "chapter_id": "chapter-1",
                 "items": [],
-                "placements": [],
                 "owner_task_id": "chapter-1:quiz",
             }
         ),

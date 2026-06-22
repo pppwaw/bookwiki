@@ -3,7 +3,6 @@ from __future__ import annotations
 from pydantic import Field
 
 from bookwiki.schemas.common import Citation, VersionedModel
-from bookwiki.schemas.quiz import QuizItem
 
 
 class SectionSpec(VersionedModel):
@@ -45,21 +44,13 @@ class FigureRequest(VersionedModel):
     rationale: str = ""
 
 
-class ApplicationQuizRequest(VersionedModel):
-    """A section's declared need for a later application/computation quiz item."""
-
-    topic: str
-    concept: str = ""
-    rationale: str = ""
-    source_refs: list[str] = Field(default_factory=list)
-
-
 class SectionResult(VersionedModel):
     """A single generated section body fragment.
 
-    Sections carry prose plus local knowledge checks and structured requests for
-    later application/computation quiz items. Recall cards remain chapter-level.
-    ``body_md`` must NOT include the chapter ``# H1`` heading; the
+    Sections carry prose with quizzes authored inline by ``SectionAgent``: knowledge
+    ``<QuizBlock>``/``<QuizItem>`` written directly, and application ``<QuizItemSlot/>``
+    placeholders filled later by ``ApplicationQuizAgent``. Recall cards remain
+    chapter-level. ``body_md`` must NOT include the chapter ``# H1`` heading; the
     assembler adds it once and prefixes each section with its own ``##`` title.
     """
 
@@ -70,6 +61,4 @@ class SectionResult(VersionedModel):
     concepts: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     figure_requests: list[FigureRequest] = Field(default_factory=list)
-    knowledge_questions: list[QuizItem] = Field(default_factory=list)
-    application_question_requests: list[ApplicationQuizRequest] = Field(default_factory=list)
     owner_task_id: str

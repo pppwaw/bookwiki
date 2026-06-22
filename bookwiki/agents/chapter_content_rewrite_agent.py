@@ -28,6 +28,7 @@ class ChapterContentRewriteAgent:
 - 只改 `quality_findings[].quote` 命中的片段;除此以外,正文必须 byte-for-byte 保持不变。
 - 不要改动教学内容、论证顺序、标题层级、Markdown/MDX 结构。
 - 不要删改任何 `<BookFigure ... />`、`<PreviewLink ...>`、公式、代码、链接或引用。
+- 测验标签 `<QuizBlock>`/`<QuizItem>`/`<QuizItemSlot ... />` 必须逐字保留，不要删改或移动。
 - 保持 `chapter_id`、`title`、`concepts`、`citations`、`owner_task_id` 与输入完全一致。
 - 不要引入新的 source_ref;`citations` 的 ref_id 必须仍在 `allowed_source_refs` 中。
 - 如果某个 quote 不在正文中,不要臆造位置;保持正文其它内容不变。

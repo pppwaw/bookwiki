@@ -140,23 +140,16 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
                 "owner_task_id": "chapter-6:section:000",
             },
             {
-                "chapter_id": "chapter-6",
-                "items": [
+                "question": "If the estimator is $31$, what is estimated?",
+                "choices": ["parameter", "path"],
+                "answer": "parameter",
+                "explanation": "Point estimation estimates parameters.",
+                "citations": [
                     {
-                        "question": "If the estimator is $31$, what is estimated?",
-                        "choices": ["parameter", "path"],
-                        "answer": "parameter",
-                        "explanation": "Point estimation estimates parameters.",
-                        "citations": [
-                            {
-                                "ref_id": "Week-10-p001",
-                                "quote": "unknown parameters",
-                            }
-                        ],
+                        "ref_id": "Week-10-p001",
+                        "quote": "unknown parameters",
                     }
                 ],
-                "placements": [],
-                "owner_task_id": "chapter-6:quiz",
             },
             {
                 "chapter_id": "chapter-6",
@@ -234,7 +227,11 @@ async def test_all_agents_call_llm_runtime(tmp_path) -> None:
         {
             **chapter_payload,
             "chapter_body_md": "# Point Estimation\n\nMethod of moments.",
-            "requests": [],
+            "request": {
+                "topic": "estimator",
+                "concept": "point estimation",
+                "source_refs": ["Week-10-p001"],
+            },
         },
         model="deepseek-v4-pro",
         runtime=runtime,
@@ -280,11 +277,14 @@ async def test_split_practice_agents_offline_echo_empty_items() -> None:
     }
 
     quiz = await ApplicationQuizAgent().run(
-        {**payload, "requests": []}, model="deepseek-v4-pro", runtime=TestLLMRuntime()
+        {**payload, "request": {"topic": "search depth", "source_refs": ["source-p001"]}},
+        model="deepseek-v4-pro",
+        runtime=TestLLMRuntime(),
     )
     card = await CardAgent().run(payload, model="deepseek-v4-flash", runtime=TestLLMRuntime())
 
-    assert quiz.items == []
+    # Offline ApplicationQuizAgent returns the deterministic draft (one QuizItem from the topic).
+    assert quiz.question == "search depth"
     assert card.items == []
 
 

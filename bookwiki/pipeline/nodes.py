@@ -20,7 +20,6 @@ from bookwiki.agents import (
     ConceptExtractAgent,
     ConceptMdxEditRepairAgent,
     ConceptReconcileAgent,
-    KnowledgeQuizAgent,
     ReviewAgent,
     SectionAgent,
     SkeletonAgent,
@@ -32,6 +31,7 @@ from bookwiki.agents import (
 )
 from bookwiki.agents._helpers import SOURCE_REF_RE
 from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
+from bookwiki.checkers.quiz_extractor import QuizExtractError, extract_inline_quizzes
 from bookwiki.convert.common import (
     BOOK_FIGURE_TAG_RE,
     parse_book_figure_tag,
@@ -60,14 +60,10 @@ from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
 from bookwiki.schemas.concept import ConceptReconciledItem, ConceptReconcileResult, ConceptResult
 from bookwiki.schemas.report import CheckReport, Issue
-from bookwiki.schemas.section import ApplicationQuizRequest
 from bookwiki.split.chapter_splitter import parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
 from bookwiki.utils.hashing import sha256_file, sha256_text
 from bookwiki.utils.logging import get_logger
-
-_APPLICATION_QUIZ_REQUEST_SCHEMA = ApplicationQuizRequest
-_KNOWLEDGE_QUIZ_AGENT = KnowledgeQuizAgent
 
 State = dict[str, Any]
 
@@ -389,14 +385,6 @@ def _quiz_item_mdx(item: dict[str, Any], index: int) -> str:
     return "\n".join(children)
 
 
-def _quiz_items_mdx(items: list[dict[str, Any]], item_indexes: list[int] | None = None) -> str:
-    rendered: list[str] = []
-    indexes = item_indexes if item_indexes is not None else list(range(1, len(items) + 1))
-    for item, index in zip(items, indexes, strict=False):
-        rendered.append(_quiz_item_mdx(item, index))
-    return "\n\n".join(rendered)
-
-
 def _card_item_mdx(item: dict[str, Any], index: int) -> str:
     props = " ".join(
         [
@@ -481,138 +469,6 @@ def _homepage_summary(value: Any) -> str:
     return re.sub(r"\s+", " ", paragraphs[0]).strip()
 
 
-def _quiz_block_mdx(
-    title: str,
-    items: list[dict[str, Any]],
-    item_indexes: list[int] | None = None,
-    *,
-    heading_level: int = 2,
-) -> str:
-    heading = "#" * min(max(heading_level, 1), 6)
-    return (
-        f"{heading} {title or 'Quiz'}\n\n<QuizBlock>\n"
-        f"{_quiz_items_mdx(items, item_indexes)}\n</QuizBlock>"
-    )
-
-
-def _quiz_heading_level(blocks: list[str], after_index: int) -> int:
-    current_level = 1
-    for block in blocks[: after_index + 1]:
-        first_line = block.splitlines()[0] if block else ""
-        match = re.match(r"^(#{1,6})\s+\S", first_line)
-        if match:
-            current_level = len(match.group(1))
-    return min(current_level + 1, 6)
-
-
-def _insert_quiz_blocks(body_md: str, quiz: dict[str, Any]) -> str:
-    heading, content_md = _split_leading_h1(body_md)
-    blocks = [block.strip() for block in re.split(r"\n{2,}", content_md.strip()) if block.strip()]
-    items = [item for item in quiz.get("items", []) if isinstance(item, dict)]
-    placements = _quiz_placements_for_render(quiz, len(items))
-    if not items:
-        return _join_leading_h1(heading, content_md.strip())
-    if not placements:
-        if len(blocks) < 2:
-            after = max(len(blocks) - 1, 0)
-            quiz_block = _quiz_block_mdx(
-                "Quiz", items, heading_level=_quiz_heading_level(blocks, after)
-            )
-            return _join_leading_h1(heading, f"{content_md.strip()}\n\n{quiz_block}".strip())
-        insert_after = max(1, (len(blocks) + 1) // 2)
-        after = insert_after - 1
-        quiz_block = _quiz_block_mdx(
-            "Quiz", items, heading_level=_quiz_heading_level(blocks, after)
-        )
-        merged = [*blocks[:insert_after], quiz_block, *blocks[insert_after:]]
-        return _join_leading_h1(heading, "\n\n".join(merged))
-
-    chunks_by_after: dict[int, list[str]] = {}
-    used_indexes: set[int] = set()
-    for placement in placements:
-        indexes = [
-            index
-            for index in placement["item_indexes"]
-            if 1 <= index <= len(items) and index not in used_indexes
-        ]
-        if not indexes:
-            continue
-        used_indexes.update(indexes)
-        selected = [items[index - 1] for index in indexes]
-        after = min(max(int(placement["after_block"]), 0), max(len(blocks) - 1, 0))
-        chunks_by_after.setdefault(after, []).append(
-            _quiz_block_mdx(
-                str(placement.get("title") or "Quiz"),
-                selected,
-                indexes,
-                heading_level=_quiz_heading_level(blocks, after),
-            )
-        )
-
-    unassigned_indexes = [index for index in range(1, len(items) + 1) if index not in used_indexes]
-    unassigned = [items[index - 1] for index in unassigned_indexes]
-    if unassigned:
-        after = max(chunks_by_after, default=max(0, (len(blocks) - 1) // 2))
-        chunks_by_after.setdefault(after, []).append(
-            _quiz_block_mdx(
-                "Quiz",
-                unassigned,
-                unassigned_indexes,
-                heading_level=_quiz_heading_level(blocks, after),
-            )
-        )
-
-    merged: list[str] = []
-    for index, block in enumerate(blocks):
-        merged.append(block)
-        if index in chunks_by_after:
-            merged.extend(chunks_by_after[index])
-    if not blocks:
-        merged.extend(chunks_by_after.get(0, []))
-    return _join_leading_h1(heading, "\n\n".join(merged))
-
-
-def _split_leading_h1(markdown: str) -> tuple[str, str]:
-    lines = str(markdown).strip().splitlines()
-    if lines and re.match(r"^#\s+.+$", lines[0]):
-        return lines[0].strip(), "\n".join(lines[1:]).strip()
-    return "", str(markdown).strip()
-
-
-def _join_leading_h1(heading: str, markdown: str) -> str:
-    body = str(markdown).strip()
-    if heading and body:
-        return f"{heading}\n\n{body}"
-    return heading or body
-
-
-def _quiz_placements_for_render(quiz: dict[str, Any], item_count: int) -> list[dict[str, Any]]:
-    placements: list[dict[str, Any]] = []
-    for raw in quiz.get("placements", []):
-        if not isinstance(raw, dict):
-            continue
-        item_indexes = []
-        for value in raw.get("item_indexes", []):
-            try:
-                item_indexes.append(int(value))
-            except (TypeError, ValueError):
-                continue
-        if not item_indexes and item_count:
-            continue
-        try:
-            after_block = int(raw.get("after_block", 0))
-        except (TypeError, ValueError):
-            after_block = 0
-        placements.append(
-            {
-                "after_block": after_block,
-                "item_indexes": item_indexes,
-                "title": str(raw.get("title") or "Quiz"),
-            }
-        )
-    return placements
-
-
 def _document_title(body: str, fallback: str) -> str:
     frontmatter = re.match(r"^---\n(.*?)\n---", body, flags=re.DOTALL)
     if frontmatter:
@@ -643,9 +499,100 @@ def _load_alias_map(state: State, cfg: BookConfig) -> dict[str, str]:
     return {}
 
 
+_QUIZ_BLOCK_RE = re.compile(r"<QuizBlock>[\s\S]*?</QuizBlock>")
+_QUIZ_ITEM_SLOT_RE = re.compile(r"<QuizItemSlot\b[^>]*/>")
+_EMPTY_QUIZ_BLOCK_RE = re.compile(r"<QuizBlock>\s*</QuizBlock>\n*")
+
+
+def _stash_quiz_blocks(markdown: str) -> tuple[str, list[str]]:
+    """Replace authored ``<QuizBlock>`` spans with opaque sentinels.
+
+    Concept auto-linking and ``[[wikilink]]`` rewriting must never reach inside an authored
+    quiz block (no ``<PreviewLink>`` injected into question/choice/explanation text).
+    """
+    stash: list[str] = []
+
+    def _sub(match: re.Match[str]) -> str:
+        stash.append(match.group(0))
+        return f"\x00QUIZBLOCK{len(stash) - 1}\x00"
+
+    return _QUIZ_BLOCK_RE.sub(_sub, markdown), stash
+
+
+def _unstash_quiz_blocks(markdown: str, stash: list[str]) -> str:
+    for index, original in enumerate(stash):
+        markdown = markdown.replace(f"\x00QUIZBLOCK{index}\x00", original)
+    return markdown
+
+
+def _resolve_item_slots(body_md: str, quiz: dict[str, Any]) -> str:
+    """Replace each inline ``<QuizItemSlot id=X/>`` with its filled application ``<QuizItem>``.
+
+    Knowledge quizzes are already authored inline in ``body_md``; only application slots need
+    filling. Items are matched to slots by canonical ``slot_id``. A slot with no matching item
+    (the agent produced fewer, or repair dropped it) is removed, and a ``<QuizBlock>`` left
+    empty is removed too. An item carrying no ``slot_id`` is a stale ``after_block``-era
+    artifact and is a hard error (regenerate the chapter).
+    """
+    items_by_slot: dict[str, tuple[dict[str, Any], int]] = {}
+    for index, item in enumerate(quiz.get("items", []), start=1):
+        if not isinstance(item, dict):
+            continue
+        slot_id = str(item.get("slot_id") or "")
+        if not slot_id:
+            raise ValueError(
+                "quiz item has no slot_id (stale after_block artifact; regenerate): "
+                f"{str(item.get('question', ''))[:60]}"
+            )
+        items_by_slot[slot_id] = (item, index)
+
+    def _replace(match: re.Match[str]) -> str:
+        id_match = re.search(r'id="([^"]*)"', match.group(0))
+        entry = items_by_slot.get(id_match.group(1) if id_match else "")
+        if entry is None:
+            return ""
+        item, index = entry
+        return _quiz_item_mdx(item, index)
+
+    resolved = _QUIZ_ITEM_SLOT_RE.sub(_replace, body_md)
+    return _EMPTY_QUIZ_BLOCK_RE.sub("", resolved)
+
+
+def _inline_quiz_answer_issues(text: str, stem: str) -> list[Issue]:
+    """Warn if a rendered inline quiz item's answer is not among its choice ids.
+
+    Generate-time ``sanitize_inline_quizzes`` already enforces this on authored knowledge
+    quizzes; this is a macro-stage safety net for residue (e.g. a section whose body was not
+    MDX-parseable when sanitized and was only healed later). Emitted as a ``warning`` because
+    there is no macro repair path for inline (body-authored) quizzes — it surfaces in the
+    check report without wedging the repair loop.
+    """
+    try:
+        blocks = extract_inline_quizzes(text)
+    except QuizExtractError:
+        return []  # a real parse failure is already reported as MDX_PARSE_ERROR
+    issues: list[Issue] = []
+    for block in blocks:
+        for child in block.get("children", []):
+            if child.get("kind") != "item":
+                continue
+            choice_ids = {choice.get("id") for choice in child.get("choices", [])}
+            if child.get("answer") not in choice_ids:
+                issues.append(
+                    Issue(
+                        severity="warning",
+                        code="INLINE_QUIZ_ANSWER_NOT_IN_CHOICES",
+                        message=f"{stem}.mdx inline quiz answer is not among its choices",
+                        owner_task_id=f"{stem}:quiz",
+                    )
+                )
+    return issues
+
+
 def _normalize_concept_links(
     markdown: str, alias_map: dict[str, str], concept_previews: dict[str, dict[str, str]]
 ) -> str:
+    markdown, quiz_stash = _stash_quiz_blocks(markdown)
     linked_canonicals: set[str] = set()
 
     def replace(match: re.Match[str]) -> str:
@@ -660,9 +607,10 @@ def _normalize_concept_links(
         return f"[[{canonical}]]"
 
     normalized = re.sub(r"\[\[([^\]]+)\]\]", replace, markdown)
-    return _auto_link_concept_terms(
+    linked = _auto_link_concept_terms(
         normalized, _concept_link_terms(alias_map, concept_previews), linked_canonicals
     )
+    return _unstash_quiz_blocks(linked, quiz_stash)
 
 
 def _concept_link_terms(
@@ -1005,33 +953,22 @@ def _drop_invalid_citations(value: Any, allowed_refs: set[str]) -> list[str]:
 
 
 def _drop_invalid_quiz_items(result: dict[str, Any]) -> list[str]:
-    """Drop quiz items whose answer is not among the choices; renumber placements.
+    """Drop quiz items whose answer is not among the choices.
 
     Returns short descriptions of the removed items. ``QuizResult.items`` has no
     minimum length, so deleting down to zero is schema-valid.
     """
     items = result.get("items", [])
-    keep_flags: list[bool] = []
+    kept_items: list[Any] = []
     removed: list[str] = []
     for item in items:
         choices = [str(choice) for choice in item.get("choices", [])]
-        invalid = bool(choices) and str(item.get("answer", "")) not in choices
-        keep_flags.append(not invalid)
-        if invalid:
+        if bool(choices) and str(item.get("answer", "")) not in choices:
             removed.append(str(item.get("question", ""))[:60])
-    if not removed:
-        return []
-    new_index: dict[int, int] = {}
-    kept_items: list[Any] = []
-    for old_zero, (item, keep) in enumerate(zip(items, keep_flags, strict=True)):
-        if keep:
-            kept_items.append(item)
-            new_index[old_zero + 1] = len(kept_items)
-    result["items"] = kept_items
-    for placement in result.get("placements", []):
-        placement["item_indexes"] = [
-            new_index[idx] for idx in placement.get("item_indexes", []) if idx in new_index
-        ]
+            continue
+        kept_items.append(item)
+    if removed:
+        result["items"] = kept_items
     return removed
 
 
@@ -2541,7 +2478,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                     "summary": str(summary["summary_md"]),
                 }
             )
-        rendered_body = _insert_quiz_blocks(
+        rendered_body = _resolve_item_slots(
             convert_html_style_attrs(
                 normalize_source_cites(
                     normalize_mdx_math(
@@ -2727,7 +2664,8 @@ async def check_node(state: State, cfg: BookConfig) -> State:
         )
     for path in (cfg.content_dir / "chapters").rglob("*.mdx"):
         text = path.read_text(encoding="utf-8")
-        for error in validate_mdx(text):
+        mdx_errors = validate_mdx(text)
+        for error in mdx_errors:
             issues.append(
                 Issue(
                     severity="error",
@@ -2754,6 +2692,8 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                     owner_task_id=f"{path.stem}:quiz",
                 )
             )
+        elif not mdx_errors:
+            issues.extend(_inline_quiz_answer_issues(text, path.stem))
         if "## Anki Cards" not in text:
             issues.append(
                 Issue(

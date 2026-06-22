@@ -35,17 +35,13 @@ def test_drop_invalid_citations_removes_unverifiable_refs_not_collapse() -> None
     assert remaining <= allowed
 
 
-def test_drop_invalid_quiz_items_removes_item_and_renumbers_placements() -> None:
+def test_drop_invalid_quiz_items_removes_item() -> None:
     result = {
         "chapter_id": "chapter-1",
         "items": [
             {"question": "Q1", "choices": ["A", "B"], "answer": "A", "explanation": "e"},
             {"question": "Q2-bad", "choices": ["A", "B"], "answer": "C", "explanation": "e"},
             {"question": "Q3", "choices": ["A", "B"], "answer": "B", "explanation": "e"},
-        ],
-        "placements": [
-            {"after_block": 0, "item_indexes": [1, 2], "title": "Quiz"},
-            {"after_block": 1, "item_indexes": [3], "title": "Quiz"},
         ],
         "owner_task_id": "chapter-1:quiz",
     }
@@ -54,9 +50,6 @@ def test_drop_invalid_quiz_items_removes_item_and_renumbers_placements() -> None
 
     assert removed == ["Q2-bad"]
     assert [item["question"] for item in result["items"]] == ["Q1", "Q3"]
-    # Old index 2 (dropped) is gone; old index 3 renumbers to 2.
-    assert result["placements"][0]["item_indexes"] == [1]
-    assert result["placements"][1]["item_indexes"] == [2]
     # The repaired result still validates against the schema.
     QuizResult.model_validate(result)
 

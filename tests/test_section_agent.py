@@ -10,7 +10,7 @@ SOURCE_MD = "<!-- source_ref: src-p001 -->\nPoint estimation content."
 
 
 @pytest.mark.asyncio
-async def test_section_agent_frontmatter_omits_knowledge_questions() -> None:
+async def test_section_agent_authors_quizzes_inline_not_in_frontmatter() -> None:
     runtime = RecordingRuntime(
         [
             """---
@@ -22,14 +22,10 @@ citations:
   - ref_id: src-p001
     quote: Point estimation
 figure_requests: []
-application_question_requests:
-  - topic: sample mean as point estimate
-    concept: point estimation
-    rationale: The section introduces estimating a parameter from data.
-    source_refs:
-      - src-p001
 ---
-Point estimation chooses one value for a parameter with $\\mu$ preserved."""
+Point estimation chooses one value for a parameter with $\\mu$ preserved.
+
+<QuizItemSlot id="auto" topic="sample mean" sourceRefs={["src-p001"]} />"""
         ]
     )
 
@@ -44,14 +40,15 @@ Point estimation chooses one value for a parameter with $\\mu$ preserved."""
         runtime=runtime,
     )
 
-    assert result.knowledge_questions == []
-    assert result.application_question_requests[0].topic == "sample mean as point estimate"
+    # Quizzes are authored inline in body_md, never carried as frontmatter fields.
     assert r"$\mu$" in result.body_md
+    assert "<QuizItemSlot" in result.body_md
+    assert "application_question_requests" not in SectionAgent.prompt_template.body
     assert "knowledge_questions" not in SectionAgent.prompt_template.body
 
 
 @pytest.mark.asyncio
-async def test_section_agent_offline_echoes_empty_quiz_fields() -> None:
+async def test_section_agent_offline_produces_body() -> None:
     result = await SectionAgent().run(
         {
             "chapter_id": "chapter-1",
@@ -63,5 +60,6 @@ async def test_section_agent_offline_echoes_empty_quiz_fields() -> None:
         runtime=TestLLMRuntime(),
     )
 
-    assert result.knowledge_questions == []
-    assert result.application_question_requests == []
+    assert result.chapter_id == "chapter-1"
+    assert result.section_index == 0
+    assert isinstance(result.body_md, str)

@@ -5,13 +5,15 @@ plan / generate / validate / repair / assemble loop:
 
     plan_sections          -> SectionPlan (teaching units)
     for each section (parallel, bounded by maxSectionConcurrency):
-        generate_one_section -> SectionResult (prose + flat metadata)
-        knowledge_quiz       -> section-level definition/distinction quiz JSON
+        generate_one_section    -> SectionResult (prose + flat metadata, with
+                                   knowledge quizzes authored inline as <QuizBlock>s)
+        sanitize_inline_quizzes -> validate/canonicalize the authored <QuizItem>s and
+                                   collect the application <QuizItemSlot/> specs
         validate_section     -> deterministic checks vs the book skeleton
         repair_section        -> up to ``maxSectionRepairRounds`` retries
         (fallback)            -> record a warning Issue, keep the imperfect body
     assemble_chapter_result -> ChapterResult (full body_md)
-    ApplicationQuizAgent    -> application/computation quiz from section requests
+    ApplicationQuizAgent    -> fill each collected <QuizItemSlot/> per-slot
     CardAgent               -> recall cards from the assembled body
     SummaryAgent            -> chapter summary
 
@@ -37,9 +39,8 @@ from typing import Any
 
 from bookwiki.agents._helpers import SOURCE_REF_RE
 from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent
-from bookwiki.agents.card_agent import CardAgent, chapter_body_blocks
+from bookwiki.agents.card_agent import CardAgent
 from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
-from bookwiki.agents.knowledge_quiz_agent import KnowledgeQuizAgent
 from bookwiki.agents.mdx_edit_repair import ChapterMdxEditRepairAgent
 from bookwiki.agents.prompting import prompt_cache_key
 from bookwiki.agents.repair_section_agent import RepairSectionAgent
@@ -56,6 +57,11 @@ from bookwiki.generate.figures import (
     run_plot,
     verify_figure,
 )
+from bookwiki.generate.inline_quiz import (
+    SlotSpec,
+    sanitize_inline_quizzes,
+    strip_inline_quizzes_and_control_slots,
+)
 from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
@@ -64,9 +70,9 @@ from bookwiki.schemas.card import CardResult
 from bookwiki.schemas.chapter import ChapterResult
 from bookwiki.schemas.common import Citation
 from bookwiki.schemas.figure import ImageSupplementResult
-from bookwiki.schemas.quiz import QuizItem, QuizPlacement, QuizResult
+from bookwiki.schemas.quiz import QuizItem, QuizResult
 from bookwiki.schemas.report import Issue
-from bookwiki.schemas.section import ApplicationQuizRequest, SectionPlan, SectionResult, SectionSpec
+from bookwiki.schemas.section import SectionPlan, SectionResult, SectionSpec
 from bookwiki.schemas.summary import SummaryResult
 from bookwiki.utils.files import read_json, write_json
 from bookwiki.utils.logging import get_logger
@@ -173,11 +179,13 @@ async def generate_chapter_sections(
     section_outcomes = await asyncio.gather(*(run_section(spec) for spec in ordered_specs))
 
     sections: list[SectionResult] = []
-    for section, section_cache, section_issue in section_outcomes:
+    section_slot_specs: list[SlotSpec] = []
+    for section, slot_specs, section_cache, section_issue in section_outcomes:
         cache_results.extend(section_cache)
         if section_issue is not None:
             issues.append(section_issue)
         sections.append(section)
+        section_slot_specs.extend(slot_specs)
 
     # Figure supplementation also fans out per section (each request is independent).
     figure_semaphore = asyncio.Semaphore(cfg.section_concurrency)
@@ -209,32 +217,45 @@ async def generate_chapter_sections(
     if chapter_issue is not None:
         issues.append(chapter_issue)
 
-    knowledge_items = [question for section in sections for question in section.knowledge_questions]
-    requests = [
-        request for section in sections for request in section.application_question_requests
+    # Knowledge quizzes are authored inline and already sanitized per-section; only the
+    # application <QuizItemSlot/>s need filling. Feed the collected slot specs to the quiz
+    # agent, which binds each generated item back to its canonical slot id by order. When no
+    # section declared an application slot, skip the (pro-model) agent entirely.
+    application_requests = [
+        {
+            "slot_id": spec.slot_id,
+            "topic": spec.topic,
+            "concept": spec.concept,
+            "source_refs": spec.source_refs,
+        }
+        for spec in section_slot_specs
     ]
-    application_quiz, application_cache, application_issue = await _generate_application_quiz(
-        cfg=cfg,
-        base_payload=base_payload,
-        chapter=chapter,
-        requests=requests,
-        allowed_refs=allowed_refs,
-    )
-    cache_results.extend(application_cache)
-    if application_issue is not None:
-        issues.append(application_issue)
-    quiz = _build_chapter_quiz(
-        chapter_id=chapter_id,
-        body_md=chapter.body_md,
-        items=[*knowledge_items, *application_quiz.items],
-    )
+    if application_requests:
+        application_quiz, application_cache, application_issue = await _generate_application_quiz(
+            cfg=cfg,
+            base_payload=base_payload,
+            chapter=chapter,
+            requests=application_requests,
+            allowed_refs=allowed_refs,
+        )
+        cache_results.extend(application_cache)
+        if application_issue is not None:
+            issues.append(application_issue)
+    else:
+        application_quiz = QuizResult(
+            chapter_id=chapter_id, items=[], owner_task_id=f"{chapter_id}:quiz"
+        )
+    quiz = application_quiz
+
+    # Card/Summary must not see authored quiz blocks or slot placeholders as prose to echo.
+    downstream_body = strip_inline_quizzes_and_control_slots(chapter.body_md)
 
     card_result = await run_with_cache(
         CardAgent,
         {
             **base_payload,
             "cards_per_chapter": cfg.cards_per_chapter,
-            "chapter_body_md": chapter.body_md,
+            "chapter_body_md": downstream_body,
         },
         model=cfg.model_for("card"),
         cache_dir=cfg.cache_dir / "tasks",
@@ -248,7 +269,7 @@ async def generate_chapter_sections(
         {
             **base_payload,
             "chapter_result": chapter.model_dump(mode="json"),
-            "chapter_body_md": chapter.body_md,
+            "chapter_body_md": downstream_body,
             "chapter_outline": chapter_outline,
         },
         model=cfg.model_for("summary"),
@@ -396,23 +417,84 @@ async def _generate_application_quiz(
     cfg: BookConfig,
     base_payload: dict[str, Any],
     chapter: ChapterResult,
-    requests: list[ApplicationQuizRequest],
+    requests: list[dict[str, Any]],
     allowed_refs: set[str],
 ) -> tuple[QuizResult, list[CacheResult], Issue | None]:
+    # Fill each application <QuizItemSlot/> with its OWN agent call. Per-slot beats one
+    # batched call: the slot id is known (no fragile by-order binding), the task cache keys on
+    # the single request (granular invalidation), MDX repair only re-runs the failing slot, and
+    # the repeated chapter body hits provider context caching. Bounded by the same concurrency
+    # as sections; the shared runtime Router still enforces tpm/rpm.
+    semaphore = asyncio.Semaphore(cfg.section_concurrency)
+    # Strip the chapter body once: it is identical for every slot (and every repair round),
+    # and stripping runs the Node MDX extractor — doing it per-slot would re-spawn that
+    # subprocess N×(1+repairRounds) times for no benefit.
+    chapter_body_stripped = strip_inline_quizzes_and_control_slots(chapter.body_md)
+
+    async def fill(request: dict[str, Any]):
+        async with semaphore:
+            return await _fill_application_slot(
+                cfg=cfg,
+                base_payload=base_payload,
+                chapter_body_stripped=chapter_body_stripped,
+                request=request,
+                allowed_refs=allowed_refs,
+            )
+
+    outcomes = await asyncio.gather(*(fill(request) for request in requests))
+    items: list[QuizItem] = []
     cache_results: list[CacheResult] = []
-    request_payloads = [request.model_dump(mode="json") for request in requests]
-    quiz = await _run_application_quiz(
+    unresolved: list[str] = []
+    for slot_items, slot_cache, slot_errors in outcomes:
+        items.extend(slot_items)
+        cache_results.extend(slot_cache)
+        unresolved.extend(slot_errors)
+
+    quiz = QuizResult(
+        chapter_id=chapter.chapter_id,
+        items=items,
+        owner_task_id=f"{chapter.chapter_id}:quiz",
+    )
+    issue: Issue | None = None
+    if unresolved:
+        issue = Issue(
+            severity="warning",
+            code="QUIZ_VALIDATION_UNRESOLVED",
+            message=(
+                f"{chapter.chapter_id} application quiz kept after inline validation rounds: "
+                f"{'; '.join(unresolved)}"
+            ),
+            owner_task_id=f"{chapter.chapter_id}:quiz",
+        )
+    return quiz, cache_results, issue
+
+
+async def _fill_application_slot(
+    *,
+    cfg: BookConfig,
+    base_payload: dict[str, Any],
+    chapter_body_stripped: str,
+    request: dict[str, Any],
+    allowed_refs: set[str],
+) -> tuple[list[QuizItem], list[CacheResult], list[str]]:
+    """Generate one application quiz item for a single slot, with a bounded MDX repair loop.
+
+    The agent returns one slot-agnostic ``QuizItem``; this slot's canonical ``slot_id`` is
+    stamped on here, so there is no ordering or by-position binding to get wrong.
+    """
+    cache_results: list[CacheResult] = []
+    run = await _run_application_quiz(
         cfg=cfg,
         base_payload=base_payload,
-        chapter=chapter,
-        requests=request_payloads,
+        chapter_body_stripped=chapter_body_stripped,
+        request=request,
         allowed_refs=allowed_refs,
         mdx_errors=[],
         force=False,
     )
-    cache_results.append(quiz)
-    result: QuizResult = quiz.result
-    errors = _application_quiz_mdx_errors(result.items)
+    cache_results.append(run)
+    item: QuizItem = run.result
+    errors = _application_quiz_mdx_errors([item])
     max_rounds = int(cfg.generation.get("maxRepairRounds", 1) or 1)
     rounds = 0
     while errors and rounds < max_rounds:
@@ -420,39 +502,25 @@ async def _generate_application_quiz(
         repaired = await _run_application_quiz(
             cfg=cfg,
             base_payload=base_payload,
-            chapter=chapter,
-            requests=request_payloads,
+            chapter_body_stripped=chapter_body_stripped,
+            request=request,
             allowed_refs=allowed_refs,
             mdx_errors=errors,
             force=True,
         )
         cache_results.append(repaired)
-        result = repaired.result
-        errors = _application_quiz_mdx_errors(result.items)
-
-    if not errors:
-        return result, cache_results, None
-    return (
-        result,
-        cache_results,
-        Issue(
-            severity="warning",
-            code="QUIZ_VALIDATION_UNRESOLVED",
-            message=(
-                f"{chapter.chapter_id} application quiz kept after inline validation rounds: "
-                f"{'; '.join(errors)}"
-            ),
-            owner_task_id=f"{chapter.chapter_id}:quiz",
-        ),
-    )
+        item = repaired.result
+        errors = _application_quiz_mdx_errors([item])
+    filled = item.model_copy(update={"slot_id": str(request.get("slot_id") or "")})
+    return [filled], cache_results, errors
 
 
 async def _run_application_quiz(
     *,
     cfg: BookConfig,
     base_payload: dict[str, Any],
-    chapter: ChapterResult,
-    requests: list[dict[str, Any]],
+    chapter_body_stripped: str,
+    request: dict[str, Any],
     allowed_refs: set[str],
     mdx_errors: list[str],
     force: bool,
@@ -461,8 +529,8 @@ async def _run_application_quiz(
         ApplicationQuizAgent,
         {
             **base_payload,
-            "chapter_body_md": chapter.body_md,
-            "requests": requests,
+            "chapter_body_md": chapter_body_stripped,
+            "request": request,
             "allowed_source_refs": sorted(allowed_refs),
             "mdx_errors": mdx_errors,
         },
@@ -485,42 +553,6 @@ def _application_quiz_mdx_errors(items: list[QuizItem]) -> list[str]:
             for error in validate_mdx(str(text)):
                 errors.append(f"item {item_index} {field_name}: {error}")
     return errors
-
-
-def _build_chapter_quiz(*, chapter_id: str, body_md: str, items: list[QuizItem]) -> QuizResult:
-    quiz = QuizResult(
-        chapter_id=chapter_id,
-        items=items,
-        placements=_quiz_placements_for_items(len(items), body_md),
-        owner_task_id=f"{chapter_id}:quiz",
-    )
-    return _normalize_quiz_placements(quiz, body_md)
-
-
-def _quiz_placements_for_items(item_count: int, body_md: str) -> list[QuizPlacement]:
-    if item_count <= 0:
-        return []
-    block_count = max(len(chapter_body_blocks(body_md)), 1)
-    placement_count = min(max((item_count + 1) // 2, 1), 4)
-    groups: list[list[int]] = [[] for _ in range(placement_count)]
-    for zero_index in range(item_count):
-        groups[min(zero_index // 2, placement_count - 1)].append(zero_index + 1)
-    placements: list[QuizPlacement] = []
-    for group_index, indexes in enumerate(groups):
-        if not indexes:
-            continue
-        after_block = min(
-            block_count - 1,
-            max(0, round(((group_index + 1) * block_count) / (placement_count + 1)) - 1),
-        )
-        placements.append(
-            QuizPlacement(
-                after_block=after_block,
-                item_indexes=indexes,
-                title="检查点" if group_index == 0 else "快速检验",
-            )
-        )
-    return placements
 
 
 async def _plan_sections(cfg: BookConfig, payload: dict[str, Any]) -> CacheResult:
@@ -558,7 +590,7 @@ async def _generate_validated_section(
     skeleton_payload: dict[str, Any],
     allowed_refs: set[str],
     chapter_outline: list[dict[str, Any]],
-) -> tuple[SectionResult, list[CacheResult], Issue | None]:
+) -> tuple[SectionResult, list[SlotSpec], list[CacheResult], Issue | None]:
     cache_results: list[CacheResult] = []
     section_position = _section_position(spec, chapter_outline)
     section_context = {
@@ -646,23 +678,18 @@ async def _generate_validated_section(
             ),
             owner_task_id=f"{spec.chapter_id}:chapter",
         )
-    knowledge_quiz = await run_with_cache(
-        KnowledgeQuizAgent,
-        {
-            **base_payload,
-            "section_index": section.section_index,
-            "title": section.title,
-            "body_md": section.body_md,
-            "concepts": section.concepts or spec.concepts_introduced,
-            "allowed_source_refs": sorted(allowed_refs),
-        },
-        model=cfg.model_for("knowledge_quiz"),
-        cache_dir=cfg.cache_dir / "tasks",
-        runtime=cfg.llm_runtime,
+    # Knowledge quizzes are authored inline by SectionAgent; validate/canonicalize them and
+    # collect the application <QuizItemSlot/> specs (with canonical slot ids) for later fill.
+    sanitized = sanitize_inline_quizzes(
+        section.body_md,
+        allowed_refs=allowed_refs,
+        chapter_id=spec.chapter_id,
+        section_index=section.section_index,
     )
-    cache_results.append(knowledge_quiz)
-    section = section.model_copy(update={"knowledge_questions": knowledge_quiz.result.items})
-    return section, cache_results, issue
+    for warning in sanitized.warnings:
+        LOGGER.warning("inline quiz sanitize: %s", warning)
+    section = section.model_copy(update={"body_md": sanitized.body_md})
+    return section, sanitized.slot_specs, cache_results, issue
 
 
 def validate_section(
@@ -912,26 +939,6 @@ def assemble_chapter_result(
         ),
         owner_task_id=f"{chapter_id}:chapter",
     )
-
-
-def _normalize_quiz_placements(quiz: QuizResult, body_md: str) -> QuizResult:
-    """Clamp ``after_block`` into range and drop out-of-range item indexes.
-
-    Conservative defense in depth: rendering (``_insert_quiz_blocks``) already
-    clamps and re-homes unassigned items, so this only keeps the stored
-    ``quiz.json`` sane without reordering or inventing placements.
-    """
-    max_after = max(len(chapter_body_blocks(body_md)) - 1, 0)
-    item_count = len(quiz.items)
-    placements = [
-        QuizPlacement(
-            after_block=min(max(placement.after_block, 0), max_after),
-            item_indexes=[index for index in placement.item_indexes if 1 <= index <= item_count],
-            title=placement.title,
-        )
-        for placement in quiz.placements
-    ]
-    return quiz.model_copy(update={"placements": placements})
 
 
 def _max_section_repair_rounds(cfg: BookConfig) -> int:

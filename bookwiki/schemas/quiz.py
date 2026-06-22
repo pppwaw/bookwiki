@@ -18,23 +18,17 @@ class QuizItem(VersionedModel):
             "the figure is shown under the question. Empty when no figure is needed."
         ),
     )
-
-
-class QuizPlacement(VersionedModel):
-    after_block: int = Field(ge=0)
-    item_indexes: list[int] = Field(default_factory=list)
-    title: str = "Quiz"
+    slot_id: str = Field(
+        default="",
+        description=(
+            "Canonical id of the inline <QuizItemSlot/> this item fills (application "
+            "quizzes). Assigned by the system, never by the model. Empty for knowledge "
+            "quizzes, which are authored inline by SectionAgent and need no slot."
+        ),
+    )
 
 
 class QuizResult(VersionedModel):
     chapter_id: str
-    items: list[QuizItem] = Field(default_factory=list)
-    placements: list[QuizPlacement] = Field(default_factory=list)
-    owner_task_id: str
-
-
-class KnowledgeQuizResult(VersionedModel):
-    chapter_id: str
-    section_index: int
     items: list[QuizItem] = Field(default_factory=list)
     owner_task_id: str

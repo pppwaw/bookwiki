@@ -6,7 +6,7 @@ import re
 import pytest
 
 from bookwiki.pipeline.nodes import (
-    _insert_quiz_blocks,
+    _resolve_item_slots,
     concept_pages_node,
     generate_node,
     integrate_node,
@@ -44,24 +44,6 @@ def _section_response() -> dict[str, object]:
         "citations": [citation],
         "figure_requests": [],
         "owner_task_id": "chapter-1:section:000",
-    }
-
-
-def _application_quiz_response() -> dict[str, object]:
-    return {
-        "chapter_id": "chapter-1",
-        "items": [],
-        "placements": [],
-        "owner_task_id": "chapter-1:quiz",
-    }
-
-
-def _knowledge_quiz_response() -> dict[str, object]:
-    return {
-        "chapter_id": "chapter-1",
-        "section_index": 0,
-        "items": [],
-        "owner_task_id": "chapter-1:section:000:knowledge_quiz",
     }
 
 
@@ -136,35 +118,27 @@ def test_quiz_block_heading_is_nested_under_current_section() -> None:
         "## Frontier\n\n"
         "Opening explanation.\n\n"
         "### Ordering\n\n"
-        "Middle derivation."
+        "Middle derivation.\n\n"
+        '<QuizBlock>\n<QuizItemSlot id="chapter-1:s0:slot-000" '
+        'topic="t" sourceRefs={["p1"]} />\n</QuizBlock>'
     )
     quiz = {
         "items": [
             {
+                "slot_id": "chapter-1:s0:slot-000",
                 "question": "What is a frontier?",
                 "choices": ["Open nodes", "Closed nodes"],
                 "answer": "Open nodes",
                 "explanation": "The frontier stores generated nodes.",
-            },
-            {
-                "question": "What changes ordering?",
-                "choices": ["Strategy", "Filename"],
-                "answer": "Strategy",
-                "explanation": "Search strategy orders the frontier.",
-            },
-        ],
-        "placements": [
-            {"after_block": 2, "item_indexes": [1], "title": "Checkpoint"},
-            {"after_block": 4, "item_indexes": [2], "title": "Practice"},
+            }
         ],
     }
 
-    rendered = _insert_quiz_blocks(body_md, quiz)
+    rendered = _resolve_item_slots(body_md, quiz)
 
-    assert "### Checkpoint\n\n<QuizBlock>" in rendered
-    assert "#### Practice\n\n<QuizBlock>" in rendered
-    assert not re.search(r"^## Checkpoint$", rendered, flags=re.MULTILINE)
-    assert not re.search(r"^## Practice$", rendered, flags=re.MULTILINE)
+    assert "<QuizBlock>" in rendered
+    assert "<QuizItem " in rendered
+    assert "chapter-1:s0:slot-000" not in rendered  # slot replaced by the filled item
 
 
 @pytest.mark.asyncio
@@ -213,8 +187,6 @@ async def test_generate_node_feeds_topics_to_planner_and_figures_to_section(tmp_
         [
             _section_plan_response(),
             _section_response(),
-            _knowledge_quiz_response(),
-            _application_quiz_response(),
             _card_response(),
             _summary_response(),
         ]
@@ -335,7 +307,13 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                     "title": "Point Estimation",
                     "body_md": (
                         "Opening explanation introduces 似然函数 and point estimation.\n\n"
+                        "## Checkpoint\n\n"
+                        '<QuizBlock>\n<QuizItemSlot id="chapter-6:s0:slot-000" '
+                        'topic="t" sourceRefs={["Week-9-p001"]} />\n</QuizBlock>\n\n'
                         "Middle derivation with \\(\\frac{x}{\\theta}\\).\n\n"
+                        "## Practice\n\n"
+                        '<QuizBlock>\n<QuizItemSlot id="chapter-6:s0:slot-001" '
+                        'topic="t" sourceRefs={["Week-9-p001"]} />\n</QuizBlock>\n\n'
                         "Closing application."
                     ),
                     "concepts": ["Point Estimation", "似然函数"],
@@ -370,6 +348,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                             "answer": "Estimate \\(\\theta\\)",
                             "explanation": "It returns a single estimate of \\(\\theta\\).",
                             "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
+                            "slot_id": "chapter-6:s0:slot-000",
                         },
                         {
                             "question": "Where should the second quiz appear?",
@@ -377,11 +356,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                             "answer": "Near the application",
                             "explanation": "The model chooses this placement.",
                             "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
+                            "slot_id": "chapter-6:s0:slot-001",
                         },
-                    ],
-                    "placements": [
-                        {"after_block": 0, "item_indexes": [1], "title": "Checkpoint"},
-                        {"after_block": 1, "item_indexes": [2], "title": "Practice"},
                     ],
                 }
             }
@@ -554,14 +530,7 @@ def _write_leaf_agent_results(result_dir, ch_id: str, title: str) -> dict[str, s
             {
                 "result": {
                     "chapter_id": ch_id,
-                    "items": [
-                        {
-                            "question": "Q?",
-                            "choices": ["A", "B"],
-                            "answer": "A",
-                            "explanation": "because.",
-                        }
-                    ],
+                    "items": [],
                 }
             }
         ),

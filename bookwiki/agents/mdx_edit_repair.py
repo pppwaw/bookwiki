@@ -173,7 +173,8 @@ _REPAIR_PROMPT = PromptTemplate(
 
 严格约束：
 - 只修导致编译失败的语法；**不要**改动教学内容、措辞、标题、
-  `<BookFigure ... />`、`<PreviewLink ...>`、引用注释。
+  `<BookFigure ... />`、`<PreviewLink ...>`、引用注释，也不要改动
+  `<QuizBlock>`/`<QuizItem>`/`<QuizItemSlot ... />` 测验标签。
 - 不要删除大段内容；优先调整定界符与转义。
 - 最终 JSON 里**不要**返回正文。""",
 )

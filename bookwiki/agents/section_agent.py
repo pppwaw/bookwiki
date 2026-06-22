@@ -85,11 +85,50 @@ class SectionAgent:
 - 不需要新图时 `figure_requests` 留空；每个 `figure_requests` 项的 `figure_ref` 都必须
    与正文中的某个 <BookFigure id="..."/> 占位一致。不要滥用，只在图能显著帮助理解时请求。
 
-=== 应用题请求 ===
-- `application_question_requests`：仅当本段确实适合做应用/计算题时，声明结构化请求；可以为空。
-  每项说明 `topic`、`concept`、`rationale`，以及可支撑该题的 `source_refs`。不要发明源引用，
-  `source_refs` 只能来自已有 <chunk ref="...">。真正的应用题稍后由专门 agent 基于全章正文填写。
-- 不要在 `body_md` 里塞测验占位符；题目只放进结构化字段。
+=== 测验题（直接写进 body_md，不进 frontmatter）===
+测验题由你**在正文的自然位置直接写成 MDX**：把题放在它所考查的内容刚讲完之后，让行文自然。
+你自行决定放几块 `<QuizBlock>`、放在哪、每块几题、知识题与应用题如何搭配。一块一般放约 3 题
+（**最多 6 题**）。本段内容不足以安全命题时，可以不放任何题。
+
+【知识题：定义/辨析/概念题，你直接出完整题目】在 `<QuizBlock>` 里写完整 `<QuizItem>`：
+- 只考查本段已讲过的定义、辨析、概念关系；**不得**出计算/代入数值/推导/数值结论题。
+- `answer` 取某个 `<QuizChoice>` 的 `id`（如 `answer="choice-1"`）；`<QuizChoice>` 的 id 按
+  顺序写 `choice-1`、`choice-2`……至少两个选项，只有一个与答案一致。
+- `citations` 写成 `citations={[{ ref_id: "...", quote: "..." }]}`，`ref_id` 必须来自已有
+  <chunk ref="...">；无法扎根时写 `citations={[]}`，不要编造。
+- 严格按下例的标签与顺序（`<QuizCheck />` 必写）：
+<QuizBlock>
+<QuizItem answer="choice-1" citations={[{ ref_id: "<ref>", quote: "<源中短语>" }]}>
+<QuizQuestion>
+题干（数学用 $...$）
+</QuizQuestion>
+<QuizChoices>
+<QuizChoice id="choice-1">
+选项一
+</QuizChoice>
+<QuizChoice id="choice-2">
+选项二
+</QuizChoice>
+</QuizChoices>
+<QuizCheck />
+<QuizExplanation>
+一两句话说明答案为何正确并点出易混点
+</QuizExplanation>
+</QuizItem>
+</QuizBlock>
+
+【应用题：计算/推导题，你只埋占位，稍后由专门 agent 出题】在 `<QuizBlock>` 里放**单行自闭合**
+占位，每题一个：
+<QuizItemSlot id="auto" topic="<出题方向/情景>" concept="<概念名>" sourceRefs={["<ref>"]} />
+- `topic` 用一句话给出这道题的**出题方向和大概情景**（考什么、放在什么情境里），作为出题指引；
+  不必写出具体数值（数值留给出题 agent 补全）。
+- `concept` 填相关概念名；`sourceRefs` 是能支撑该题的源 ref（都必须来自已有 <chunk ref="...">，
+  至少一个）。
+- `id` 一律写 `"auto"`，系统会重新分配；不要自己编 id。
+- 占位**必须单独成行、自闭合**（以 `/>` 结尾），不要写成带子节点的成对标签。
+- 应用题与知识题可分块（各一个 `<QuizBlock>`）也可同块，由你决定。
+
+不要把任何题目内容或上述标签塞进 YAML frontmatter；测验题只存在于 body_md。
 
 忠实性与标识：
 - 每个 `citations` 的 ref_id 必须匹配一个已存在的 <chunk ref="..."> 值；quote 是被引
@@ -99,9 +138,9 @@ class SectionAgent:
 
 输出格式（MDX-direct）：
 - 只返回 YAML frontmatter + raw MDX body，不要返回 JSON。
-- frontmatter 字段：`section_index`、`title`、`concepts`、`citations`、`figure_requests`、
-  `application_question_requests`。
+- frontmatter 字段：`section_index`、`title`、`concepts`、`citations`、`figure_requests`。
 - 不要在 frontmatter 中输出 `chapter_id` 或 `owner_task_id`；系统会用确定性默认值注入。
+- 不要在 frontmatter 中输出任何测验字段；知识题与应用题占位都直接写在 body_md 里。
 - frontmatter 里任何含 LaTeX 反斜杠的字段（引用 quote 等）必须使用 YAML
   单引号标量或块标量，确保反斜杠按字面保留。
 - frontmatter 完整示例：
@@ -113,11 +152,6 @@ citations:
   - ref_id: Week-9-p012
     quote: '统计量的分布称为抽样分布'
 figure_requests: []
-application_question_requests:
-  - topic: '样本均值的分布'
-    concept: 'Sampling distribution'
-    rationale: '让学习者代入数值计算概率'
-    source_refs: ['Week-9-p012']
 ```
 - 第二个 `---` 后直接写 raw MDX body；正文中的 LaTeX（如 `$\\mu$`、`$\\bar{X}$`）
   必须原样书写，不要 JSON 转义。""",
@@ -146,8 +180,6 @@ application_question_requests:
             concepts=concepts,
             citations=[citation(inp)],
             figure_requests=[],
-            knowledge_questions=[],
-            application_question_requests=[],
             owner_task_id=section_owner_task_id(ch_id, index),
         )
         llm_input = _content_input(inp, refs)

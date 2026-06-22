@@ -63,10 +63,11 @@ class CardAgent:
 
 
 def chapter_body_blocks(body_md: str) -> list[str]:
-    """Split the chapter body into blocks the way ``_insert_quiz_blocks`` does.
+    """Split the chapter body into top-level blocks (a block view for the application
+    quiz agent).
 
-    The leading ``# H1`` heading is dropped first, then the remainder is split
-    on blank lines. ``after_block`` placement indices are 0-based into this list.
+    The leading ``# H1`` heading is dropped first, then the remainder is split on blank
+    lines.
     """
     lines = str(body_md).strip().splitlines()
     body = (

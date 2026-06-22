@@ -44,8 +44,11 @@ class RepairSectionAgent:
 - 仅做必要的最小修改，保持本段教学意图与覆盖范围不变；不要扩写到其他段的内容。
 - `body_md` 不含章节级 `# 一级标题`，也不重复本段小节标题；行内公式用 $...$，
   独立公式用 $$...$$。
+- 正文里的测验标签 `<QuizBlock>`、`<QuizItem>`、`<QuizItemSlot ... />` 必须**逐字保留**
+  （除非某条 issue 明确要求修改它）：不要删除、移动、改写或合并这些标签及其内部内容，
+  `<QuizItemSlot>` 必须保持单行自闭合。
 - 保持 `chapter_id`、`section_index`、`title`、`owner_task_id` 与
-  `previous_section` 完全一致。`figure_requests` 留空。""",
+  `previous_section` 完全一致；`figure_requests` 原样保留 `previous_section` 的值。""",
     )
 
     async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> SectionResult:
@@ -61,7 +64,7 @@ class RepairSectionAgent:
             body_md=str(previous.get("body_md") or ""),
             concepts=[str(c) for c in previous.get("concepts", []) if str(c).strip()],
             citations=_draft_citations(previous, inp),
-            figure_requests=[],
+            figure_requests=previous.get("figure_requests") or [],
             owner_task_id=str(previous.get("owner_task_id") or section_owner_task_id(ch_id, index)),
         )
         llm_input = _content_input(inp, refs)

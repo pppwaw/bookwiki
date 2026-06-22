@@ -14,7 +14,7 @@ from bookwiki.schemas.concept import (
     ConceptReconcileResult,
     ConceptResult,
 )
-from bookwiki.schemas.quiz import QuizItem, QuizPlacement, QuizResult
+from bookwiki.schemas.quiz import QuizItem, QuizResult
 from bookwiki.schemas.report import CheckReport, Issue
 from bookwiki.schemas.source import (
     ChapterSplitResult,
@@ -87,16 +87,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
             "explanation": "Search expands states.",
             "citations": [{"ref_id": "source-p001", "quote": "State space"}],
             "figure_ref": "",
-        },
-    ),
-    (
-        QuizPlacement,
-        {"after_block": 1, "item_indexes": [1], "title": "Checkpoint"},
-        {
-            "schema_version": SCHEMA_VERSION,
-            "after_block": 1,
-            "item_indexes": [1],
-            "title": "Checkpoint",
+            "slot_id": "",
         },
     ),
     (
@@ -112,7 +103,6 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
                     "citations": [{"ref_id": "source-p001", "quote": "State space"}],
                 }
             ],
-            "placements": [{"after_block": 1, "item_indexes": [1], "title": "Checkpoint"}],
             "owner_task_id": "chapter-1:quiz",
         },
         {
@@ -127,14 +117,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
                     "explanation": "Search expands states.",
                     "citations": [{"ref_id": "source-p001", "quote": "State space"}],
                     "figure_ref": "",
-                }
-            ],
-            "placements": [
-                {
-                    "schema_version": SCHEMA_VERSION,
-                    "after_block": 1,
-                    "item_indexes": [1],
-                    "title": "Checkpoint",
+                    "slot_id": "",
                 }
             ],
             "owner_task_id": "chapter-1:quiz",
