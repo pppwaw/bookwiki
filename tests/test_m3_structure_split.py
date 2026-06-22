@@ -20,6 +20,7 @@ from bookwiki.scheduler.llm import TestLLMRuntime
 from bookwiki.schemas.source import ChapterProposal, StructureResult
 from bookwiki.split.chapter_splitter import (
     chapter_groups_from_specs,
+    compute_slug_remap,
     parse_approved_structure,
     split_sources_by_structure,
 )
@@ -669,3 +670,56 @@ def test_structure_node_cache_key_changes_when_book_notes_change(tmp_path: Path)
 
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
+
+
+def test_compute_slug_remap_identity_for_fresh_registry() -> None:
+    remap, registry = compute_slug_remap(
+        ["Point-Estimation", "向量函数"],
+        {},
+        {"Point-Estimation": "Point Estimation", "向量函数": "向量函数"},
+        {"Point-Estimation": ["p001"], "向量函数": ["p002"]},
+        {},
+    )
+
+    # Distinct titles already have stable slugs → the remap is identity, and fingerprints are
+    # recorded so future edits stay pinned.
+    assert remap["Point-Estimation"] == "Point-Estimation"
+    assert remap["向量函数"] == "向量函数"
+    assert set(registry.values()) == {"Point-Estimation", "向量函数"}
+
+
+def test_compute_slug_remap_keeps_existing_slug_when_collider_inserted() -> None:
+    # Run 1: a single chapter X titled "复习" (source p001) claims the bare slug "复习".
+    remap1, registry = compute_slug_remap(
+        ["复习"], {}, {"复习": "复习"}, {"复习": ["p001"]}, {}
+    )
+    assert remap1["复习"] == "复习"
+
+    # Run 2: a new chapter Y (also "复习", source p002) is inserted BEFORE X, so the parser now
+    # gives Y the bare id "复习" and X the de-duplicated id "复习-2"; the registry keeps X stable.
+    remap2, _ = compute_slug_remap(
+        ["复习", "复习-2"],
+        {},
+        {"复习": "复习", "复习-2": "复习"},
+        {"复习": ["p002"], "复习-2": ["p001"]},
+        registry,
+    )
+
+    # X (identified by source p001 → parse id "复习-2") keeps its original slug "复习" (zero churn).
+    assert remap2["复习-2"] == "复习"
+    # Y (the newcomer) takes the de-duplicated slug.
+    assert remap2["复习"] == "复习-2"
+
+
+def test_compute_slug_remap_handles_groups_and_reserves_appendix() -> None:
+    remap, _ = compute_slug_remap(
+        ["9.2-Infinite-Series", "appendix"],
+        {"Chapter-9": {"title": "Chapter 9", "leaf_ids": ["9.2-Infinite-Series"]}},
+        {"9.2-Infinite-Series": "9.2 Infinite Series", "appendix": "Appendix"},
+        {"9.2-Infinite-Series": ["9.2-p001"]},
+        {},
+    )
+
+    assert remap["Chapter-9"] == "Chapter-9"
+    assert remap["9.2-Infinite-Series"] == "9.2-Infinite-Series"
+    assert remap["appendix"] == "appendix"

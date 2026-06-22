@@ -81,6 +81,8 @@ class ChapterSplitResult(VersionedModel):
     chapter_groups: dict[str, dict[str, object]] = Field(default_factory=dict)
     # Authoritative reading order (rendered chapter ids, approved-structure order, appendix last).
     chapter_order: list[str] = Field(default_factory=list)
+    # Declared source_refs per chapter id, used to fingerprint chapter identity for the registry.
+    chapter_source_refs: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ChapterSplitAuditResult(VersionedModel):

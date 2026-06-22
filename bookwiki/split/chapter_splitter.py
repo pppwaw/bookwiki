@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -44,6 +46,9 @@ class SplitResult:
     # Authoritative reading order: rendered chapter ids in approved-structure (YAML) order,
     # appendix last. Persisted so resume never has to reconstruct order from a directory glob.
     chapter_order: list[str] = field(default_factory=list)
+    # Declared source_refs per chapter id (from the approved structure), used to fingerprint a
+    # chapter's identity for the persisted slug registry (so same-titled chapters stay distinct).
+    chapter_source_refs: dict[str, list[str]] = field(default_factory=dict)
 
 
 def parse_approved_structure(structure_yaml: str) -> list[ChapterSpec]:
@@ -106,6 +111,75 @@ def _assign_slug(title: str, used_ids: set[str]) -> str:
         counter += 1
     used_ids.add(candidate.casefold())
     return candidate
+
+
+def _identity_fingerprint(kind: str, title: str, source_refs: list[str]) -> str:
+    """Stable fingerprint of a chapter/group identity, used as the slug-registry key.
+
+    Includes ``source_refs`` so two chapters that share a title (and thus the same base slug) still
+    get distinct fingerprints — the registry can then pin each one's slug independently.
+    """
+    payload = "\x00".join([kind, unicodedata.normalize("NFC", title), *sorted(source_refs)])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def compute_slug_remap(
+    chapter_order: list[str],
+    chapter_groups: dict[str, dict[str, object]],
+    chapter_titles: dict[str, str],
+    chapter_source_refs: dict[str, list[str]],
+    registry: dict[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Map parse-time chapter/group ids to stable, registry-pinned slugs (zero churn).
+
+    The parse stage already assigns each chapter/group a unique, deduplicated id from its title.
+    This remaps those ids so that an identity already recorded in ``registry`` keeps its slug even
+    when a newly added, same-base-slug chapter is inserted before it. Two passes:
+
+    1. honour every existing registry pin whose slug is still free;
+    2. assign the remaining (new) identities their parse-time id, de-duplicating only against pins.
+
+    Because parse-time ids are already globally unique, pass 2 never collides two *new* entries, so
+    entry order does not affect the outcome. Returns ``(remap, updated_registry)``; ``remap`` covers
+    every chapter id and group id (``appendix`` maps to itself).
+    """
+    entries: list[tuple[str, str]] = []  # (parse_id, fingerprint), groups first then chapters
+    seen: set[str] = set()
+    for raw_gid, info in chapter_groups.items():
+        gid = str(raw_gid)
+        if gid in seen:
+            continue
+        seen.add(gid)
+        gtitle = str((info or {}).get("title") or gid)
+        entries.append((gid, _identity_fingerprint("group", gtitle, [])))
+    for cid in chapter_order:
+        if cid == APPENDIX_CHAPTER_ID or cid in seen:
+            continue
+        seen.add(cid)
+        title = str(chapter_titles.get(cid, cid))
+        refs = list(chapter_source_refs.get(cid, []))
+        entries.append((cid, _identity_fingerprint("chapter", title, refs)))
+
+    taken: set[str] = {APPENDIX_CHAPTER_ID.casefold()}
+    remap: dict[str, str] = {APPENDIX_CHAPTER_ID: APPENDIX_CHAPTER_ID}
+    updated: dict[str, str] = dict(registry)
+    for parse_id, fingerprint in entries:  # pass 1: honour pins
+        pinned = registry.get(fingerprint)
+        if pinned and pinned.casefold() not in taken:
+            remap[parse_id] = pinned
+            taken.add(pinned.casefold())
+    for parse_id, fingerprint in entries:  # pass 2: assign new identities
+        if parse_id in remap:
+            continue
+        slug = parse_id
+        counter = 2
+        while slug.casefold() in taken:
+            slug = f"{parse_id}-{counter}"
+            counter += 1
+        taken.add(slug.casefold())
+        remap[parse_id] = slug
+        updated[fingerprint] = slug
+    return remap, updated
 
 
 def chapter_groups_from_specs(specs: list[ChapterSpec]) -> dict[str, dict[str, object]]:
@@ -277,6 +351,7 @@ def split_sources_by_structure(
         report_md,
         chapter_groups=chapter_groups_from_specs(specs),
         chapter_order=list(chapters.keys()),
+        chapter_source_refs={spec.chapter_id: list(spec.source_refs) for spec in specs},
     )
 
 

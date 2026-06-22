@@ -328,6 +328,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
             "report_md": "# Split Audit",
             "chapter_groups": {},
             "chapter_order": [],
+            "chapter_source_refs": {},
         },
     ),
     (

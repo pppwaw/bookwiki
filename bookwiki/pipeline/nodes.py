@@ -60,7 +60,7 @@ from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
 from bookwiki.schemas.concept import ConceptReconciledItem, ConceptReconcileResult, ConceptResult
 from bookwiki.schemas.report import CheckReport, Issue
-from bookwiki.split.chapter_splitter import parse_approved_structure
+from bookwiki.split.chapter_splitter import compute_slug_remap, parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
 from bookwiki.utils.hashing import sha256_file, sha256_text
 from bookwiki.utils.logging import get_logger
@@ -1656,13 +1656,44 @@ async def split_node(state: State, cfg: BookConfig) -> State:
 
     out_dir = ensure_dir(cfg.work_dir / "chapter_sources")
     chapter_sources: dict[str, str] = {}
-    titles = split.result.chapter_titles or dict(_chapter_titles(approved_structure))
+    parse_titles = split.result.chapter_titles or dict(_chapter_titles(approved_structure))
     # Authoritative reading order (approved-structure / YAML order, appendix last). Fall back to
     # the rendered chapters dict order for any legacy cached split result without chapter_order.
-    chapter_order = list(split.result.chapter_order) or list(split.result.chapters.keys())
+    parse_order = list(split.result.chapter_order) or list(split.result.chapters.keys())
+    # Persisted slug registry: pin each chapter/group slug to its identity so an unchanged chapter
+    # keeps its dir/url even when a same-base-slug chapter is later inserted before it (zero churn).
+    registry_path = cfg.work_dir / "chapter_slugs.json"
+    remap, registry = compute_slug_remap(
+        parse_order,
+        split.result.chapter_groups,
+        parse_titles,
+        split.result.chapter_source_refs,
+        _load_slug_registry(registry_path),
+    )
+    write_json(registry_path, registry)
+
+    def _rid(value: str) -> str:
+        return remap.get(value, value)
+
+    chapter_order = [_rid(ch_id) for ch_id in parse_order]
+    titles = {_rid(k): v for k, v in parse_titles.items()}
+    chapters_md = {_rid(k): v for k, v in split.result.chapters.items()}
+    chapter_groups = {
+        _rid(str(gid)): {
+            **(info if isinstance(info, dict) else {}),
+            "leaf_ids": [_rid(str(lid)) for lid in (info or {}).get("leaf_ids", []) or []],
+        }
+        for gid, info in split.result.chapter_groups.items()
+    }
+    alignment = [
+        {**item, "chapter_id": _rid(str(item.get("chapter_id") or ""))}
+        for item in split.result.alignment
+    ]
+    chapter_topics = {_rid(k): v for k, v in _chapter_topics(approved_structure).items()}
+
     _clear_chapter_source_dirs(out_dir, set(chapter_order))
     for ch_id in chapter_order:
-        md = split.result.chapters[ch_id]
+        md = chapters_md[ch_id]
         title = titles.get(ch_id, ch_id)
         chapter_dir = ensure_dir(out_dir / ch_id)
         path = write_text(
@@ -1673,10 +1704,10 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     alignment_path = write_json(
         out_dir / "_alignment.json",
         {
-            "alignment": split.result.alignment,
+            "alignment": alignment,
             "coverage": split.result.coverage,
             "chapter_titles": titles,
-            "chapter_groups": split.result.chapter_groups,
+            "chapter_groups": chapter_groups,
             "chapter_order": chapter_order,
         },
     )
@@ -1688,12 +1719,22 @@ async def split_node(state: State, cfg: BookConfig) -> State:
         "chapter_sources": chapter_sources,
         "chapter_titles": titles,
         "chapter_order": chapter_order,
-        "chapter_topics": _chapter_topics(approved_structure),
-        "chapter_groups": split.result.chapter_groups,
+        "chapter_topics": chapter_topics,
+        "chapter_groups": chapter_groups,
         "chapter_alignment": _rel(alignment_path, cfg.book_dir),
         "chapter_split_report": _rel(report_path, cfg.book_dir),
         "cache_hit": split.cache_hit,
     }
+
+
+def _load_slug_registry(path: Path) -> dict[str, str]:
+    """Load the persisted ``fingerprint -> slug`` chapter slug registry (empty when absent)."""
+    if not path.exists():
+        return {}
+    data = read_json(path, default={})
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items() if isinstance(value, str)}
 
 
 def _clear_chapter_source_dirs(out_dir: Path, keep_ids: set[str]) -> None:
