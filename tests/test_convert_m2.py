@@ -21,7 +21,12 @@ from bookwiki.convert.mineru_client import (
 )
 from bookwiki.convert.source_normalizer import normalize_structured_source
 from bookwiki.convert.text_to_md import convert_text_to_md
-from bookwiki.pipeline.nodes import caption_node, convert_node
+from bookwiki.pipeline.nodes import (
+    _caption_blocks_by_id,
+    _inject_book_figure_captions,
+    caption_node,
+    convert_node,
+)
 from bookwiki.scheduler.cache import CacheResult
 from bookwiki.scheduler.config import default_config
 from bookwiki.schemas.source import VisionCaptionResult
@@ -608,10 +613,7 @@ def test_source_layout_repair_rejects_unknown_block_refs() -> None:
     )
 
     assert normalized.manifest["logical_tables"] == []
-    assert any(
-        "unknown block id" in warning
-        for warning in normalized.manifest["repair_warnings"]
-    )
+    assert any("unknown block id" in warning for warning in normalized.manifest["repair_warnings"])
 
 
 def test_no_low_confidence_candidates_for_plain_pages() -> None:
@@ -657,9 +659,7 @@ def test_convert_pdf_to_md_requires_mineru_api(tmp_path: Path) -> None:
         )
 
 
-def test_convert_pdf_to_md_uses_async_mineru_tasks(
-    tmp_path: Path, async_mineru_api: str
-) -> None:
+def test_convert_pdf_to_md_uses_async_mineru_tasks(tmp_path: Path, async_mineru_api: str) -> None:
     pdf = tmp_path / "tiny.pdf"
     pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
 
@@ -836,9 +836,7 @@ def test_convert_document_to_source_preserves_cloud_v4_assets(
     assert parsed["assets"][0]["data"] == b"\x89PNG\r\n\x1a\ncloud"
 
 
-def test_convert_pptx_to_md_uses_async_mineru_tasks(
-    tmp_path: Path, async_mineru_api: str
-) -> None:
+def test_convert_pptx_to_md_uses_async_mineru_tasks(tmp_path: Path, async_mineru_api: str) -> None:
     deck = tmp_path / "tiny.pptx"
     _write_minimal_pptx(deck)
 
@@ -884,12 +882,8 @@ def test_convert_node_routes_text_and_pptx_to_required_converters(
         "work/sources_md/notes.md",
         "work/sources_md/slides.md",
     ]
-    assert "Plain notes" in (cfg.book_dir / "work/sources_md/notes.md").read_text(
-        encoding="utf-8"
-    )
-    slides_md = (cfg.book_dir / "work/sources_md/slides.md").read_text(
-        encoding="utf-8"
-    )
+    assert "Plain notes" in (cfg.book_dir / "work/sources_md/notes.md").read_text(encoding="utf-8")
+    slides_md = (cfg.book_dir / "work/sources_md/slides.md").read_text(encoding="utf-8")
     assert "Async markdown text" in slides_md
     assert "Slide 1" not in slides_md
     assert "/tasks" in _AsyncMineruHandler.request_paths
@@ -929,9 +923,10 @@ def test_convert_node_reuses_matching_hashed_artifact(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["convert_artifact_version"] == 2
     assert manifest["source_file"]["sha256"] == hashlib.sha256(pdf.read_bytes()).hexdigest()
-    assert manifest["outputs"]["markdown_sha256"] == hashlib.sha256(
-        markdown_path.read_text(encoding="utf-8").encode("utf-8")
-    ).hexdigest()
+    assert (
+        manifest["outputs"]["markdown_sha256"]
+        == hashlib.sha256(markdown_path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    )
 
     def fail_convert(path: Path, *, source_id: str):
         pytest.fail("matching convert artifact should be reused")
@@ -1166,8 +1161,10 @@ def test_caption_node_adds_vision_caption_to_image_blocks(
 
     caption_state = asyncio.run(caption_node(state, cfg))
 
+    # caption no longer mutates sources_md; the convert artifact stays byte-identical so the
+    # convert sha-idempotency gate keeps reusing MinerU output. The caption lives in the manifest.
     source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
-    assert "A bell-shaped sampling distribution." in source_md
+    assert "A bell-shaped sampling distribution." not in source_md
     manifest = json.loads(
         (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
     )
@@ -1247,7 +1244,7 @@ def test_caption_node_uses_nested_mineru_image_source_paths(
 
     source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
     assert 'src="/bookwiki-assets/paper/figure-1.png"' in source_md
-    assert "A diagram of the sampling distribution." in source_md
+    assert "A diagram of the sampling distribution." not in source_md
     manifest = json.loads(
         (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
     )
@@ -1707,5 +1704,10 @@ def test_caption_node_preserves_latex_backslashes_when_rewriting_book_figure(
     state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
     asyncio.run(caption_node(state, cfg))
 
+    # caption keeps sources_md pristine; captions are injected into the per-chapter source at
+    # split time. The <BookFigure> re-render must preserve LaTeX backslashes verbatim.
     source_md = (cfg.book_dir / state["sources_md"][0]).read_text(encoding="utf-8")
-    assert r"A density curve with $\lambda=2$." in source_md
+    assert r"A density curve with $\lambda=2$." not in source_md
+
+    injected = _inject_book_figure_captions(source_md, _caption_blocks_by_id(cfg))
+    assert r"A density curve with $\lambda=2$." in injected

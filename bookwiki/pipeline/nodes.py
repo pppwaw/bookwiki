@@ -1171,8 +1171,11 @@ async def caption_node(state: State, cfg: BookConfig) -> State:
         if warnings:
             manifest["vision_warnings"] = warnings
         write_json(manifest_path, manifest)
-        if md_path and md_text:
-            write_text(md_path, md_text)
+        # Deliberately do NOT write md_text back to sources_md. The convert artifact
+        # (work/sources_md/*.md) must stay byte-identical to convert output so the convert
+        # sha-idempotency gate (_matching_convert_artifact) keeps matching and MinerU output is
+        # reused on rerun. Captions live only in the manifest (work/source_refs/*.json) and are
+        # injected into the per-chapter sources at split time via _inject_book_figure_captions.
 
     if caption_failures:
         count = len(caption_failures)
@@ -1446,6 +1449,54 @@ def _replace_book_figure(markdown: str, block: dict[str, Any]) -> tuple[str, boo
     return pattern.sub(lambda _match: figure, markdown, count=1), True
 
 
+def _caption_blocks_by_id(cfg: BookConfig) -> dict[str, dict[str, Any]]:
+    """Collect every manifest block keyed by ``block_id`` across all source manifests on disk.
+
+    Captions are written into ``work/source_refs/*.json`` by the ``caption`` stage (which no
+    longer mutates ``sources_md``). Reading the manifests straight from disk keeps split
+    independent of pipeline-state threading, so ``--from split`` works even when
+    ``source_ref_manifests`` was not re-seeded into state.
+    """
+    blocks: dict[str, dict[str, Any]] = {}
+    refs_dir = cfg.work_dir / "source_refs"
+    if not refs_dir.exists():
+        return blocks
+    for manifest_path in sorted(refs_dir.glob("*.json")):
+        manifest = read_json(manifest_path, default={})
+        if not isinstance(manifest, dict):
+            continue
+        for page in manifest.get("pages", []):
+            if not isinstance(page, dict):
+                continue
+            for block in page.get("blocks", []):
+                if isinstance(block, dict) and block.get("block_id"):
+                    blocks[str(block["block_id"])] = block
+    return blocks
+
+
+def _inject_book_figure_captions(markdown: str, blocks_by_id: dict[str, dict[str, Any]]) -> str:
+    """Re-render each ``<BookFigure id=.../>`` whose manifest block carries a caption.
+
+    This lands vision captions inline in the per-chapter source while leaving ``sources_md``
+    byte-identical to convert output. Only the first occurrence of each ``id`` is rewritten,
+    mirroring the previous ``caption`` stage behaviour (``_replace_book_figure`` uses
+    ``count=1``).
+    """
+    if not blocks_by_id:
+        return markdown
+    seen: set[str] = set()
+    for tag in BOOK_FIGURE_TAG_RE.findall(markdown):
+        block_id = unescape(parse_book_figure_tag(tag).get("id", ""))
+        if not block_id or block_id in seen:
+            continue
+        seen.add(block_id)
+        block = blocks_by_id.get(block_id)
+        if block is None or not str(block.get("caption") or "").strip():
+            continue
+        markdown, _ = _replace_book_figure(markdown, block)
+    return markdown
+
+
 def _section_context_for_book_figure(markdown: str, block_id: str) -> str:
     window = _section_context_window_for_book_figure(markdown, block_id)
     return str(window["text"]) if window is not None else ""
@@ -1698,8 +1749,9 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     chapter_topics = {_rid(k): v for k, v in _chapter_topics(approved_structure).items()}
 
     _clear_chapter_source_dirs(out_dir, set(chapter_order))
+    caption_blocks = _caption_blocks_by_id(cfg)
     for ch_id in chapter_order:
-        md = chapters_md[ch_id]
+        md = _inject_book_figure_captions(chapters_md[ch_id], caption_blocks)
         title = titles.get(ch_id, ch_id)
         chapter_dir = ensure_dir(out_dir / ch_id)
         path = write_text(
