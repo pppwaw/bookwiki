@@ -50,6 +50,7 @@ Agents return Pydantic models. Cache misses call the configured real LLM through
 
 - Configure `DEEPSEEK_API_KEY` for `deepseek-*` models.
 - Configure `MOONSHOT_API_KEY` for `kimi-*` models, including the `kimi-k2.6` vision captioner used by the `caption` stage.
+- Optional API Base URL overrides: `DEEPSEEK_API_BASE_URL` / `MOONSHOT_API_BASE_URL` (short aliases `DEEPSEEK_API_BASE` / `MOONSHOT_API_BASE`). Moonshot defaults to `https://api.moonshot.cn/v1`; DeepSeek uses LiteLLM's provider default unless overridden.
 - The site's `/api/chat` route uses `BOOKWIKI_CHAT_API_KEY` (OpenRouter).
 - Keep keys in the environment or repo root `.env`; existing environment variables take precedence.
 - Missing keys should fail loudly. Do not silently fall back to stub content.
@@ -60,7 +61,7 @@ Agents return Pydantic models. Cache misses call the configured real LLM through
 
 Check these first:
 
-- `work/logs/run-manifest.json`: pipeline status, next node, cache hits, and outputs.
+- `work/logs/run-manifest.json`: pipeline status, next node, cache hits, outputs, and `llm_usage` actual token / CNY spend (`llm_usage.stages` has per-stage deltas).
 - `work/logs/check-report.json`: blocking issues and `repair_targets`.
 - `work/logs/check-report.md`: human-readable check report.
 - `work/logs/chapter-split-report.md`: split coverage and assignment notes.

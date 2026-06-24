@@ -186,6 +186,24 @@ Shape:
   "nodes": [
     {"name": "convert", "status": "completed", "cache_hit": false}
   ],
+  "llm_usage": {
+    "currency": "CNY",
+    "total_cost_cny": 1.234568,
+    "prompt_tokens": 120,
+    "completion_tokens": 34,
+    "total_tokens": 154,
+    "budget_max_cost_cny": 70.0,
+    "stages": [
+      {
+        "name": "convert",
+        "currency": "CNY",
+        "cost_cny": 0.25,
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120
+      }
+    ]
+  },
   "outputs": {
     "content": "books/mini/content/docs",
     "sqlite": "site/.bookwiki/bookwiki.sqlite"
@@ -193,7 +211,7 @@ Shape:
 }
 ```
 
-Use this file to decide whether to resume, approve structure, or inspect a failed stage.
+Use this file to decide whether to resume, approve structure, inspect a failed stage, or check the actual LLM spend after a run.
 
 ## SQLite
 

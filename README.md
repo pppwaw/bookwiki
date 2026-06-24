@@ -16,6 +16,9 @@
 # 1. 配置密钥（缺失时直接报错，不降级到 stub）
 export DEEPSEEK_API_KEY="..."     # deepseek-* 模型
 export MOONSHOT_API_KEY="..."     # kimi-*（含 kimi-k2.6 视觉图注）
+# 可选：使用代理 / 兼容网关时覆盖 API Base URL
+export DEEPSEEK_API_BASE_URL="https://.../v1"
+export MOONSHOT_API_BASE_URL="https://.../v1"
 
 # 2. 初始化一本书，并把源文件放进 input/
 python scripts/init_book.py books/<id> --source path/to/source.pdf
@@ -73,10 +76,10 @@ convert → caption → structure → split → build_skeleton → generate
 
 ## 配置要点（`book.config.json`）
 
-- `budget.maxCostCny`：成本硬上限，默认 `70.0`（`<= 0` 为不限）；越线抛 `BudgetExceeded`。旧 `maxCostUsd` 自动迁移。
+- `budget.maxCostCny`：成本硬上限，默认 `70.0`（`<= 0` 为不限）；越线抛 `BudgetExceeded`。旧 `maxCostUsd` 自动迁移。每次运行后的实际花费写入 `work/logs/run-manifest.json` 的 `llm_usage.total_cost_cny`，分阶段明细见 `llm_usage.stages`。
 - `generation`：`quizPerChapter=5`、`cardsPerChapter=8`、`maxChapterConcurrency=4`、`maxSectionConcurrency=3`、`maxRepairRounds=3`、`qualityCheck=false`、`maxQualityRounds=2`、`allowMissingMdxValidator=false`。
-- `models`：按 agent 选模型（`deepseek-*` 走 `DEEPSEEK_API_KEY`，`kimi-*` 走 `MOONSHOT_API_KEY`）。
+- `models`：按 agent 选模型（`deepseek-*` 走 `DEEPSEEK_API_KEY`，`kimi-*` 走 `MOONSHOT_API_KEY`）。API Base URL 可用 `DEEPSEEK_API_BASE_URL` / `MOONSHOT_API_BASE_URL` 覆盖，短别名 `DEEPSEEK_API_BASE` / `MOONSHOT_API_BASE` 也可用；Moonshot 默认 `https://api.moonshot.cn/v1`。
 
 ## 排错先看
 
-`work/logs/run-manifest.json`、`work/logs/check-report.{json,md}`、`work/logs/chapter-split-report.md`、`work/logs/repair-actions.json`、`work/logs/repair-exhausted.json`、`work/skeleton.json`、`work/concepts/reconciled.json`、`work/agent_results/*.json`。
+`work/logs/run-manifest.json`（含 `llm_usage` 实际 token / CNY 花费）、`work/logs/check-report.{json,md}`、`work/logs/chapter-split-report.md`、`work/logs/repair-actions.json`、`work/logs/repair-exhausted.json`、`work/skeleton.json`、`work/concepts/reconciled.json`、`work/agent_results/*.json`。

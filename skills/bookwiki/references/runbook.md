@@ -7,7 +7,12 @@ Use commands from the repository root. For real LLM runs, configure the needed A
 ```bash
 export DEEPSEEK_API_KEY="..."
 export MOONSHOT_API_KEY="..."
+# Optional, for proxy / OpenAI-compatible gateways:
+export DEEPSEEK_API_BASE_URL="https://.../v1"
+export MOONSHOT_API_BASE_URL="https://.../v1"
 ```
+
+The shorter aliases `DEEPSEEK_API_BASE` and `MOONSHOT_API_BASE` are also accepted. Moonshot defaults to `https://api.moonshot.cn/v1`; DeepSeek uses LiteLLM's provider default unless one of the DeepSeek base URL variables is set.
 
 For tests or smoke runs only:
 
@@ -130,7 +135,7 @@ Notes on the current check/repair contract:
 
 ## Common Failures
 
-- Missing API key: set `DEEPSEEK_API_KEY` or `MOONSHOT_API_KEY`; do not switch to fake runtime outside tests.
+- Missing API key: set `DEEPSEEK_API_KEY` or `MOONSHOT_API_KEY`; set `DEEPSEEK_API_BASE_URL` / `MOONSHOT_API_BASE_URL` only when routing through a custom compatible endpoint. Do not switch to fake runtime outside tests.
 - Structure gate failure: add the exact approval marker after user review.
 - Stale content after changing generation settings: use `--from generate --force`.
 - `check` aborts on a missing MDX validator: install Node and run the `tools/mdx-validate` install (`node_modules`), or set `generation.allowMissingMdxValidator=true` only if you accept skipping render-time MDX checks.
