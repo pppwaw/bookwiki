@@ -54,6 +54,9 @@ from bookwiki.integrator.markdown_renderers import (
     normalize_mdx_math,
     normalize_source_cites,
 )
+from bookwiki.integrator.markdown_renderers import (
+    normalize_public_asset_markdown_images as _normalize_public_asset_markdown_images,
+)
 from bookwiki.integrator.stitching import audit_stitching
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
@@ -574,6 +577,40 @@ def _resolve_item_slots(body_md: str, quiz: dict[str, Any]) -> str:
     return _EMPTY_QUIZ_BLOCK_RE.sub("", resolved)
 
 
+def _drop_invalid_inline_quiz_items(text: str) -> str:
+    """Remove rendered inline quiz items whose answer cannot resolve to a choice.
+
+    Generation-time sanitization covers normal authored quiz blocks, but legacy or
+    fallback-repaired bodies can reach integration with malformed <QuizItem>s. Dropping
+    only the invalid item preserves the surrounding prose and any valid sibling items.
+    """
+    try:
+        blocks = extract_inline_quizzes(text)
+    except QuizExtractError:
+        return text
+
+    spans: list[tuple[int, int]] = []
+    for block in blocks:
+        for child in block.get("children", []):
+            if child.get("kind") != "item":
+                continue
+            choice_ids = {str(choice.get("id")) for choice in child.get("choices", [])}
+            answer = str(child.get("answer") or "")
+            if answer not in choice_ids:
+                start, end = child.get("start"), child.get("end")
+                if isinstance(start, int) and isinstance(end, int):
+                    spans.append((start, end))
+
+    if not spans:
+        return text
+
+    cleaned = text
+    for start, end in sorted(spans, reverse=True):
+        cleaned = cleaned[:start] + cleaned[end:]
+    cleaned = _EMPTY_QUIZ_BLOCK_RE.sub("", cleaned)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip() + "\n"
+
+
 def _inline_quiz_answer_issues(text: str, stem: str) -> list[Issue]:
     """Warn if a rendered inline quiz item's answer is not among its choice ids.
 
@@ -795,6 +832,36 @@ def _suspicious_phrases(markdown: str) -> list[str]:
     phrases = ["ignore previous instructions", "system prompt", "developer message"]
     lower = markdown.lower()
     return [phrase for phrase in phrases if phrase in lower]
+
+
+_LOCAL_MARKDOWN_LINK_RE = re.compile(
+    r"(?<!!)\[(?P<label>[^\]\n]+)\]\((?P<target>[^)\s]+)(?:\s+\"[^\"]*\")?\)"
+)
+
+
+def _drop_missing_local_markdown_links(markdown: str, base_dir: Path) -> str:
+    """Turn markdown links to missing local files into plain text labels.
+
+    This keeps generated explanatory prose while preventing check/index from being wedged by
+    model-invented chapter/section paths such as /Chapter-12-.../section-003.
+    """
+    parts = re.split(r"(```[\s\S]*?```|`[^`\n]*`)", markdown)
+    return "".join(
+        part if part.startswith("`") else _drop_missing_local_markdown_links_segment(part, base_dir)
+        for part in parts
+    )
+
+
+def _drop_missing_local_markdown_links_segment(segment: str, base_dir: Path) -> str:
+    def replace(match: re.Match[str]) -> str:
+        target = unescape(match.group("target")).strip()
+        if target.startswith(("http://", "https://", "mailto:", "#")):
+            return match.group(0)
+        if _mdx_link_exists(base_dir, target):
+            return match.group(0)
+        return match.group("label")
+
+    return _LOCAL_MARKDOWN_LINK_RE.sub(replace, segment)
 
 
 def _mdx_link_exists(base_dir: Path, target: str) -> bool:
@@ -2665,6 +2732,10 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         )
         chapter_path = chapters_dir / f"{doc_slug}.mdx"
         ensure_dir(chapter_path.parent)
+        resolved_body = _normalize_public_asset_markdown_images(resolved_body)
+        resolved_body = _drop_missing_local_markdown_links(
+            _drop_invalid_inline_quiz_items(resolved_body), chapter_path.parent
+        )
         write_text(
             chapter_path,
             (
@@ -2711,23 +2782,27 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             for item in backlinks
         )
         referenced_by = f"\n\n## Referenced By\n\n{backlink_md}\n" if backlink_md else ""
-        write_text(
-            concepts_dir / f"{safe_name}.mdx",
-            _frontmatter({"title": concept["name"], "type": "concept"})
-            + f"# {concept['name']}\n\n"
-            + convert_html_style_attrs(
-                normalize_source_cites(
-                    normalize_mdx_math(
-                        _normalize_concept_links(
-                            str(concept["body_md"]),
-                            alias_map,
-                            concept_previews,
-                            chapter_previews,
-                            auto_link=False,
-                        )
+        concept_path = concepts_dir / f"{safe_name}.mdx"
+        concept_body = convert_html_style_attrs(
+            normalize_source_cites(
+                normalize_mdx_math(
+                    _normalize_concept_links(
+                        str(concept["body_md"]),
+                        alias_map,
+                        concept_previews,
+                        chapter_previews,
+                        auto_link=False,
                     )
                 )
             )
+        )
+        concept_body = _normalize_public_asset_markdown_images(concept_body)
+        concept_body = _drop_missing_local_markdown_links(concept_body, concept_path.parent)
+        write_text(
+            concept_path,
+            _frontmatter({"title": concept["name"], "type": "concept"})
+            + f"# {concept['name']}\n\n"
+            + concept_body
             + referenced_by,
         )
         concept_name = str(concept["name"])

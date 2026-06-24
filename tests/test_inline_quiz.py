@@ -7,7 +7,11 @@ from bookwiki.generate.inline_quiz import (
     sanitize_inline_quizzes,
     strip_inline_quizzes_and_control_slots,
 )
-from bookwiki.pipeline.nodes import _inline_quiz_answer_issues, _resolve_item_slots
+from bookwiki.pipeline.nodes import (
+    _drop_invalid_inline_quiz_items,
+    _inline_quiz_answer_issues,
+    _resolve_item_slots,
+)
 
 KNOWLEDGE_BLOCK = """## 反相放大器
 
@@ -119,7 +123,7 @@ def test_sanitize_rescues_application_slot_from_unparseable_body() -> None:
     # by the regex fallback (not silently dropped) and stamped with a canonical id.
     body = (
         "当 n<30 时使用 t 分布。\n\n"
-        '<QuizBlock>\n'
+        "<QuizBlock>\n"
         '<QuizItemSlot id="auto" topic="计算样本量" sourceRefs={["p1"]} />\n'
         "</QuizBlock>"
     )
@@ -134,8 +138,7 @@ def test_sanitize_rescues_application_slot_from_unparseable_body() -> None:
 
 def test_sanitize_fallback_drops_ungrounded_slot_from_unparseable_body() -> None:
     body = (
-        "当 n<30 时使用 t 分布。\n\n"
-        '<QuizItemSlot id="auto" topic="x" sourceRefs={["unknown"]} />'
+        '当 n<30 时使用 t 分布。\n\n<QuizItemSlot id="auto" topic="x" sourceRefs={["unknown"]} />'
     )
     res = sanitize_inline_quizzes(body, allowed_refs={"p1"}, chapter_id="ch", section_index=0)
     assert res.slot_specs == []
@@ -196,6 +199,26 @@ def test_inline_quiz_answer_issues_warns_on_bad_answer() -> None:
 
 def test_inline_quiz_answer_issues_clean_on_valid_answer() -> None:
     assert _inline_quiz_answer_issues(KNOWLEDGE_BLOCK, "chapter-1") == []
+
+
+def test_drop_invalid_inline_quiz_items_removes_bad_item_only() -> None:
+    bad = KNOWLEDGE_BLOCK.replace('answer="choice-1"', 'answer="choice-9"')
+    body = f"前文。\n\n{bad}\n后文。"
+
+    out = _drop_invalid_inline_quiz_items(body)
+
+    assert "前文。" in out
+    assert "后文。" in out
+    assert "<QuizItem" not in out
+    assert "<QuizBlock>" not in out
+    assert _inline_quiz_answer_issues(out, "chapter-1") == []
+
+
+def test_drop_invalid_inline_quiz_items_keeps_valid_item() -> None:
+    out = _drop_invalid_inline_quiz_items(KNOWLEDGE_BLOCK)
+
+    assert "<QuizItem" in out
+    assert 'answer="choice-1"' in out
 
 
 def test_sanitize_offsets_survive_non_bmp_chars_before_block() -> None:
