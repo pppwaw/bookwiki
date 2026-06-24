@@ -206,6 +206,7 @@ def _insert_learning_items(conn: sqlite3.Connection, pages: list[MdxPage]) -> No
         chapter_id = page.chapter_id or page.id
         concepts = page.frontmatter.get("concepts")
         page_concepts = concepts if isinstance(concepts, list) else []
+        quiz_ids: set[str] = set()
         for index, item in enumerate(page.quiz_items, start=1):
             source_refs = _item_source_refs(item)
             options = item.get("choices", item.get("options"))
@@ -228,7 +229,7 @@ def _insert_learning_items(conn: sqlite3.Connection, pages: list[MdxPage]) -> No
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    _item_id(page, item, "quiz", index),
+                    _unique_item_id(page, item, "quiz", index, quiz_ids),
                     chapter_id,
                     page.id,
                     str(item.get("type") or "multiple_choice"),
@@ -241,6 +242,7 @@ def _insert_learning_items(conn: sqlite3.Connection, pages: list[MdxPage]) -> No
                     _json(source_refs),
                 ),
             )
+        card_ids: set[str] = set()
         for index, item in enumerate(page.card_items, start=1):
             source_refs = _item_source_refs(item)
             conn.execute(
@@ -250,7 +252,7 @@ def _insert_learning_items(conn: sqlite3.Connection, pages: list[MdxPage]) -> No
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    _item_id(page, item, "card", index),
+                    _unique_item_id(page, item, "card", index, card_ids),
                     chapter_id,
                     page.id,
                     str(item.get("front") or ""),
@@ -310,6 +312,27 @@ def _item_id(page: MdxPage, item: dict[str, Any], prefix: str, index: int) -> st
     raw = item.get("id")
     suffix = str(raw).strip() if raw is not None and str(raw).strip() else f"{prefix}-{index:03d}"
     return f"{page.id}:{suffix}"
+
+
+def _unique_item_id(
+    page: MdxPage,
+    item: dict[str, Any],
+    prefix: str,
+    index: int,
+    used_ids: set[str],
+) -> str:
+    base_id = _item_id(page, item, prefix, index)
+    if base_id not in used_ids:
+        used_ids.add(base_id)
+        return base_id
+
+    candidate = f"{base_id}-{index:03d}"
+    counter = 2
+    while candidate in used_ids:
+        candidate = f"{base_id}-{index:03d}-{counter}"
+        counter += 1
+    used_ids.add(candidate)
+    return candidate
 
 
 def _json(value: Any) -> str:
