@@ -120,12 +120,15 @@ def test_site_template_wires_bookwiki_components_and_server_only_data_paths() ->
     assert "Markdown" not in anki_deck
     assert "children" in quiz_block
     assert "children" in anki_deck
+    assert "renderPendingKatex" in anki_deck
     assert "remarkMath" in markdown
     assert "rehypeChatMath" in markdown
     math_text = (SITE / "components" / "MathText.tsx").read_text(encoding="utf-8")
+    katex_client = (SITE / "components" / "KatexClient.tsx").read_text(encoding="utf-8")
     katex_lib = (SITE / "lib" / "katex.ts").read_text(encoding="utf-8")
     # Math normalization moved into lib/katex.ts; MathText renders via renderKatexToString.
     assert "renderKatexToString" in math_text
+    assert "export function renderPendingKatex" in katex_client
     assert "normalizeKatexInput" in katex_lib
     assert "KATEX_TEXT_MODE_DIGITS" in katex_lib
     assert "role=\"tooltip\"" in preview_link

@@ -6,10 +6,13 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { usePathname } from 'next/navigation';
+import { renderPendingKatex } from './KatexClient';
 import { MathText } from './MathText';
 
 type Citation = {
@@ -38,6 +41,7 @@ export function AnkiDeck({
 }) {
   const [index, setIndex] = useState(0);
   const [showBack, setShowBack] = useState(false);
+  const deckRef = useRef<HTMLElement>(null);
   const pathname = usePathname();
   // Plain anchor (not <Link>): /api/anki returns a CSV download, not a page, so
   // client-side navigation would be wrong here. Href kept as a variable so the
@@ -60,6 +64,10 @@ export function AnkiDeck({
   }, []);
 
   const activeId = cardIds[index];
+
+  useEffect(() => {
+    if (deckRef.current) renderPendingKatex(deckRef.current);
+  }, [activeId, showBack]);
 
   const value = useMemo<AnkiContextValue>(
     () => ({
@@ -100,6 +108,7 @@ export function AnkiDeck({
   return (
     <AnkiContext.Provider value={value}>
       <section
+        ref={deckRef}
         className="anki-deck"
         aria-label="Flashcard deck"
         tabIndex={0}

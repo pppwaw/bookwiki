@@ -13,27 +13,33 @@ import { renderKatexToString } from '@/lib/katex';
 //
 // Mounted once in the docs layout, so a single pass covers the article body and
 // the sidebar TOC. We re-run on pathname change because fumadocs navigates
-// client-side (the DOM is swapped without a full reload). Each element loses its
-// `katex-src` class once rendered, so repeated passes never reprocess it, and
-// React never clobbers the injected markup: it diffs fiber-to-fiber (the vdom
-// children are the unchanged raw-TeX text), so our out-of-band `innerHTML`
-// survives until the node actually unmounts on navigation.
+// client-side (the DOM is swapped without a full reload). Interactive MDX
+// islands such as Anki cards can also call `renderPendingKatex` after they mount
+// new hidden/revealed faces. Each element loses its `katex-src` class once
+// rendered, so repeated passes never reprocess it, and React never clobbers the
+// injected markup: it diffs fiber-to-fiber (the vdom children are the unchanged
+// raw-TeX text), so our out-of-band `innerHTML` survives until the node actually
+// unmounts on navigation.
+
+export function renderPendingKatex(root: ParentNode = document) {
+  const nodes = root.querySelectorAll<HTMLElement>('.katex-src');
+  nodes.forEach((el) => {
+    const display = el.classList.contains('math-display');
+    const tex = el.textContent ?? '';
+    try {
+      el.innerHTML = renderKatexToString(tex, display);
+    } catch {
+      // Leave the raw TeX in place if KaTeX cannot parse it.
+    }
+    el.classList.remove('katex-src');
+  });
+}
 
 export function KatexClient() {
   const pathname = usePathname();
 
   useEffect(() => {
-    const nodes = document.querySelectorAll<HTMLElement>('.katex-src');
-    nodes.forEach((el) => {
-      const display = el.classList.contains('math-display');
-      const tex = el.textContent ?? '';
-      try {
-        el.innerHTML = renderKatexToString(tex, display);
-      } catch {
-        // Leave the raw TeX in place if KaTeX cannot parse it.
-      }
-      el.classList.remove('katex-src');
-    });
+    renderPendingKatex();
   }, [pathname]);
 
   return null;
