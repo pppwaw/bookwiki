@@ -725,7 +725,7 @@ def _auto_link_concept_terms(
 
 
 _CONCEPT_LINK_PROTECTED_RE = re.compile(
-    r"(```[\s\S]*?```|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$|\[[^\]\n]+\]\([^)]+\)|<[^>\n]+>)"
+    r"(<PreviewLink\b[\s\S]*?</PreviewLink>|```[\s\S]*?```|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$|\[[^\]\n]+\]\([^)]+\)|<[^>\n]+>)"
 )
 
 

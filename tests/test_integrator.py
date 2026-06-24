@@ -517,3 +517,36 @@ def test_normalize_concept_links_auto_link_false_only_resolves_explicit_wikilink
     # The bare prose mention of the concept "点估计" is left as plain text (not auto-linked).
     assert out.count("<PreviewLink") == 1
     assert "/docs/concepts/点估计" not in out
+
+
+def test_normalize_concept_links_does_not_auto_link_inside_preview_links() -> None:
+    """Auto-linking a shorter term inside an existing PreviewLink would render nested anchors."""
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    alias_map = {
+        "Kirchhoff's Voltage Law (KVL)": "Kirchhoff's Voltage Law (KVL)",
+        "Voltage": "Voltage",
+    }
+    previews = {
+        "Kirchhoff's Voltage Law (KVL)": {
+            "href": "/docs/concepts/Kirchhoff-s-Voltage-Law-KVL",
+            "title": "Kirchhoff's Voltage Law (KVL)",
+            "summary": "KVL summary.",
+        },
+        "Voltage": {
+            "href": "/docs/concepts/Voltage",
+            "title": "Voltage",
+            "summary": "Voltage summary.",
+        },
+    }
+
+    body = (
+        'Use [[Kirchhoff\'s Voltage Law (KVL)]] for loops. '
+        "Voltage appears later as plain prose."
+    )
+    out = _normalize_concept_links(body, alias_map, previews)
+
+    first_link = out.split("</PreviewLink>", 1)[0]
+    assert first_link.count("<PreviewLink") == 1
+    assert out.count("/docs/concepts/Kirchhoff-s-Voltage-Law-KVL") == 1
+    assert out.count("/docs/concepts/Voltage") == 1
