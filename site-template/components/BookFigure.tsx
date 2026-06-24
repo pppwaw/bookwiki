@@ -1,4 +1,6 @@
-import { MathText } from './MathText';
+'use client';
+
+import { useState } from 'react';
 import { SourceRef } from './SourceRef';
 
 export function BookFigure({
@@ -9,22 +11,25 @@ export function BookFigure({
 }: {
   id: string;
   src?: string;
-  sourceRef: string;
+  sourceRef?: string;
   caption?: string;
 }) {
+  const [failed, setFailed] = useState(false);
+
   // A figure with no image asset is just a caption-only box that reads as a phantom
   // "missing image" (e.g. next to a quiz). Only render when there's an actual image.
-  if (!src) return null;
+  if (!src || failed) return null;
+
   return (
     <figure id={id} className="book-figure">
-      <img src={src} alt={caption || sourceRef} loading="lazy" />
-      {caption || sourceRef ? (
+      <img
+        src={src}
+        alt={caption || sourceRef || id}
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+      {sourceRef ? (
         <figcaption>
-          {caption ? (
-            <span>
-              <MathText text={caption} />
-            </span>
-          ) : null}
           <SourceRef id={sourceRef} quote={caption} />
         </figcaption>
       ) : null}
