@@ -17,8 +17,53 @@ def normalize_mdx_math(mdx: str) -> str:
     normalized = "".join(
         part if part.startswith("`") else _normalize_math_segment(part) for part in parts
     )
+    normalized = _repair_split_display_math_linebreaks(normalized)
     normalized = _normalize_katex_text_mode_chars(normalized)
     return _canonicalize_display_fences(normalized)
+
+
+def normalize_mdx_for_validation(mdx: str) -> str:
+    """Apply deterministic render-safety rewrites before MDX validation.
+
+    This layer prevents bounded LLM repair loops from spending rounds on issues we can
+    fix exactly: math fence/escape quirks, raw cite tags that map to ``SourceRef``, raw
+    HTML style strings, and public asset Markdown image paths.
+    """
+    return convert_html_style_attrs(
+        normalize_source_cites(normalize_mdx_math(normalize_public_asset_markdown_images(mdx)))
+    )
+
+
+_MARKDOWN_IMAGE_RE = re.compile(
+    r"!\[(?P<alt>[^\]\n]*)\]\((?P<target>[^)\s]+)(?P<title>\s+\"[^\"]*\")?\)"
+)
+
+
+def normalize_public_asset_markdown_images(markdown: str) -> str:
+    """Make Markdown image links to site public assets root-relative.
+
+    Raw ``<BookFigure src=\"/bookwiki-assets/...\" />`` tags already use the served
+    public URL. Plain Markdown images copied from source text can use
+    ``bookwiki-assets/...`` without the leading slash; Fumadocs then compiles them as
+    relative imports from the current MDX directory and Next cannot resolve them.
+    """
+    parts = re.split(r"(```[\s\S]*?```|`[^`\n]*`)", markdown)
+    return "".join(
+        part if part.startswith("`") else _normalize_public_asset_image_segment(part)
+        for part in parts
+    )
+
+
+def _normalize_public_asset_image_segment(segment: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        target = html.unescape(match.group("target")).strip()
+        if target.startswith("bookwiki-assets/"):
+            title = match.group("title") or ""
+            asset_path = target.removeprefix("bookwiki-assets/")
+            return f"![{match.group('alt')}](/bookwiki-assets/{asset_path}{title})"
+        return match.group(0)
+
+    return _MARKDOWN_IMAGE_RE.sub(replace, segment)
 
 
 # Already-delimited math: `$$ ... $$` or `$ ... $`. If a quote already carries any of
@@ -123,6 +168,30 @@ _KATEX_TEXT_MODE_DIGITS = str.maketrans(
 )
 
 
+_SPLIT_LINEBREAK_DISPLAY_RE = re.compile(
+    r"(?P<br>\\{2,})[ \t]*\n[ \t]*\n?[ \t]*\$\$[ \t]*\n"
+    r"[ \t]*(?P<spacing>\d+(?:\.\d+)?\s*(?:pt|em|ex|mu|mm|cm|in))\][ \t]*\n"
+)
+
+
+def _repair_split_display_math_linebreaks(mdx: str) -> str:
+    """Repair a model-split ``\\[4pt]`` display linebreak.
+
+    A common repair/generation artifact is:
+
+    ``... , \\\n\n$$\n4pt]\n next aligned row ... $$``
+
+    The middle ``$$`` prematurely closes the display block, leaving raw
+    ``\\mathbf{...}`` in MDX prose where braces become JSX expressions. Joining it
+    back to ``\\[4pt]``
+    restores the intended aligned environment without guessing new math content.
+    """
+    return _SPLIT_LINEBREAK_DISPLAY_RE.sub(
+        lambda match: match.group("br")[:2] + f"[{match.group('spacing')}]\n",
+        mdx,
+    )
+
+
 def _canonicalize_display_fences(mdx: str) -> str:
     """Put every multi-line ``$$ ... $$`` display block on its own fence lines.
 
@@ -165,10 +234,27 @@ def _normalize_katex_text_mode_chars(mdx: str) -> str:
 
 
 def _normalize_katex_math(math_span: str) -> str:
+    normalized = _undouble_latex_command_escapes(math_span.translate(_KATEX_TEXT_MODE_DIGITS))
+    normalized = _normalize_latex_pipe_delimiters(normalized)
     return _TEXT_COMMAND_RE.sub(
         _normalize_katex_text_command,
-        math_span.translate(_KATEX_TEXT_MODE_DIGITS),
+        normalized,
     )
+
+
+def _normalize_latex_pipe_delimiters(math_span: str) -> str:
+    # A raw ``|`` is valid TeX, but inside Markdown tables it is still a table-cell
+    # delimiter before the MDX math plugin sees it. Use the command form instead.
+    return re.sub(r"\\(left|right|big|Big|bigl|bigr|Bigl|Bigr)\|", r"\\\1\\vert", math_span)
+
+
+def _undouble_latex_command_escapes(math_span: str) -> str:
+    # Model/JSON round-trips sometimes leave TeX commands as literal ``\\mathbf``
+    # inside already-delimited math. KaTeX interprets that as a linebreak followed by
+    # text, so commands like ``^\\circ`` fail. Only collapse doubled backslashes when
+    # they introduce a command or a TeX spacing escape; keep real linebreaks ``\\``
+    # before ``[4pt]``/newlines intact.
+    return re.sub(r"\\\\(?=[A-Za-z ])", r"\\", math_span)
 
 
 def _normalize_katex_text_command(match: re.Match[str]) -> str:
@@ -226,9 +312,7 @@ def convert_html_style_attrs(mdx: str) -> str:
     quote right after ``=``) are not matched.
     """
     parts = re.split(r"(```[\s\S]*?```|`[^`\n]*`)", mdx)
-    return "".join(
-        part if part.startswith("`") else _convert_style_segment(part) for part in parts
-    )
+    return "".join(part if part.startswith("`") else _convert_style_segment(part) for part in parts)
 
 
 _STYLE_ATTR_RE = re.compile(r"""style=(?P<q>["'])(?P<css>.*?)(?P=q)""", re.DOTALL)
@@ -268,7 +352,7 @@ def normalize_source_cites(mdx: str) -> str:
 
 
 _CITE_REF_RE = re.compile(
-    r"<cite\s+(?P<attr>ref|ref_id)=(?P<q>[\"'])(?P<id>.*?)(?P=q)\s*>(?P<quote>[\s\S]*?)</cite>",
+    r"<cite\s+(?P<attr>ref|ref_id)=(?P<q>[\"'])(?P<id>.*?)(?P=q)\s*(?:/\s*>|>(?P<quote>[\s\S]*?)</cite>)",
     re.IGNORECASE,
 )
 
@@ -279,7 +363,7 @@ def _normalize_cite_segment(segment: str) -> str:
 
 def _cite_to_source_ref(match: re.Match[str]) -> str:
     ref_id = html.unescape(match.group("id")).strip()
-    quote = _plain_text_from_inline_html(match.group("quote"))
+    quote = _plain_text_from_inline_html(match.group("quote") or "")
     if not ref_id:
         return _escape_mdx_text_outside_math(quote)
 
@@ -303,8 +387,7 @@ def _plain_text_from_inline_html(value: str) -> str:
 def _escape_mdx_text_outside_math(markdown: str) -> str:
     parts = re.split(r"(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|```[\s\S]*?```|`[^`\n]*`)", markdown)
     return "".join(
-        part if part.startswith(("`", "$")) else _escape_mdx_text_segment(part)
-        for part in parts
+        part if part.startswith(("`", "$")) else _escape_mdx_text_segment(part) for part in parts
     )
 
 
@@ -324,6 +407,8 @@ def _css_to_camel(prop: str) -> str:
 
 
 def _normalize_math_segment(segment: str) -> str:
+    segment = re.sub(r"(?m)^[ \t]*\\\[[ \t]*$", "$$", segment)
+    segment = re.sub(r"(?m)^[ \t]*\\\][ \t]*$", "$$", segment)
     segment = re.sub(
         r"\s*\\\[([\s\S]*?)\\\]\s*[.,;:]?",
         lambda match: f"\n\n$$\n{match.group(1).strip()}\n$$\n\n",

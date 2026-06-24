@@ -19,6 +19,7 @@ from bookwiki.agents.mdx_edit_repair import (
     ConceptMdxEditRepairAgent,
 )
 from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
+from bookwiki.generate.validate_artifact import validate_artifact
 from bookwiki.pipeline.nodes import check_node
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import TestLLMRuntime
@@ -54,6 +55,21 @@ def test_validate_mdx_flags_bare_set_notation() -> None:
 def test_validate_mdx_accepts_latex_math() -> None:
     body = "样本均值 $\\bar{X} = \\frac{1}{n}\\sum X_i$ 服从 $N(\\mu, \\sigma^2)$。"
     assert validate_mdx(body) == []
+
+
+@needs_node
+@pytest.mark.asyncio
+async def test_validate_artifact_pre_normalizes_deterministic_mdx_fixes(tmp_path: Path) -> None:
+    cfg = BookConfig(book_dir=tmp_path / "book", book_id="book", title="Book")
+    body = (
+        "| 数学联系 | $F(\\omega) = F(s)\\bigl|_{s=j\\omega}$ | |\n"
+        '<cite ref="p001"/>\n'
+        "![figure](bookwiki-assets/source/figure.jpg)\n"
+    )
+
+    issues = await validate_artifact(body_md=body, kind="concept", allowed_refs=set(), cfg=cfg)
+
+    assert [issue for issue in issues if issue.kind == "mdx"] == []
 
 
 @needs_node

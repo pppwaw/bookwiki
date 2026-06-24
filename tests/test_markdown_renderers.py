@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bookwiki.integrator.markdown_renderers import (
     convert_html_style_attrs,
+    normalize_mdx_for_validation,
     normalize_mdx_math,
     normalize_source_cites,
 )
@@ -60,9 +61,61 @@ def test_display_fence_with_content_before_closer_is_canonicalized() -> None:
     assert "后文 $x$。" in out.split("$$")[-1]
 
 
+def test_standalone_latex_display_fences_become_dollar_fences() -> None:
+    out = normalize_mdx_math("\\[\nE = mc^2\n$$\n后文。")
+
+    assert "\\[" not in out
+    assert "$$\nE = mc^2\n$$\n" in out
+    assert "后文。" in out
+
+
 def test_valid_math_is_left_untouched() -> None:
     good = "前文\n\n$$\nE(X)=\\theta\n$$\n\n行内 $a+b$ 与单行 $$c=d$$ 结束。\n"
     assert normalize_mdx_math(good) == good
+
+
+def test_split_display_linebreak_spacing_is_rejoined() -> None:
+    mdx = "$$\n\\begin{aligned}\na &= b, \\\\\n\n$$\n4pt]\nc &= d\n\\end{aligned}\n$$\n"
+
+    out = normalize_mdx_math(mdx)
+
+    assert "$$\n4pt]" not in out
+    assert "a &= b, \\\\[4pt]\n" in out
+    assert "c &= d" in out
+
+
+def test_doubled_latex_command_escapes_inside_math_are_collapsed() -> None:
+    mdx = r"已知 $\\mathbf{V}_{Th}=10\\angle 0^\\circ\\ \\mathrm{V}$。"
+
+    out = normalize_mdx_math(mdx)
+
+    assert r"$\mathbf{V}_{Th}=10\angle 0^\circ\ \mathrm{V}$" in out
+
+
+def test_latex_pipe_delimiter_inside_table_math_uses_command_form() -> None:
+    mdx = r"| 数学联系 | $F(\omega) = F(s)\bigl|_{s=j\omega}$ | |" + "\n"
+
+    out = normalize_mdx_math(mdx)
+
+    assert r"\bigl\vert" in out
+    assert r"\bigl|" not in out
+
+
+def test_pre_validation_normalizer_applies_deterministic_render_fixes() -> None:
+    mdx = (
+        r"| 数学联系 | $F(\omega) = F(s)\bigl|_{s=j\omega}$ | |"
+        "\n"
+        '<cite ref="p001"/>\n'
+        "![figure](bookwiki-assets/source/figure.jpg)\n"
+        '<div style="margin-top: 4px">x</div>\n'
+    )
+
+    out = normalize_mdx_for_validation(mdx)
+
+    assert r"\bigl\vert" in out
+    assert '<SourceRef id={"p001"} />' in out
+    assert "![figure](/bookwiki-assets/source/figure.jpg)" in out
+    assert "style={{'marginTop': '4px'}}" in out
 
 
 def test_katex_text_mode_unsupported_chars_are_normalized_inside_math_only() -> None:
@@ -98,14 +151,10 @@ def test_dollars_inside_jsx_props_and_code_are_untouched() -> None:
 
 
 def test_raw_cite_ref_is_rewritten_to_source_ref_component() -> None:
-    out = normalize_source_cites(
-        '<cite ref="12.4-p011">If $f_x$ and $f_y$ are continuous</cite>。'
-    )
+    out = normalize_source_cites('<cite ref="12.4-p011">If $f_x$ and $f_y$ are continuous</cite>。')
 
     # The quote lives only in the SourceRef hover tooltip; it is NOT duplicated inline.
-    assert out == (
-        '<SourceRef id={"12.4-p011"} quote={"If $f_x$ and $f_y$ are continuous"} />。'
-    )
+    assert out == ('<SourceRef id={"12.4-p011"} quote={"If $f_x$ and $f_y$ are continuous"} />。')
     assert " ref=" not in out
 
 
@@ -113,6 +162,12 @@ def test_raw_cite_ref_id_variant_is_rewritten() -> None:
     out = normalize_source_cites("<cite ref_id='p001'>quoted text</cite>")
 
     assert out == '<SourceRef id={"p001"} quote={"quoted text"} />'
+
+
+def test_self_closing_raw_cite_ref_is_rewritten() -> None:
+    out = normalize_source_cites('<cite ref="p001"/>')
+
+    assert out == '<SourceRef id={"p001"} />'
 
 
 def test_raw_cite_quote_prop_preserves_braces() -> None:

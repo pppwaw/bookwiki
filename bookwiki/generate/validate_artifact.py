@@ -7,6 +7,7 @@ from typing import Literal
 from bookwiki.agents import QualityCheckAgent
 from bookwiki.agents._helpers import SOURCE_REF_RE
 from bookwiki.checkers.mdx_validator import validate_mdx
+from bookwiki.integrator.markdown_renderers import normalize_mdx_for_validation
 from bookwiki.scheduler.cache import run_with_cache
 from bookwiki.scheduler.config import BookConfig
 
@@ -117,7 +118,8 @@ async def validate_artifact(
     """
     issues: list[ArtifactIssue] = []
 
-    for error in validate_mdx(body_md):
+    validation_body = normalize_mdx_for_validation(body_md)
+    for error in validate_mdx(validation_body):
         issues.append(ArtifactIssue(kind="mdx", message=error))
 
     for ref_id in SOURCE_REF_RE.findall(body_md):
