@@ -56,12 +56,16 @@ def test_load_dotenv_reads_project_env_without_overriding_existing(
     env_path.write_text(
         "DEEPSEEK_API_KEY=from-file\n"
         "MOONSHOT_API_KEY='moonshot file value'\n"
+        "DEEPSEEK_API_BASE_URL=https://deepseek.example/v1\n"
+        "MOONSHOT_API_BASE_URL=https://moonshot.example/v1\n"
         "EXISTING=from-file\n"
         "# comment\n",
         encoding="utf-8",
     )
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_BASE_URL", raising=False)
+    monkeypatch.delenv("MOONSHOT_API_BASE_URL", raising=False)
     monkeypatch.setenv("EXISTING", "from-env")
 
     loaded = load_dotenv(env_path)
@@ -69,6 +73,8 @@ def test_load_dotenv_reads_project_env_without_overriding_existing(
     assert loaded is True
     assert os.environ["DEEPSEEK_API_KEY"] == "from-file"
     assert os.environ["MOONSHOT_API_KEY"] == "moonshot file value"
+    assert os.environ["DEEPSEEK_API_BASE_URL"] == "https://deepseek.example/v1"
+    assert os.environ["MOONSHOT_API_BASE_URL"] == "https://moonshot.example/v1"
     assert os.environ["EXISTING"] == "from-env"
 
 
@@ -94,10 +100,43 @@ async def test_build_instructor_client_uses_json_mode_and_repairs_invalid_escape
 
 def test_moonshot_model_list_uses_official_api_base(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MOONSHOT_API_KEY", "test-key")
+    monkeypatch.delenv("MOONSHOT_API_BASE_URL", raising=False)
+    monkeypatch.delenv("MOONSHOT_API_BASE", raising=False)
 
     moonshot = next(item for item in _model_list() if item["model_name"] == "kimi-k2.6")
 
     assert moonshot["litellm_params"]["api_base"] == "https://api.moonshot.cn/v1"
+
+
+def test_model_list_uses_configured_provider_api_base_urls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot-key")
+    monkeypatch.setenv("DEEPSEEK_API_BASE_URL", "https://deepseek.example/v1/")
+    monkeypatch.setenv("MOONSHOT_API_BASE_URL", "https://moonshot.example/v1/")
+
+    models = {item["model_name"]: item for item in _model_list()}
+
+    assert models["deepseek-v4-pro"]["litellm_params"]["api_base"] == (
+        "https://deepseek.example/v1"
+    )
+    assert models["deepseek-v4-flash"]["litellm_params"]["api_base"] == (
+        "https://deepseek.example/v1"
+    )
+    assert models["kimi-k2.6"]["litellm_params"]["api_base"] == (
+        "https://moonshot.example/v1"
+    )
+
+
+def test_model_list_uses_short_api_base_env_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.delenv("DEEPSEEK_API_BASE_URL", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_BASE", "https://deepseek-alias.example/v1")
+
+    deepseek = next(item for item in _model_list() if item["model_name"] == "deepseek-v4-pro")
+
+    assert deepseek["litellm_params"]["api_base"] == "https://deepseek-alias.example/v1"
 
 
 def test_repair_keeps_valid_latex_json() -> None:

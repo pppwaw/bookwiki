@@ -28,6 +28,7 @@ ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]] | dict[
 # upstream request would otherwise stall a chapter indefinitely. Cap per-request
 # wall time so a stuck call surfaces as an error the backoff/repair paths can see.
 LLM_REQUEST_TIMEOUT_SECONDS = 600
+DEFAULT_MOONSHOT_API_BASE_URL = "https://api.moonshot.cn/v1"
 
 # Per-token prices (CNY) registered on each Router deployment so litellm computes
 # ``response_cost`` (read back by ``_record_usage``) and the ``maxCostCny`` budget is
@@ -547,6 +548,7 @@ def _model_list() -> list[dict[str, Any]]:
             "litellm_params": {
                 "model": "deepseek/deepseek-v4-pro",
                 "api_key": os.getenv("DEEPSEEK_API_KEY"),
+                **_api_base_params("DEEPSEEK"),
                 "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
                 **_price_params("deepseek-v4-pro"),
             },
@@ -558,6 +560,7 @@ def _model_list() -> list[dict[str, Any]]:
             "litellm_params": {
                 "model": "deepseek/deepseek-v4-flash",
                 "api_key": os.getenv("DEEPSEEK_API_KEY"),
+                **_api_base_params("DEEPSEEK"),
                 "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
                 **_price_params("deepseek-v4-flash"),
             },
@@ -569,12 +572,25 @@ def _model_list() -> list[dict[str, Any]]:
             "litellm_params": {
                 "model": "moonshot/kimi-k2.6",
                 "api_key": os.getenv("MOONSHOT_API_KEY"),
-                "api_base": "https://api.moonshot.cn/v1",
+                **_api_base_params("MOONSHOT", default=DEFAULT_MOONSHOT_API_BASE_URL),
                 "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
                 **_price_params("kimi-k2.6"),
             },
         },
     ]
+
+
+def _api_base_params(provider: str, *, default: str | None = None) -> dict[str, str]:
+    api_base = _provider_api_base(provider, default=default)
+    return {"api_base": api_base} if api_base else {}
+
+
+def _provider_api_base(provider: str, *, default: str | None = None) -> str | None:
+    for env_name in (f"{provider}_API_BASE_URL", f"{provider}_API_BASE"):
+        value = os.getenv(env_name)
+        if value and value.strip():
+            return value.strip().rstrip("/")
+    return default
 
 
 def _ensure_api_key(model: str) -> None:
