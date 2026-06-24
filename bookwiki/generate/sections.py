@@ -63,6 +63,7 @@ from bookwiki.generate.inline_quiz import (
     strip_inline_quizzes_and_control_slots,
 )
 from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
+from bookwiki.integrator.markdown_renderers import normalize_mdx_for_validation
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import build_runtime
@@ -550,7 +551,7 @@ def _application_quiz_mdx_errors(items: list[QuizItem]) -> list[str]:
             for choice_index, choice in enumerate(item.choices, 1)
         )
         for field_name, text in fields:
-            for error in validate_mdx(str(text)):
+            for error in validate_mdx(normalize_mdx_for_validation(str(text))):
                 errors.append(f"item {item_index} {field_name}: {error}")
     return errors
 
@@ -613,6 +614,7 @@ async def _generate_validated_section(
     )
     cache_results.append(generated)
     section: SectionResult = generated.result
+    section = _normalize_section_mdx(section)
     validation = validate_section(
         section=section,
         section_spec=spec,
@@ -642,6 +644,7 @@ async def _generate_validated_section(
         )
         cache_results.append(repaired)
         candidate = repaired.result
+        candidate = _normalize_section_mdx(candidate)
         if _body_too_short(candidate.body_md, section.body_md):
             LOGGER.warning(
                 "discarding section repair for %s section %d: body shrank from %d to %d chars",
@@ -690,6 +693,13 @@ async def _generate_validated_section(
         LOGGER.warning("inline quiz sanitize: %s", warning)
     section = section.model_copy(update={"body_md": sanitized.body_md})
     return section, sanitized.slot_specs, cache_results, issue
+
+
+def _normalize_section_mdx(section: SectionResult) -> SectionResult:
+    body_md = normalize_mdx_for_validation(section.body_md)
+    if body_md == section.body_md:
+        return section
+    return section.model_copy(update={"body_md": body_md})
 
 
 def validate_section(

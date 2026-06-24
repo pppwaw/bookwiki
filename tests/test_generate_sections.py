@@ -219,6 +219,37 @@ async def test_generate_chapter_sections_inline_repairs_bare_mdx_math(
 
 
 @pytest.mark.asyncio
+async def test_generate_chapter_sections_pre_normalizes_deterministic_mdx_before_repair(
+    tmp_path: Path,
+) -> None:
+    runtime = RecordingRuntime(
+        [
+            _plan_response([]),
+            _section_response_with_body('结论成立 <cite ref="src-p001"/>。'),
+            _card_response(),
+            _summary_response(),
+        ]
+    )
+    cfg = _cfg(tmp_path / "book", runtime)
+
+    result = await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id="chapter-1",
+        title="Search",
+        source_md=SOURCE_MD,
+        source_path="work/chapter_sources/chapter-1/source.md",
+        topics=["t0"],
+        figures=[],
+        skeleton_payload={},
+    )
+
+    assert result.issues == []
+    assert '<SourceRef id={"src-p001"} />' in result.chapter.body_md
+    assert '<cite ref="src-p001"' not in result.chapter.body_md
+    assert "ChapterMdxEditRepairAgent" not in "\n".join(call["user"] for call in runtime.calls)
+
+
+@pytest.mark.asyncio
 async def test_generate_chapter_sections_inline_exhaustion_warns_and_completes(
     tmp_path: Path,
 ) -> None:
