@@ -20,5 +20,6 @@ def book_arg_parser(description: str) -> argparse.ArgumentParser:
 
 def run_stage(book_dir: str, *, stop_after: str, resume: bool = True) -> None:
     cfg = load_config(book_dir)
+    cfg.force_from = stop_after
     run_pipeline(cfg, stop_after=stop_after, resume=resume)
     print(f"stage complete: {stop_after}")

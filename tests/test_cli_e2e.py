@@ -82,6 +82,11 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
     assert "resume: completed checkpoint found" in resumed.stdout
     assert "cache_hit" in resumed.stdout
 
+    checked = run_script("scripts/check.py", str(book_dir))
+
+    assert "resume: completed checkpoint found" not in checked.stdout
+    assert "stage complete: check" in checked.stdout
+
     db_path = book_dir / "site" / ".bookwiki" / "bookwiki.sqlite"
     content_index = book_dir / "content" / "docs" / "index.mdx"
 
