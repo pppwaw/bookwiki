@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -87,6 +88,71 @@ def test_stop_after_runs_only_up_to_target(tmp_path: Path, monkeypatch: pytest.M
     manifest = _manifest(cfg)
     assert manifest["status"] == "paused"
     assert manifest["next_node"] == "caption"
+
+
+def test_manifest_records_llm_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = SimpleNamespace(
+        total_cost_cny=1.2345678,
+        total_prompt_tokens=120,
+        total_completion_tokens=34,
+    )
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    run_pipeline(cfg, stop_after="convert", resume=False)
+
+    assert _manifest(cfg)["llm_usage"] == {
+        "currency": "CNY",
+        "total_cost_cny": 1.234568,
+        "prompt_tokens": 120,
+        "completion_tokens": 34,
+        "total_tokens": 154,
+        "budget_max_cost_cny": 70.0,
+        "stages": [
+            {
+                "name": "convert",
+                "currency": "CNY",
+                "cost_cny": 0.0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
+        ],
+    }
+
+
+def test_manifest_records_stage_llm_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = SimpleNamespace(
+        total_cost_cny=0.0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+    )
+
+    def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        cfg_arg.llm_runtime.total_cost_cny += 0.25
+        cfg_arg.llm_runtime.total_prompt_tokens += 100
+        cfg_arg.llm_runtime.total_completion_tokens += 20
+        return {**_NODE_OUTPUTS["convert"], "cache_hit": False}
+
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
+
+    run_pipeline(cfg, stop_after="convert", resume=False)
+
+    usage = _manifest(cfg)["llm_usage"]
+    assert usage["total_cost_cny"] == 0.25
+    assert usage["total_tokens"] == 120
+    assert usage["stages"] == [
+        {
+            "name": "convert",
+            "currency": "CNY",
+            "cost_cny": 0.25,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+        }
+    ]
 
 
 def test_pause_after_halts_after_listed_node(

@@ -54,10 +54,12 @@ RECURSION_LIMIT = 50
 def _bind_node(name: str, fn: Any, cfg: BookConfig):
     async def node(state: PipelineState) -> dict[str, Any]:
         LOGGER.info("node start name=%s book_id=%s", name, cfg.book_id)
+        usage_before = _llm_usage_totals(cfg)
         result = fn(state, cfg)
         if inspect.isawaitable(result):
             result = await result
         cache_hit = bool((result or {}).get("cache_hit", False))
+        _append_stage_usage(cfg, name, usage_before, _llm_usage_totals(cfg))
         LOGGER.info("node done name=%s book_id=%s cache_hit=%s", name, cfg.book_id, cache_hit)
         return result
 
@@ -153,12 +155,55 @@ def _write_manifest(
             "next_node": next_node,
             "config_hash": config_hash,
             "nodes": nodes_log,
+            "llm_usage": _llm_usage_snapshot(cfg),
             "outputs": {
                 "content": str(cfg.content_dir),
                 "sqlite": state.get("sqlite"),
             },
         },
     )
+
+
+def _llm_usage_snapshot(cfg: BookConfig) -> dict[str, Any]:
+    totals = _llm_usage_totals(cfg)
+    return {
+        "currency": "CNY",
+        "total_cost_cny": totals["cost_cny"],
+        "prompt_tokens": totals["prompt_tokens"],
+        "completion_tokens": totals["completion_tokens"],
+        "total_tokens": totals["total_tokens"],
+        "budget_max_cost_cny": cfg.budget.get("maxCostCny"),
+        "stages": list(getattr(cfg, "_llm_stage_usage", [])),
+    }
+
+
+def _llm_usage_totals(cfg: BookConfig) -> dict[str, Any]:
+    runtime = cfg.llm_runtime
+    prompt_tokens = int(getattr(runtime, "total_prompt_tokens", 0) or 0)
+    completion_tokens = int(getattr(runtime, "total_completion_tokens", 0) or 0)
+    return {
+        "cost_cny": round(float(getattr(runtime, "total_cost_cny", 0.0) or 0.0), 6),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def _append_stage_usage(
+    cfg: BookConfig,
+    name: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> None:
+    stage_usage = {
+        "name": name,
+        "currency": "CNY",
+        "cost_cny": round(after["cost_cny"] - before["cost_cny"], 6),
+        "prompt_tokens": after["prompt_tokens"] - before["prompt_tokens"],
+        "completion_tokens": after["completion_tokens"] - before["completion_tokens"],
+        "total_tokens": after["total_tokens"] - before["total_tokens"],
+    }
+    cfg.__dict__.setdefault("_llm_stage_usage", []).append(stage_usage)
 
 
 # --------------------------------------------------------------------------- #
@@ -201,6 +246,7 @@ async def _run(
     # is unaffected.
     if cfg.llm_runtime is None:
         cfg.llm_runtime = build_runtime(max_cost_cny=cfg.budget.get("maxCostCny"))
+    cfg._llm_stage_usage = []
 
     prior_values, prior_meta, prior_next = await _peek(db_path, cfg)
     config_matches = prior_meta.get("config_hash") == cfg_hash
