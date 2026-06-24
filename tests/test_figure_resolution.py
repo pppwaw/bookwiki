@@ -119,21 +119,27 @@ def test_quiz_figure_ref_resolves_against_chapter_index() -> None:
     quiz_mdx = _quiz_item_mdx(_quiz_item("paper-p001-b001"), 1)
     body = f"Intro.\n\n<QuizBlock>\n{quiz_mdx}\n</QuizBlock>"
 
-    resolved, figures_md = _resolve_chapter_figures(body, {"paper-p001-b001": CANONICAL})
+    resolved = _resolve_chapter_figures(body, {"paper-p001-b001": CANONICAL})
 
     assert CANONICAL in resolved
     assert '<BookFigure id="paper-p001-b001" />' not in resolved
-    # Referenced by the quiz, so it must NOT be dumped into a trailing "## Figures" section.
-    assert figures_md == ""
 
 
 def test_quiz_unknown_figure_ref_is_dropped() -> None:
     quiz_mdx = _quiz_item_mdx(_quiz_item("ghost-figure"), 1)
     body = f"Intro.\n\n<QuizBlock>\n{quiz_mdx}\n</QuizBlock>"
 
-    resolved, _ = _resolve_chapter_figures(body, {"paper-p001-b001": CANONICAL})
+    resolved = _resolve_chapter_figures(body, {"paper-p001-b001": CANONICAL})
 
     assert "<BookFigure" not in resolved
+
+
+def test_unreferenced_source_figure_is_not_appended_to_trailing_section() -> None:
+    body = "Intro paragraph without a figure reference."
+
+    resolved = _resolve_chapter_figures(body, {"paper-p001-b001": CANONICAL})
+
+    assert resolved == body
 
 
 def test_body_figure_refs_extracts_unique_ordered_ids() -> None:
@@ -164,4 +170,3 @@ def test_prune_figure_refs_clears_ids_outside_the_allowed_set() -> None:
 
     assert items[0].figure_ref == "paper-p001-b001"
     assert items[1].figure_ref == ""
-

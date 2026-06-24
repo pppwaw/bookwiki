@@ -2388,9 +2388,8 @@ def _chapter_figure_index(state: State, cfg: BookConfig, ch_id: str) -> dict[str
         for figure_id, tag in generated.items():
             index.setdefault(str(figure_id), str(tag))
     # A <BookFigure/> without a `src` has no image asset; keeping it would render an
-    # empty caption-only box (a phantom "missing image", e.g. next to a quiz) and would
-    # also pad a trailing "## Figures" section with image-less entries. Drop those so
-    # only figures that actually show the referenced image survive.
+    # empty caption-only box (a phantom "missing image", e.g. next to a quiz). Drop
+    # those so only figures that actually show the referenced image survive.
     return {
         figure_id: tag
         for figure_id, tag in index.items()
@@ -2398,28 +2397,23 @@ def _chapter_figure_index(state: State, cfg: BookConfig, ch_id: str) -> dict[str
     }
 
 
-def _resolve_chapter_figures(body: str, index: dict[str, str]) -> tuple[str, str]:
+def _resolve_chapter_figures(body: str, index: dict[str, str]) -> str:
     """Resolve inline ``<BookFigure/>`` references against the chapter figure index.
 
-    Known references are rewritten to their canonical (src/caption-bearing) tag and
-    marked used; unknown references are dropped so hallucinated ids never reach the
-    page. Figures present in the source but never referenced are returned as a
-    trailing ``## Figures`` section so no asset is silently lost.
+    Known references are rewritten to their canonical (src/caption-bearing) tag;
+    unknown references are dropped so hallucinated ids never reach the page. Figures
+    present in the source but never referenced are omitted: the learning page should
+    only show figures placed by the generated chapter body or referenced by quiz
+    items.
     """
-    used: set[str] = set()
-
     def _replace(match: re.Match[str]) -> str:
         figure_id = unescape(parse_book_figure_tag(match.group(0)).get("id", ""))
         canonical = index.get(figure_id)
         if canonical is None:
             return ""
-        used.add(figure_id)
         return canonical
 
-    resolved = BOOK_FIGURE_TAG_RE.sub(_replace, body)
-    unused = [tag for figure_id, tag in index.items() if figure_id not in used]
-    figures_md = "\n\n## Figures\n\n" + "\n\n".join(unused) if unused else ""
-    return resolved, figures_md
+    return BOOK_FIGURE_TAG_RE.sub(_replace, body)
 
 
 # Homepage concept-graph pruning caps: keep the most-connected backbone only
@@ -2666,7 +2660,7 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             ),
             quiz,
         )
-        resolved_body, figures_md = _resolve_chapter_figures(
+        resolved_body = _resolve_chapter_figures(
             rendered_body, _chapter_figure_index(state, cfg, ch_id)
         )
         chapter_path = chapters_dir / f"{doc_slug}.mdx"
@@ -2685,7 +2679,6 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                     }
                 )
                 + resolved_body
-                + figures_md
                 + "\n\n"
                 + f"## Sources\n\n{citation_md}\n\n"
                 + f"## Anki Cards\n\n{card_mdx}\n"

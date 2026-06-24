@@ -414,19 +414,14 @@ def test_integrate_node_resolves_chapter_figures_from_source(tmp_path: Path) -> 
         '<BookFigure id="paper-p001-b001" src="/bookwiki-assets/paper-p001-b001.png" '
         'caption="Search tree diagram" />'
     )
-    canonical_b002 = (
-        '<BookFigure id="paper-p001-b002" src="/bookwiki-assets/paper-p001-b002.png" '
-        'caption="Heuristic comparison" />'
-    )
     # Inline reference is rewritten to the source-backed canonical tag.
     assert canonical_b001 in chapter_mdx
     assert '<BookFigure id="paper-p001-b001" />' not in chapter_mdx
     # Hallucinated reference (absent from source) is dropped entirely.
     assert "paper-p999-b001" not in chapter_mdx
-    # Unreferenced source figure is preserved in a trailing Figures section.
-    assert "## Figures" in chapter_mdx
-    assert canonical_b002 in chapter_mdx
-    assert chapter_mdx.index("## Figures") < chapter_mdx.index("## Sources")
+    # Unreferenced source figures are not appended to the rendered chapter.
+    assert "## Figures" not in chapter_mdx
+    assert "paper-p001-b002" not in chapter_mdx
     assert "## Anki Cards" in chapter_mdx
 
 
@@ -522,4 +517,3 @@ def test_normalize_concept_links_auto_link_false_only_resolves_explicit_wikilink
     # The bare prose mention of the concept "点估计" is left as plain text (not auto-linked).
     assert out.count("<PreviewLink") == 1
     assert "/docs/concepts/点估计" not in out
-

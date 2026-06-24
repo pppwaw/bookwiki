@@ -48,7 +48,7 @@ def test_resolve_keeps_registered_generated_figure(tmp_path: Path) -> None:
     index = _chapter_figure_index(state, cfg, "chapter-1")
     body = 'Intro paragraph.\n\n<BookFigure id="ch1-s0-demo" />\n\nMore.'
 
-    resolved, _figures_md = _resolve_chapter_figures(body, index)
+    resolved = _resolve_chapter_figures(body, index)
 
     assert GENERATED_TAG in resolved
     assert 'src="/bookwiki-assets/generated/chapter-1/ch1-s0-demo.png"' in resolved
@@ -57,6 +57,6 @@ def test_resolve_keeps_registered_generated_figure(tmp_path: Path) -> None:
 def test_resolve_drops_unregistered_generated_reference() -> None:
     body = 'Intro.\n\n<BookFigure id="ghost-figure" />'
 
-    resolved, _figures_md = _resolve_chapter_figures(body, {})
+    resolved = _resolve_chapter_figures(body, {})
 
     assert "BookFigure" not in resolved
