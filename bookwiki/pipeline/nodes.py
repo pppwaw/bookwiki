@@ -2473,6 +2473,7 @@ def _resolve_chapter_figures(body: str, index: dict[str, str]) -> str:
     only show figures placed by the generated chapter body or referenced by quiz
     items.
     """
+
     def _replace(match: re.Match[str]) -> str:
         figure_id = unescape(parse_book_figure_tag(match.group(0)).get("id", ""))
         canonical = index.get(figure_id)
