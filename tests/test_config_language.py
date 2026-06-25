@@ -40,6 +40,7 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
     assert "section" in cfg.models
     assert "quiz" not in cfg.models
     assert cfg.models["vision"] == "openrouter-qwen3.6-35b-a3b"
+    assert cfg.budget == {"maxCostCny": 70.0}
 
     config_path = save_config(cfg)
     payload = json.loads(config_path.read_text(encoding="utf-8"))
@@ -50,6 +51,40 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
     assert "section" in payload["models"]
     assert "quiz" not in payload["models"]
     assert payload["models"]["vision"] == "openrouter-qwen3.6-35b-a3b"
+    assert payload["budget"] == {"maxCostCny": 70.0}
+
+
+def test_load_config_keeps_budget_current_schema_only(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    (book_dir / "book.config.json").write_text(
+        json.dumps(
+            {
+                "book_id": "mini",
+                "title": "Mini",
+                "budget": {"maxCostUsd": 12, "maxCostCny": 34},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(book_dir)
+
+    assert cfg.budget == {"maxCostCny": 34}
+
+
+def test_load_config_defaults_to_budget_limit(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    (book_dir / "book.config.json").write_text(
+        json.dumps({"book_id": "mini", "title": "Mini"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(book_dir)
+
+    assert cfg.budget == {"maxCostCny": 70.0}
 
 
 def test_load_config_defaults_language_and_generation_for_existing_config(tmp_path) -> None:

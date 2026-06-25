@@ -29,6 +29,9 @@ DEFAULT_MODELS = {
     "vision": "openrouter-qwen3.6-35b-a3b",
 }
 
+DEFAULT_BUDGET = {"maxCostCny": 70.0}
+
+
 DEFAULT_GENERATION = {
     "quizPerChapter": 5,
     "cardsPerChapter": 8,
@@ -60,7 +63,7 @@ class BookConfig:
     language: str = "zh-CN"
     notes_path: str = "book.notes.md"
     models: dict[str, str] = field(default_factory=lambda: DEFAULT_MODELS.copy())
-    budget: dict[str, Any] = field(default_factory=lambda: {"maxCostCny": 70.0})
+    budget: dict[str, Any] = field(default_factory=lambda: DEFAULT_BUDGET.copy())
     generation: dict[str, Any] = field(default_factory=lambda: deepcopy(DEFAULT_GENERATION))
     pause_after: list[str] = field(default_factory=list)
     dry_run: bool = False
@@ -164,6 +167,10 @@ def load_config(book_dir: str | Path) -> BookConfig:
         return cfg
 
     raw = json.loads(config_path.read_text(encoding="utf-8"))
+    budget = DEFAULT_BUDGET.copy()
+    raw_budget = raw.get("budget", {})
+    if isinstance(raw_budget, dict) and "maxCostCny" in raw_budget:
+        budget["maxCostCny"] = raw_budget["maxCostCny"]
     return BookConfig(
         book_dir=path,
         book_id=str(raw.get("book_id") or path.name),
@@ -171,7 +178,7 @@ def load_config(book_dir: str | Path) -> BookConfig:
         language=str(raw.get("language") or "zh-CN"),
         notes_path=str(raw.get("notesPath") or raw.get("notes_path") or "book.notes.md"),
         models={**DEFAULT_MODELS, **raw.get("models", {})},
-        budget=_merge_budget(raw.get("budget", {})),
+        budget=budget,
         generation=_merge_generation(raw.get("generation", {})),
     )
 
@@ -204,21 +211,4 @@ def _merge_generation(raw: Any) -> dict[str, Any]:
                 merged[key] = value
         else:
             merged[key] = value
-    return merged
-
-
-def _merge_budget(raw: Any) -> dict[str, Any]:
-    """Normalize the budget block to ``maxCostCny`` (the providers bill in RMB).
-
-    Legacy configs used ``maxCostUsd``; if a config still carries it (and no
-    ``maxCostCny``), the number is carried over as the CNY budget so the guardrail
-    keeps a value instead of silently resetting. The unit is now CNY, so a user who
-    set a true USD figure should review it.
-    """
-    merged: dict[str, Any] = {"maxCostCny": 70.0}
-    if not isinstance(raw, dict):
-        return merged
-    merged.update(raw)
-    if "maxCostCny" not in raw and "maxCostUsd" in raw:
-        merged["maxCostCny"] = raw["maxCostUsd"]
     return merged
