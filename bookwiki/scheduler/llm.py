@@ -29,6 +29,11 @@ ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]] | dict[
 # wall time so a stuck call surfaces as an error the backoff/repair paths can see.
 LLM_REQUEST_TIMEOUT_SECONDS = 600
 DEFAULT_MOONSHOT_API_BASE_URL = "https://api.moonshot.cn/v1"
+DEFAULT_OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
+# OpenRouter bills in USD; BookWiki budget accounting is CNY, so registered
+# prices are converted with a fixed guardrail rate. This is deliberately
+# conservative enough for local budget enforcement, not invoice reconciliation.
+OPENROUTER_USD_TO_CNY = 6.8
 
 # Per-token prices (CNY) registered on each Router deployment so litellm computes
 # ``response_cost`` (read back by ``_record_usage``) and the ``maxCostCny`` budget is
@@ -62,6 +67,13 @@ _MODEL_PRICES_CNY: dict[str, tuple[float, float, float]] = {
     "deepseek-v4-flash": (1.0 / _MILLION, 2.0 / _MILLION, 0.02 / _MILLION),
     "deepseek-v4-pro": (3.0 / _MILLION, 6.0 / _MILLION, 0.025 / _MILLION),
     "kimi-k2.6": (6.5 / _MILLION, 27.0 / _MILLION, 1.10 / _MILLION),
+    # OpenRouter reported pricing for qwen/qwen3.6-35b-a3b at test time:
+    # $0.20 / $1.60 per 1M input/output tokens. No cache discount is assumed.
+    "openrouter-qwen3.6-35b-a3b": (
+        0.20 * OPENROUTER_USD_TO_CNY / _MILLION,
+        1.60 * OPENROUTER_USD_TO_CNY / _MILLION,
+        0.20 * OPENROUTER_USD_TO_CNY / _MILLION,
+    ),
 }
 
 
@@ -78,7 +90,6 @@ def _price_params(model_name: str) -> dict[str, float]:
     }
 
 
-
 # --- Input token budgeting -------------------------------------------------
 # Context windows (total tokens, shared input+output) and max output per the
 # official model cards (2026-04): deepseek-v4-pro/flash 1,048,576 ctx / 384,000
@@ -89,6 +100,7 @@ _MODEL_CONTEXT_WINDOW: dict[str, tuple[int, int]] = {
     "deepseek-v4-flash": (1_048_576, 384_000),
     "deepseek-v4-pro": (1_048_576, 384_000),
     "kimi-k2.6": (262_144, 98_304),
+    "openrouter-qwen3.6-35b-a3b": (262_144, 65_536),
 }
 _INPUT_BUDGET_SAFETY = 2_048
 # Unknown model: generous guard above the largest field seen in real runs
@@ -352,7 +364,7 @@ class LiteLLMRuntime:
                 response_model=output_model,
                 messages=_messages(system=system, user=user, image_paths=image_paths),
                 max_retries=max_retries,
-                temperature=_temperature_for_model(model),
+                **_completion_params_for_model(model),
             )
         )
         if isinstance(result, output_model):
@@ -375,7 +387,7 @@ class LiteLLMRuntime:
                 model=model,
                 messages=_messages(system=system, user=user, image_paths=image_paths),
                 max_retries=max_retries,
-                temperature=_temperature_for_model(model),
+                **_completion_params_for_model(model),
             )
         )
         self._record_usage(response, model=model)
@@ -409,7 +421,7 @@ class LiteLLMRuntime:
                     messages=messages,
                     tools=list(tools),
                     tool_choice="auto",
-                    temperature=_temperature_for_model(model),
+                    **_completion_params_for_model(model),
                 )
             )
             self._record_usage(response, model=model)
@@ -447,7 +459,7 @@ class LiteLLMRuntime:
                     },
                 ],
                 max_retries=max_retries,
-                temperature=_temperature_for_model(model),
+                **_completion_params_for_model(model),
             )
         )
         if isinstance(result, output_model):
@@ -577,42 +589,96 @@ def _model_list() -> list[dict[str, Any]]:
                 **_price_params("kimi-k2.6"),
             },
         },
+        {
+            "model_name": "openrouter-qwen3.6-35b-a3b",
+            "litellm_params": {
+                "model": "openai/qwen/qwen3.6-35b-a3b",
+                "api_key": _provider_api_key("OPENROUTER"),
+                **_api_base_params("OPENROUTER", default=DEFAULT_OPENROUTER_API_BASE_URL),
+                "timeout": LLM_REQUEST_TIMEOUT_SECONDS,
+                **_price_params("openrouter-qwen3.6-35b-a3b"),
+            },
+        },
     ]
 
 
-def _api_base_params(provider: str, *, default: str | None = None) -> dict[str, str]:
-    api_base = _provider_api_base(provider, default=default)
+def _api_base_params(
+    provider: str,
+    *,
+    default: str | None = None,
+    extra_env_names: tuple[str, ...] = (),
+) -> dict[str, str]:
+    api_base = _provider_api_base(provider, default=default, extra_env_names=extra_env_names)
     return {"api_base": api_base} if api_base else {}
 
 
-def _provider_api_base(provider: str, *, default: str | None = None) -> str | None:
-    for env_name in (f"{provider}_API_BASE_URL", f"{provider}_API_BASE"):
+def _provider_api_base(
+    provider: str,
+    *,
+    default: str | None = None,
+    extra_env_names: tuple[str, ...] = (),
+) -> str | None:
+    for env_name in (
+        f"{provider}_API_BASE_URL",
+        f"{provider}_API_BASE",
+        *extra_env_names,
+    ):
         value = os.getenv(env_name)
         if value and value.strip():
             return value.strip().rstrip("/")
     return default
 
 
+def _provider_api_key(provider: str, *, extra_env_names: tuple[str, ...] = ()) -> str | None:
+    for env_name in (f"{provider}_API_KEY", *extra_env_names):
+        value = os.getenv(env_name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
 def _ensure_api_key(model: str) -> None:
     load_dotenv()
-    env_name = _api_key_env(model)
-    if not env_name:
+    env_names = _api_key_envs(model)
+    if not env_names:
         raise UnsupportedLLMModel(model)
-    if not os.getenv(env_name):
-        raise MissingLLMApiKey(model, env_name)
+    if not any(os.getenv(env_name) for env_name in env_names):
+        raise MissingLLMApiKey(model, " or ".join(env_names))
 
 
 def _api_key_env(model: str) -> str | None:
+    env_names = _api_key_envs(model)
+    return env_names[0] if env_names else None
+
+
+def _api_key_envs(model: str) -> tuple[str, ...]:
     normalized = model.lower()
     if normalized.startswith("deepseek") or normalized.startswith("deepseek/"):
-        return "DEEPSEEK_API_KEY"
+        return ("DEEPSEEK_API_KEY",)
     if normalized.startswith("kimi") or normalized.startswith("moonshot/"):
-        return "MOONSHOT_API_KEY"
-    return None
+        return ("MOONSHOT_API_KEY",)
+    if normalized.startswith("openrouter"):
+        return ("OPENROUTER_API_KEY",)
+    return ()
 
 
 def _temperature_for_model(model: str) -> int:
     return 1 if _api_key_env(model) == "MOONSHOT_API_KEY" else 0
+
+
+def _completion_params_for_model(model: str) -> dict[str, Any]:
+    params: dict[str, Any] = {"temperature": _temperature_for_model(model)}
+    extra_body = _extra_body_for_model(model)
+    if extra_body:
+        params["extra_body"] = extra_body
+    return params
+
+
+def _extra_body_for_model(model: str) -> dict[str, Any]:
+    normalized = model.lower()
+    if normalized == "openrouter-qwen3.6-35b-a3b":
+        return {"reasoning": {"effort": "none", "exclude": True}}
+    return {}
 
 
 def load_dotenv(path: str | Path | None = None) -> bool:
@@ -883,9 +949,7 @@ def _image_data_url(image_path: str | Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def build_instructor_client(
-    router: Any, *, on_usage: Callable[..., None] | None = None
-) -> Any:
+def build_instructor_client(router: Any, *, on_usage: Callable[..., None] | None = None) -> Any:
     try:
         import instructor
     except Exception as exc:  # pragma: no cover - exercised only without optional extra
@@ -925,15 +989,35 @@ def _extract_usage(response: Any) -> tuple[int, int]:
 
 
 def _extract_cost(response: Any) -> float:
-    """Best-effort response cost: litellm hidden param first, then completion_cost."""
+    """Best-effort response cost from LiteLLM/OpenRouter metadata.
+
+    LiteLLM usually stores computed Router cost in ``_hidden_params.response_cost``.
+    OpenRouter responses routed through ``openai/`` can instead expose the provider
+    cost under ``usage.cost`` while the hidden cost remains ``0.0`` because the
+    model is not in LiteLLM's built-in price map. Prefer any positive hidden cost,
+    then provider-reported usage cost, then LiteLLM's own fallback calculator.
+    """
     hidden = _get_attr_or_key(response, "_hidden_params")
     if isinstance(hidden, dict):
         cost = hidden.get("response_cost")
         if cost is not None:
             try:
-                return float(cost)
+                parsed = float(cost)
             except (TypeError, ValueError):
                 pass
+            else:
+                if parsed > 0:
+                    return parsed
+    usage = _get_attr_or_key(response, "usage")
+    usage_cost = _get_attr_or_key(usage, "cost") if usage is not None else None
+    if usage_cost is not None:
+        try:
+            parsed = float(usage_cost)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if parsed > 0:
+                return parsed * OPENROUTER_USD_TO_CNY
     try:
         import litellm
 
