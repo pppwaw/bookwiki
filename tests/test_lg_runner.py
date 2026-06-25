@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,6 +22,7 @@ import pytest
 from bookwiki.pipeline import nodes as nodes_module
 from bookwiki.scheduler.config import default_config
 from bookwiki.scheduler.lg_runner import run_pipeline
+from bookwiki.utils import logging as logging_utils
 
 _NODE_OUTPUTS: dict[str, dict[str, Any]] = {
     "convert": {"sources_md": ["work/sources_md/a.md"], "source_ref_manifests": []},
@@ -546,6 +548,16 @@ def test_logs_node_start_and_done(
     cfg = default_config(tmp_path / "books" / "mini")
     calls: list[str] = []
     _register_fakes(monkeypatch, calls)
+    timestamps = iter(
+        [datetime(2026, 6, 25, 16, 0, 1), datetime(2026, 6, 25, 16, 0, 1)]
+    )
+
+    class Clock:
+        @classmethod
+        def now(cls) -> datetime:
+            return next(timestamps)
+
+    monkeypatch.setattr(logging_utils, "datetime", Clock)
 
     with caplog.at_level(logging.INFO):
         run_pipeline(cfg, stop_after="convert", resume=False)
@@ -553,6 +565,21 @@ def test_logs_node_start_and_done(
     messages = "\n".join(record.getMessage() for record in caplog.records)
     assert "node start name=convert book_id=mini" in messages
     assert "node done name=convert book_id=mini cache_hit=False" in messages
+
+    log_files = sorted((cfg.work_dir / "logs").glob("pipeline-*.log"))
+    assert len(log_files) == 1
+    assert log_files[0].name == "pipeline-20260625-160001-001.log"
+    log_text = log_files[0].read_text(encoding="utf-8")
+    assert "node start name=convert book_id=mini" in log_text
+    assert "node done name=convert book_id=mini cache_hit=False" in log_text
+
+    run_pipeline(cfg, stop_after="convert", resume=False)
+    log_files_after_second_run = sorted((cfg.work_dir / "logs").glob("pipeline-*.log"))
+    assert len(log_files_after_second_run) == 2
+    assert [path.name for path in log_files_after_second_run] == [
+        "pipeline-20260625-160001-001.log",
+        "pipeline-20260625-160001-002.log",
+    ]
 
 
 def test_resume_with_stop_target_behind_runs_nothing(

@@ -41,7 +41,7 @@ from bookwiki.scheduler.resume import (
 )
 from bookwiki.scheduler.state import PipelineState
 from bookwiki.utils.files import write_json
-from bookwiki.utils.logging import get_logger
+from bookwiki.utils.logging import configure_book_file_logging, get_logger
 
 LOGGER = get_logger(__name__)
 
@@ -385,7 +385,7 @@ def run_pipeline(
     if dry_run:
         return {"dry_run": True, "report": dry_run_report(cfg)}
     cfg.cache_dir.mkdir(parents=True, exist_ok=True)
-    (cfg.work_dir / "logs").mkdir(parents=True, exist_ok=True)
+    configure_book_file_logging(cfg.work_dir / "logs")
     return asyncio.run(
         _run(cfg, stop_after=stop_after, pause_after=pause_after or [], resume=resume)
     )
