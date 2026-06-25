@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from bookwiki.scheduler.budget_guard import BudgetExceeded
 from bookwiki.scheduler.llm import (
+    OPENROUTER_USD_TO_CNY,
     LiteLLMRuntime,
     MissingLLMApiKey,
     _extract_cost,
@@ -24,7 +25,7 @@ from bookwiki.scheduler.llm import (
     load_dotenv,
 )
 from bookwiki.schemas.chapter import ChapterResult
-from bookwiki.schemas.source import VisionCaptionResult
+from bookwiki.schemas.source import VisionCaptionItem
 
 
 class _Router:
@@ -140,6 +141,25 @@ def test_model_list_uses_short_api_base_env_alias(monkeypatch: pytest.MonkeyPatc
     assert deepseek["litellm_params"]["api_base"] == "https://deepseek-alias.example/v1"
 
 
+def test_openrouter_model_list_uses_openrouter_env_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setenv("BOOKWIKI_CHAT_API_KEY", "chat-key")
+    monkeypatch.setenv("OPENROUTER_API_BASE_URL", "https://openrouter.example/v1/")
+    monkeypatch.setenv("BOOKWIKI_CHAT_BASE_URL", "https://chat.example/v1/")
+    monkeypatch.setattr("bookwiki.scheduler.llm.load_dotenv", lambda *args, **kwargs: False)
+
+    models = {item["model_name"]: item for item in _model_list()}
+    openrouter = models["openrouter-qwen3.6-35b-a3b"]["litellm_params"]
+
+    assert openrouter["model"] == "openai/qwen/qwen3.6-35b-a3b"
+    assert openrouter["api_key"] == "openrouter-key"
+    assert openrouter["api_base"] == "https://openrouter.example/v1"
+    assert "input_cost_per_token" in openrouter
+    assert "output_cost_per_token" in openrouter
+
+
 def test_repair_keeps_valid_latex_json() -> None:
     content = r'{"q":"$\\max\\{x\\}$"}'
 
@@ -232,6 +252,24 @@ async def test_litellm_runtime_requires_kimi_api_key(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
+async def test_litellm_runtime_requires_openrouter_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("BOOKWIKI_CHAT_API_KEY", "chat-key")
+    monkeypatch.setenv("BOOKWIKI_DOTENV_PATH", "C:/definitely/missing/bookwiki.env")
+    runtime = LiteLLMRuntime(router=_Router("{}"))
+
+    with pytest.raises(MissingLLMApiKey, match="OPENROUTER_API_KEY"):
+        await runtime.generate(
+            model="openrouter-qwen3.6-35b-a3b",
+            output_model=ChapterResult,
+            system="system",
+            user="user",
+        )
+
+
+@pytest.mark.asyncio
 async def test_litellm_runtime_revalidates_with_context_after_client_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -279,6 +317,7 @@ async def test_litellm_runtime_sends_image_paths_as_multimodal_content(
     image_path = tmp_path / "figure.png"
     image_path.write_bytes(b"image-bytes")
     payload = {
+        "block_id": "source-p001-b001",
         "caption_md": "A source figure.",
         "key_points": [],
         "source_ref": "source-p001",
@@ -290,7 +329,7 @@ async def test_litellm_runtime_sends_image_paths_as_multimodal_content(
 
     result = await runtime.generate(
         model="kimi-k2.6",
-        output_model=VisionCaptionResult,
+        output_model=VisionCaptionItem,
         system="system",
         user="describe the figure",
         image_paths=[image_path],
@@ -312,6 +351,36 @@ async def test_litellm_runtime_sends_image_paths_as_multimodal_content(
             ],
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_qwen_disables_reasoning_for_structured_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    payload = {
+        "block_id": "source-p001-b001",
+        "caption_md": "A source figure.",
+        "key_points": [],
+        "source_ref": "source-p001",
+        "confidence": 0.8,
+    }
+    client = _InstructorClient(payload)
+    monkeypatch.setattr("instructor.from_litellm", lambda completion, **_: client)
+    runtime = LiteLLMRuntime(router=_Router("{}"))
+
+    result = await runtime.generate(
+        model="openrouter-qwen3.6-35b-a3b",
+        output_model=VisionCaptionItem,
+        system="system",
+        user="describe the figure",
+    )
+
+    assert result.caption_md == "A source figure."
+    assert client.calls[0]["temperature"] == 0
+    assert client.calls[0]["extra_body"] == {
+        "reasoning": {"effort": "none", "exclude": True}
+    }
 
 
 @pytest.mark.asyncio
@@ -504,6 +573,15 @@ def test_extract_usage_and_cost_tolerate_missing_fields() -> None:
     assert _extract_usage(SimpleNamespace()) == (0, 0)
     # No hidden params and no litellm cost computable -> 0.0, never raises.
     assert _extract_cost({"choices": []}) == 0.0
+
+
+def test_extract_cost_uses_openrouter_usage_cost_when_hidden_cost_is_zero() -> None:
+    response = SimpleNamespace(
+        usage=SimpleNamespace(cost=0.001),
+        _hidden_params={"response_cost": 0.0},
+    )
+
+    assert _extract_cost(response) == pytest.approx(0.001 * OPENROUTER_USD_TO_CNY)
 
 
 @pytest.mark.asyncio

@@ -26,7 +26,7 @@ DEFAULT_MODELS = {
     "summary": "deepseek-v4-flash",
     "concept": "deepseek-v4-pro",
     "review": "deepseek-v4-pro",
-    "vision": "kimi-k2.6",
+    "vision": "openrouter-qwen3.6-35b-a3b",
 }
 
 DEFAULT_GENERATION = {

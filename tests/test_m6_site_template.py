@@ -182,7 +182,7 @@ def test_official_ai_panel_is_backed_by_bookwiki_chat_api() -> None:
     assert "BOOKWIKI_CHAT_API_KEY=" in env_example
     assert "BOOKWIKI_CHAT_BASE_URL=" in env_example
     assert "BOOKWIKI_CHAT_MODEL=" in env_example
-    assert "OPENROUTER_API_KEY" not in env_example
+    assert "OPENROUTER_API_KEY=" in env_example
     assert "ai" in package["dependencies"]
     assert "@ai-sdk/react" in package["dependencies"]
     assert "@openrouter/ai-sdk-provider" in package["dependencies"]

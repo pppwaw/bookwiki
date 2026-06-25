@@ -39,7 +39,7 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
     assert cfg.notes_path == "book.notes.md"
     assert "section" in cfg.models
     assert "quiz" not in cfg.models
-    assert cfg.models["vision"] == "kimi-k2.6"
+    assert cfg.models["vision"] == "openrouter-qwen3.6-35b-a3b"
 
     config_path = save_config(cfg)
     payload = json.loads(config_path.read_text(encoding="utf-8"))
@@ -49,7 +49,7 @@ def test_default_config_writes_language_and_generation_defaults(tmp_path) -> Non
     assert payload["notesPath"] == "book.notes.md"
     assert "section" in payload["models"]
     assert "quiz" not in payload["models"]
-    assert payload["models"]["vision"] == "kimi-k2.6"
+    assert payload["models"]["vision"] == "openrouter-qwen3.6-35b-a3b"
 
 
 def test_load_config_defaults_language_and_generation_for_existing_config(tmp_path) -> None:

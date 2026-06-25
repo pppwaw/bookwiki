@@ -75,8 +75,9 @@ Kimi model and output is rendered locally. If BookWiki is ever exposed as a mult
 OWASP ASI05.
 
 Agent cache misses call the configured real LLM through `bookwiki.scheduler.llm`. Configure
-`DEEPSEEK_API_KEY` for `deepseek-*` models and `MOONSHOT_API_KEY` for `kimi-*` models (including the
-`kimi-k2.6` vision captioner) in the process environment or in the repo root `.env`; existing
+`DEEPSEEK_API_KEY` for `deepseek-*` models, `MOONSHOT_API_KEY` for `kimi-*` models, and
+`OPENROUTER_API_KEY` for `openrouter-*` models (the default `models.vision` is
+`openrouter-qwen3.6-35b-a3b`) in the process environment or in the repo root `.env`; existing
 environment variables take precedence. The site's `/api/chat` route uses `BOOKWIKI_CHAT_API_KEY`
 (OpenRouter). Missing keys should fail loudly rather than falling back to stub content. Tests may opt
 into the explicit `BOOKWIKI_TEST_LLM=1` fake runtime.
