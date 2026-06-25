@@ -15,6 +15,32 @@ class _IndentedSafeDumper(yaml.SafeDumper):
         return super().increase_indent(flow, False)
 
 
+class ConceptCandidate(VersionedModel):
+    """A concept name spotted while summarising a source chunk.
+
+    Carries only the name + the ``source_refs`` where it appears (not a chapter id):
+    chapters do not exist yet at the structure stage, so ownership is resolved later by
+    mapping ``source_refs`` to the approved chapter. Cross-language/synonym merging is the
+    skeleton fold's job — this is recall-oriented extraction only.
+    """
+
+    name: str
+    source_refs: list[str] = Field(default_factory=list)
+
+
+class DetectedChapter(VersionedModel):
+    """A chapter boundary the LLM detected inside one source chunk.
+
+    ``heading_path`` keeps the chunk's heading ancestry so ``merge_source_summaries`` can
+    regroup sub-chunks back under their real chapter instead of minting one per slide.
+    """
+
+    title: str
+    heading_path: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    summary_md: str = ""
+
+
 class SourceSummaryResult(VersionedModel):
     source_id: str
     summary_md: str
@@ -23,6 +49,11 @@ class SourceSummaryResult(VersionedModel):
     detected_title: str | None = None
     headings: list[str] = Field(default_factory=list)
     key_terms: list[str] = Field(default_factory=list)
+    # Chunked structure stage: one summarised chunk may straddle/own chapters and always
+    # yields concept candidates. Both default empty so legacy single-shot construction
+    # (and existing tests) keep working unchanged.
+    detected_chapters: list[DetectedChapter] = Field(default_factory=list)
+    concept_candidates: list[ConceptCandidate] = Field(default_factory=list)
 
 
 class ChapterProposal(VersionedModel):
