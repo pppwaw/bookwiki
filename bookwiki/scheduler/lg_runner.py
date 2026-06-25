@@ -533,6 +533,34 @@ async def _run(
 # --------------------------------------------------------------------------- #
 # Public entry points (drop-in for scheduler.graph.build_graph/resume_or_start)
 # --------------------------------------------------------------------------- #
+def _estimate_chapter_count(cfg: BookConfig) -> int:
+    """Best-effort chapter count for the dry-run cost estimate.
+
+    The old estimate was hard-coded to 2 chapters, wildly understating a real book's
+    cost. Count chapters (flattening one level of sections) from the approved/proposed
+    structure if the gate has produced one; otherwise fall back to 2.
+    """
+    import yaml
+
+    structure_dir = cfg.work_dir / "structure"
+    for name in ("approved-structure.yaml", "proposed-structure.yaml"):
+        path = structure_dir / name
+        if not path.exists():
+            continue
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001 - a malformed draft must not break --dry-run
+            continue
+        chapters = data.get("chapters") if isinstance(data, dict) else None
+        if isinstance(chapters, list) and chapters:
+            count = 0
+            for chapter in chapters:
+                sections = chapter.get("sections") if isinstance(chapter, dict) else None
+                count += len(sections) if isinstance(sections, list) and sections else 1
+            return max(count, 1)
+    return 2
+
+
 def run_pipeline(
     cfg: BookConfig,
     *,
@@ -544,7 +572,8 @@ def run_pipeline(
     cfg.pause_after = pause_after or []
     cfg.dry_run = dry_run
     if dry_run:
-        return {"dry_run": True, "report": dry_run_report(cfg)}
+        chapter_count = _estimate_chapter_count(cfg)
+        return {"dry_run": True, "report": dry_run_report(cfg, chapter_count=chapter_count)}
     cfg.cache_dir.mkdir(parents=True, exist_ok=True)
     configure_book_file_logging(cfg.work_dir / "logs")
     return asyncio.run(

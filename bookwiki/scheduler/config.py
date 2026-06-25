@@ -50,7 +50,9 @@ DEFAULT_GENERATION = {
     },
     "visionCaption": {
         "mode": "auto",
-        "maxImagesPerSource": 20,
+        # A whole book is often a single source; 20 captions cannot cover a 1000-page
+        # book's figures, so 90% of images would go uncaptioned. Scale for large books.
+        "maxImagesPerSource": 200,
         "maxConcurrent": 10,
     },
 }

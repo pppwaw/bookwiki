@@ -24,7 +24,8 @@ from bookwiki.agents import (
     MdxEditRepairAgent,
     ReviewAgent,
     SectionAgent,
-    SkeletonAgent,
+    SkeletonExtractAgent,
+    SkeletonFoldAgent,
     SourceLayoutRepairAgent,
     SourceSummaryAgent,
     StructureAgent,
@@ -32,8 +33,14 @@ from bookwiki.agents import (
     VisionCaptionAgent,
 )
 from bookwiki.agents._helpers import SOURCE_REF_RE
-from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
+from bookwiki.checkers.mdx_validator import (
+    mdx_validator_available,
+    validate_mdx_many,
+)
 from bookwiki.checkers.quiz_extractor import QuizExtractError, extract_inline_quizzes
+from bookwiki.chunking import chunk_by_heading
+from bookwiki.concepts import brief_for as _brief_for
+from bookwiki.concepts import concept_key as _concept_key
 from bookwiki.convert.common import (
     BOOK_FIGURE_TAG_RE,
     parse_book_figure_tag,
@@ -61,11 +68,14 @@ from bookwiki.integrator.markdown_renderers import (
     normalize_public_asset_markdown_images as _normalize_public_asset_markdown_images,
 )
 from bookwiki.integrator.stitching import audit_stitching
+from bookwiki.pipeline.structure_scan import audit_coverage, scan_source_refs
 from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
 from bookwiki.schemas.concept import ConceptReconciledItem, ConceptReconcileResult, ConceptResult
 from bookwiki.schemas.report import CheckReport, Issue
+from bookwiki.schemas.source import SourceSummaryResult
+from bookwiki.skeleton.fold import Registry
 from bookwiki.split.chapter_splitter import compute_slug_remap, parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
 from bookwiki.utils.hashing import sha256_file, sha256_text
@@ -857,10 +867,6 @@ def _concept_term_pattern(term: str) -> str:
     if re.search(r"[A-Za-z0-9]", term):
         return rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
     return escaped
-
-
-def _concept_key(value: str) -> str:
-    return re.sub(r"[\W_]+", "", value.casefold(), flags=re.UNICODE)
 
 
 def _suspicious_phrases(markdown: str) -> list[str]:
@@ -1816,28 +1822,136 @@ def _int_setting(value: Any, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+
+def _merge_source_chunk_summaries(
+    source_id: str, chunks: list[SourceSummaryResult]
+) -> SourceSummaryResult:
+    if not chunks:
+        return SourceSummaryResult(
+            source_id=source_id,
+            summary_md=f"Summary for {source_id}: no chunks produced.",
+            source_refs=[],
+        )
+
+    source_refs: list[str] = []
+    headings: list[str] = []
+    key_terms: list[str] = []
+    summary_parts: list[str] = []
+    detected_chapters = []
+    concept_candidates = []
+    detected_chapter_id: str | None = None
+    detected_title: str | None = None
+
+    for chunk in chunks:
+        _append_unique_strings(source_refs, chunk.source_refs)
+        _append_unique_strings(headings, chunk.headings)
+        _append_unique_strings(key_terms, chunk.key_terms)
+        if chunk.summary_md:
+            summary_parts.append(chunk.summary_md)
+        if chunk.detected_chapter_id and detected_chapter_id is None:
+            detected_chapter_id = chunk.detected_chapter_id
+        if chunk.detected_title and detected_title is None:
+            detected_title = chunk.detected_title
+        detected_chapters.extend(chunk.detected_chapters)
+        concept_candidates.extend(chunk.concept_candidates)
+
+    if len(detected_chapters) == 1:
+        detected_chapters = [
+            detected_chapters[0].model_copy(update={"source_refs": list(source_refs)})
+        ]
+
+    return SourceSummaryResult(
+        source_id=source_id,
+        summary_md="\n\n".join(summary_parts),
+        source_refs=source_refs,
+        detected_chapter_id=detected_chapter_id,
+        detected_title=detected_title,
+        headings=headings,
+        key_terms=key_terms,
+        detected_chapters=detected_chapters,
+        concept_candidates=concept_candidates,
+    )
+
+
+def _append_unique_strings(target: list[str], values: list[str]) -> None:
+    seen = set(target)
+    for value in values:
+        if value in seen:
+            continue
+        target.append(value)
+        seen.add(value)
+
+
+def _concept_candidates_by_ref(
+    summaries: list[SourceSummaryResult],
+) -> dict[str, list[dict[str, Any]]]:
+    by_ref: dict[str, list[dict[str, Any]]] = {}
+    for summary in summaries:
+        for candidate in summary.concept_candidates:
+            payload = candidate.model_dump(mode="json")
+            refs = candidate.source_refs or summary.source_refs
+            for ref in refs:
+                bucket = by_ref.setdefault(ref, [])
+                if payload not in bucket:
+                    bucket.append(payload)
+    return by_ref
+
 async def structure_node(state: State, cfg: BookConfig) -> State:
     source_paths = [cfg.book_dir / rel for rel in state.get("sources_md", [])]
     _LOG.info("structure: source_files=%d", len(source_paths))
     results: list[CacheResult] = []
     summaries = []
+    merged_summaries: list[SourceSummaryResult] = []
     book_notes = cfg.book_notes
+    model = cfg.model_for("source_summary")
+    all_refs: set[str] = set()
+    covered_refs: set[str] = set()
     for path in source_paths:
         text = path.read_text(encoding="utf-8", errors="ignore")
-        result = await run_with_cache(
-            SourceSummaryAgent,
-            {
-                "path": str(path),
-                "sha256": sha256_text(text),
-                "language": cfg.language,
-                "book_notes": book_notes,
-            },
-            model=cfg.model_for("source_summary"),
-            cache_dir=_cache_dir(cfg),
-            runtime=cfg.llm_runtime,
+        source_id = path.stem
+        all_refs |= scan_source_refs(text)
+        # Chunk the source so no single summary call can be silently truncated by
+        # compact_input (the whole-book-in-one-call failure for >1M-token books). Each
+        # chunk is bounded below the model's per-field budget by ``chunk_by_heading``.
+        chunks = chunk_by_heading(text, model=model, stage="structure")
+        spans = [(c.text, list(c.heading_path), list(c.source_refs)) for c in chunks] or [
+            (text, [], sorted(all_refs))
+        ]
+        chunk_summaries: list[SourceSummaryResult] = []
+        for span_text, heading_path, span_refs in spans:
+            covered_refs.update(span_refs)
+            result = await run_with_cache(
+                SourceSummaryAgent,
+                {
+                    "span_text": span_text,
+                    "source_id": source_id,
+                    "path": str(path),
+                    "heading_path": heading_path,
+                    "sha256": sha256_text(span_text),
+                    "language": cfg.language,
+                    "book_notes": book_notes,
+                },
+                model=model,
+                cache_dir=_cache_dir(cfg),
+                runtime=cfg.llm_runtime,
+            )
+            results.append(result)
+            chunk_summaries.append(result.result)
+        merged = _merge_source_chunk_summaries(source_id, chunk_summaries)
+        merged_summaries.append(merged)
+        summaries.append(_json_model(merged))
+
+    # Coverage audit: every ``<!-- source_ref -->`` in the sources must land in some chunk.
+    # A miss means a chunking gap / truncation silently dropped part of the book — fail
+    # loudly instead of proposing a structure that omits chapters.
+    missing = audit_coverage(all_refs, covered_refs)
+    if missing:
+        msg = (
+            "structure stage coverage audit failed: these source_refs were dropped "
+            f"between chunks (chunking gap or truncation): {missing[:20]}"
         )
-        results.append(result)
-        summaries.append(_json_model(result.result))
+        raise ValueError(msg)
+
     _LOG.info(
         "structure: summaries done count=%d cache_hits=%d",
         len(summaries),
@@ -1859,6 +1973,7 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
     results.append(structure)
 
     out_dir = ensure_dir(cfg.work_dir / "structure")
+    write_json(out_dir / "concept-candidates.json", _concept_candidates_by_ref(merged_summaries))
     proposed_path = write_text(
         out_dir / "proposed-structure.yaml", structure.result.proposed_structure_yaml
     )
@@ -2032,11 +2147,12 @@ def _clear_chapter_source_dirs(out_dir: Path, keep_ids: set[str]) -> None:
 async def build_skeleton_node(state: State, cfg: BookConfig) -> State:
     """Produce the read-only book-wide skeleton consumed by ``generate``.
 
-    Sits between ``split`` and ``generate``: gathers each chapter's title,
-    curated topics, and source markdown, then asks ``SkeletonAgent`` to
-    produce a canonical glossary, alias map, one-line chapter briefs, and
-    chapter order. The skeleton is written to ``work/skeleton.json`` and the
-    relative path is stored in state under ``skeleton``.
+    Streams the build instead of shipping the whole book to one LLM call (which would
+    overflow a >1M-token book's context window). Pass 1 extracts concept candidates from
+    each chapter's source in parallel — the source is chunked first so no single call
+    exceeds the model budget. Pass 2 folds those candidates chapter-by-chapter in order,
+    letting the model merge cross-language synonyms against the compact running registry
+    it sees in context. The resulting ``BookSkeleton`` is written to ``work/skeleton.json``.
     """
     if not state.get("chapter_sources"):
         msg = "build_skeleton requires chapter_sources; run split before build_skeleton"
@@ -2046,48 +2162,103 @@ async def build_skeleton_node(state: State, cfg: BookConfig) -> State:
     titles = state.get("chapter_titles", {})
     topics_by_chapter = state.get("chapter_topics", {})
     _LOG.info("build_skeleton: chapters=%d", len(chapter_sources))
+    chapter_order = list(chapter_sources.keys())
+    model = cfg.model_for("skeleton")
+    cache_results: list[CacheResult] = []
 
-    chapters_payload: list[dict[str, Any]] = []
-    for ch_id in chapter_sources:
-        rel_source = chapter_sources[ch_id]
-        source_md = (cfg.book_dir / rel_source).read_text(encoding="utf-8")
-        chapters_payload.append(
+    # -- Pass 1: per-chapter parallel candidate extraction (source chunked first) --
+    semaphore = asyncio.Semaphore(cfg.chapter_concurrency)
+
+    async def extract_chapter(
+        ch_id: str, rel_source: str
+    ) -> tuple[str, str, list[str], list[CacheResult]]:
+        async with semaphore:
+            source_md = (cfg.book_dir / rel_source).read_text(encoding="utf-8")
+            title = _display_chapter_title(ch_id, str(titles.get(ch_id, ch_id)))
+            topics = list(topics_by_chapter.get(ch_id, []))
+            results: list[CacheResult] = []
+            for chunk in chunk_by_heading(source_md, model=model, stage="skeleton"):
+                results.append(
+                    await run_with_cache(
+                        SkeletonExtractAgent,
+                        {
+                            "chapter_id": ch_id,
+                            "title": title,
+                            "topics": topics,
+                            "source_md": chunk.text,
+                            "source_refs": chunk.source_refs,
+                            "language": cfg.language,
+                            "book_notes": cfg.book_notes,
+                        },
+                        model=model,
+                        cache_dir=_cache_dir(cfg),
+                        runtime=cfg.llm_runtime,
+                    )
+                )
+            return ch_id, title, topics, results
+
+    extraction = await asyncio.gather(
+        *(extract_chapter(ch_id, rel) for ch_id, rel in chapter_sources.items())
+    )
+
+    candidates_by_chapter: dict[str, list[dict[str, Any]]] = {}
+    titles_by_chapter: dict[str, str] = {}
+    topics_resolved: dict[str, list[str]] = {}
+    for ch_id, title, topics, results in extraction:
+        cache_results.extend(results)
+        titles_by_chapter[ch_id] = title
+        topics_resolved[ch_id] = topics
+        seen: set[str] = set()
+        candidates: list[dict[str, Any]] = []
+        for result in results:
+            for cand in result.result.candidates:
+                key = _concept_key(cand.name)
+                if key and key not in seen:
+                    seen.add(key)
+                    candidates.append(cand.model_dump(mode="json"))
+        candidates_by_chapter[ch_id] = candidates
+
+    # -- Pass 2: serial fold (each call sees only candidates + the compact registry) --
+    registry = Registry()
+    for index, ch_id in enumerate(chapter_order):
+        fold = await run_with_cache(
+            SkeletonFoldAgent,
             {
                 "chapter_id": ch_id,
-                "title": _display_chapter_title(ch_id, str(titles.get(ch_id, ch_id))),
-                "topics": list(topics_by_chapter.get(ch_id, [])),
-                "source_refs": _extract_source_refs(source_md),
-                "source_md": source_md,
-            }
+                "chapter_title": titles_by_chapter.get(ch_id, ch_id),
+                "chapter_order": index,
+                "candidates": candidates_by_chapter.get(ch_id, []),
+                "registry": registry.compact(),
+                "language": cfg.language,
+                "book_notes": cfg.book_notes,
+            },
+            model=model,
+            cache_dir=_cache_dir(cfg),
+            runtime=cfg.llm_runtime,
         )
+        cache_results.append(fold)
+        registry.apply(fold.result.ops, current_chapter=ch_id)
+        registry.record_uses(ch_id, fold.result.uses)
 
-    payload: dict[str, Any] = {
-        "chapters": chapters_payload,
-        "language": cfg.language,
-        "book_notes": cfg.book_notes,
+    chapter_briefs = {
+        ch_id: _brief_for(titles_by_chapter.get(ch_id, ch_id), topics_resolved.get(ch_id, []))
+        for ch_id in chapter_order
     }
-
-    skeleton = await run_with_cache(
-        SkeletonAgent,
-        payload,
-        model=cfg.model_for("skeleton"),
-        cache_dir=_cache_dir(cfg),
-        runtime=cfg.llm_runtime,
-    )
+    skeleton = registry.to_skeleton(chapter_briefs=chapter_briefs, chapter_order=chapter_order)
     out_path = write_json(
         cfg.work_dir / "skeleton.json",
-        _agent_result_payload(SkeletonAgent, cfg.model_for("skeleton"), skeleton.result),
+        _agent_result_payload(SkeletonFoldAgent, model, skeleton),
     )
-    glossary_len = len(getattr(skeleton.result, "glossary", []) or [])
+    glossary_len = len(skeleton.glossary)
     _LOG.info(
         "build_skeleton: wrote %s glossary=%d cache_hit=%s",
         _rel(out_path, cfg.book_dir),
         glossary_len,
-        skeleton.cache_hit,
+        _stage_cache_hit(cache_results),
     )
     return {
         "skeleton": _rel(out_path, cfg.book_dir),
-        "cache_hit": skeleton.cache_hit,
+        "cache_hit": _stage_cache_hit(cache_results),
     }
 
 
@@ -2119,40 +2290,63 @@ def _load_skeleton(state: State, cfg: BookConfig) -> dict[str, Any] | None:
 def _skeleton_payload(skeleton: dict[str, Any] | None, ch_id: str) -> dict[str, Any]:
     """Project the skeleton into the per-chapter section-generation payload.
 
-    Each section generator (``SectionPlannerAgent`` / ``SectionAgent``) receives:
+    Each section generator (``SectionPlannerAgent`` / ``SectionAgent``) receives only a
+    **per-chapter slice**, not the whole book's terminology:
 
-    - ``glossary``: full canonical concept list (every chapter sees the same
-      table so terminology converges).
-    - ``alias_map``: every variant → canonical, so the LLM rewrites raw
-      mentions into canonical names.
-    - ``chapter_owns``: concepts whose ``first_chapter_id`` equals ``ch_id``;
-      this chapter owns the definition.
-    - ``chapter_uses``: concepts owned by other chapters; only reference
-      them, do not redefine.
-    - ``prev_brief`` / ``next_brief``: neighbouring chapter one-liners so the
-      author can write transitions without seeing the actual generated body.
+    - ``chapter_owns``: concepts whose ``first_chapter_id`` equals ``ch_id`` (this chapter
+      owns the definition).
+    - ``chapter_uses``: concepts owned by other chapters; only reference, never redefine.
+    - ``alias_map_slice``: variant → canonical for *only* the concepts this chapter owns or
+      uses (so the section payload's size grows with the chapter, not the whole book). The
+      full ``alias_map`` is intentionally NOT shipped here — the integrator still rewrites
+      every ``[[alias]]`` deterministically at render time; this slice is the writing-time
+      terminology anchor that converts term drift inside prose the integrator cannot catch.
+    - ``prev_brief`` / ``next_brief``: neighbouring chapter one-liners for transitions.
     """
     if not skeleton:
         return {}
     glossary = skeleton.get("glossary", []) or []
-    alias_map = skeleton.get("alias_map", {}) or {}
+    full_alias_map = skeleton.get("alias_map", {}) or {}
     chapter_briefs = skeleton.get("chapter_briefs", {}) or {}
     chapter_order: list[str] = list(skeleton.get("chapter_order", []) or [])
+    recorded_uses = skeleton.get("chapter_uses", {}) or {}
 
     owns: list[dict[str, Any]] = []
-    uses: list[dict[str, Any]] = []
+    not_owned: dict[str, dict[str, Any]] = {}
     for entry in glossary:
         if not isinstance(entry, dict):
             continue
         first = str(entry.get("first_chapter_id") or "")
-        bucket = owns if first == ch_id else uses
-        bucket.append(
-            {
-                "canonical": entry.get("canonical"),
-                "aliases": entry.get("aliases", []),
-                "first_chapter_id": first,
-            }
-        )
+        projected = {
+            "canonical": entry.get("canonical"),
+            "aliases": entry.get("aliases", []),
+            "first_chapter_id": first,
+        }
+        if first == ch_id:
+            owns.append(projected)
+        elif entry.get("canonical"):
+            not_owned[_concept_key(str(entry.get("canonical")))] = projected
+
+    # ``chapter_uses`` from the fold names only the concepts this chapter actually
+    # references, so the slice shrinks to the chapter. Skeletons without it (legacy /
+    # hand-built) fall back to "every concept another chapter owns".
+    if ch_id in recorded_uses:
+        used_keys = {_concept_key(str(name)) for name in recorded_uses[ch_id]}
+        uses = [not_owned[key] for key in not_owned if key in used_keys]
+    else:
+        uses = list(not_owned.values())
+
+    # Slice the alias map to only the concepts this chapter owns or uses.
+    slice_canonicals = {
+        str(item.get("canonical"))
+        for item in (*owns, *uses)
+        if item.get("canonical")
+    }
+    alias_map_slice = {
+        variant: canonical
+        for variant, canonical in full_alias_map.items()
+        if canonical in slice_canonicals
+    }
 
     prev_brief = ""
     next_brief = ""
@@ -2164,10 +2358,9 @@ def _skeleton_payload(skeleton: dict[str, Any] | None, ch_id: str) -> dict[str, 
             next_brief = chapter_briefs.get(chapter_order[position + 1], "")
 
     return {
-        "glossary": glossary,
-        "alias_map": alias_map,
         "chapter_owns": owns,
         "chapter_uses": uses,
+        "alias_map_slice": alias_map_slice,
         "prev_brief": prev_brief,
         "next_brief": next_brief,
     }
@@ -2586,8 +2779,6 @@ def _merge_candidates_with_skeleton(
     accumulated as new canonical concepts (rare — these are concepts a
     SectionAgent invented beyond the skeleton).
     """
-    from bookwiki.agents.concept_reconcile import _concept_key
-
     by_key: dict[str, ConceptReconciledItem] = {}
     alias_to_key: dict[str, str] = {}
 
@@ -3696,9 +3887,14 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                 owner_task_id="content:index",
             )
         )
+    chapter_texts = {path: path.read_text(encoding="utf-8") for path in chapter_mdx_files}
+    # One Node process per batch instead of a cold start per file (~550 files → ~100s).
+    chapter_mdx = validate_mdx_many(
+        [(str(path), chapter_texts[path]) for path in chapter_mdx_files]
+    )
     for path in chapter_mdx_files:
-        text = path.read_text(encoding="utf-8")
-        mdx_errors = validate_mdx(text)
+        text = chapter_texts[path]
+        mdx_errors = chapter_mdx.get(str(path), [])
         for error in mdx_errors:
             issues.append(
                 Issue(
@@ -3766,9 +3962,12 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                     )
                 )
 
+    concept_texts = {path: path.read_text(encoding="utf-8") for path in concept_mdx_files}
+    concept_mdx = validate_mdx_many(
+        [(str(path), concept_texts[path]) for path in concept_mdx_files]
+    )
     for path in concept_mdx_files:
-        text = path.read_text(encoding="utf-8")
-        for error in validate_mdx(text):
+        for error in concept_mdx.get(str(path), []):
             issues.append(
                 Issue(
                     severity="error",

@@ -19,7 +19,14 @@ from bookwiki.scheduler.llm import load_dotenv
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_CLOUD_V4_API_BASE_URL = "https://mineru.net"
-DEFAULT_TIMEOUT_SECONDS = 20.0
+# Per-request HTTP timeout. A 1000-page parse can take far longer than the old 20s, and
+# this same value also bounds each status poll, so it must be generous.
+DEFAULT_TIMEOUT_SECONDS = 1800.0
+# Total wall-clock budget for the async parse to finish (separate from the per-request
+# HTTP timeout above): a big book keeps polling well past one request's timeout. Falls
+# back to ``timeout_seconds`` when neither this nor ``MINERU_API_POLL_DEADLINE_SECONDS``
+# is set, preserving the old single-knob behaviour.
+DEFAULT_POLL_DEADLINE_SECONDS = 7200.0
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_MODEL_VERSION = "vlm"
 COMPLETED_TASK_STATUSES = {"completed", "success", "succeeded", "done"}
@@ -109,6 +116,9 @@ def convert_document_to_source(
     poll_interval = poll_interval_seconds or float(
         os.getenv("MINERU_API_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS)
     )
+    poll_deadline = float(
+        os.getenv("MINERU_API_POLL_DEADLINE_SECONDS", DEFAULT_POLL_DEADLINE_SECONDS)
+    )
     resolved_backend = _resolve_backend(backend)
     if resolved_backend == "cloud-v4":
         api_url = (
@@ -123,6 +133,7 @@ def convert_document_to_source(
                 timeout,
                 poll_interval,
                 resolved_source_id,
+                poll_deadline_seconds=poll_deadline,
             )
         except Exception as exc:
             msg = (
@@ -143,7 +154,9 @@ def convert_document_to_source(
         raise MineruConversionError(msg)
 
     try:
-        result = _parse_with_api(document_path, api_url, timeout, poll_interval)
+        result = _parse_with_api(
+            document_path, api_url, timeout, poll_interval, poll_deadline_seconds=poll_deadline
+        )
     except Exception as exc:
         msg = (
             "MinerU API is required for PDF/PPTX conversion, "
@@ -204,11 +217,22 @@ def _health_check(api_base_url: str, timeout_seconds: float) -> bool:
 
 
 def _parse_with_api(
-    path: Path, api_base_url: str, timeout_seconds: float, poll_interval_seconds: float
+    path: Path,
+    api_base_url: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+    *,
+    poll_deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     submitted = _submit_task(path, api_base_url, timeout_seconds)
     task_id = _task_id_from_response(submitted)
-    result = _wait_for_task_result(api_base_url, task_id, timeout_seconds, poll_interval_seconds)
+    result = _wait_for_task_result(
+        api_base_url,
+        task_id,
+        timeout_seconds,
+        poll_interval_seconds,
+        poll_deadline_seconds=poll_deadline_seconds,
+    )
     return _extract_source_from_api_response(result, path.stem)
 
 
@@ -219,6 +243,8 @@ def _parse_with_cloud_v4(
     timeout_seconds: float,
     poll_interval_seconds: float,
     source_id: str,
+    *,
+    poll_deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     submitted = _submit_cloud_v4_upload(path, api_base_url, token, timeout_seconds, source_id)
     data = _cloud_response_data(submitted, "signed upload URL request")
@@ -232,6 +258,7 @@ def _parse_with_cloud_v4(
         path.name,
         timeout_seconds,
         poll_interval_seconds,
+        poll_deadline_seconds=poll_deadline_seconds,
     )
     zip_url = _cloud_zip_url(result, path.name)
     payload = _download_bytes(zip_url, timeout_seconds)
@@ -380,8 +407,11 @@ def _wait_for_task_result(
     task_id: str,
     timeout_seconds: float,
     poll_interval_seconds: float,
+    *,
+    poll_deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
-    deadline = time.monotonic() + timeout_seconds
+    effective_deadline_seconds = poll_deadline_seconds or timeout_seconds
+    deadline = time.monotonic() + effective_deadline_seconds
     last_status: str | None = None
     while time.monotonic() < deadline:
         status_data = _get_json(f"{api_base_url}/tasks/{task_id}", timeout_seconds)
@@ -394,7 +424,7 @@ def _wait_for_task_result(
             raise MineruConversionError(msg)
         time.sleep(max(poll_interval_seconds, 0.01))
 
-    msg = f"MinerU async task {task_id} timed out after {timeout_seconds:g}s"
+    msg = f"MinerU async task {task_id} timed out after {effective_deadline_seconds:g}s"
     if last_status:
         msg += f" (last status: {last_status})"
     raise MineruConversionError(msg)
@@ -407,8 +437,11 @@ def _wait_for_cloud_v4_result(
     file_name: str,
     timeout_seconds: float,
     poll_interval_seconds: float,
+    *,
+    poll_deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
-    deadline = time.monotonic() + timeout_seconds
+    effective_deadline_seconds = poll_deadline_seconds or timeout_seconds
+    deadline = time.monotonic() + effective_deadline_seconds
     last_status: str | None = None
     url = _cloud_v4_url(api_base_url, f"/api/v4/extract-results/batch/{batch_id}")
     headers = _cloud_auth_headers(token)
@@ -425,7 +458,7 @@ def _wait_for_cloud_v4_result(
             raise MineruConversionError(msg)
         time.sleep(max(poll_interval_seconds, 0.01))
 
-    msg = f"MinerU cloud-v4 batch {batch_id} timed out after {timeout_seconds:g}s"
+    msg = f"MinerU cloud-v4 batch {batch_id} timed out after {effective_deadline_seconds:g}s"
     if last_status:
         msg += f" (last status: {last_status})"
     raise MineruConversionError(msg)

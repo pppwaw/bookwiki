@@ -20,6 +20,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from bookwiki.utils.logging import get_logger
 
@@ -89,6 +90,119 @@ def validate_mdx(content: str, *, timeout_s: float = 30.0) -> list[str]:
             "mdx validation found %d error(s): %s%s", len(errors), preview, suffix
         )
     return errors
+
+
+def validate_mdx_many(
+    files: dict[str, str] | list[tuple[str, str]],
+    *,
+    timeout_s: float = 120.0,
+    max_files: int = 32,
+    max_bytes: int = 8_000_000,
+) -> dict[str, list[str]]:
+    """Validate many MDX files with as few Node cold-starts as possible.
+
+    ``files`` maps an identifier (typically a path) to MDX content. Returns the same keys
+    mapped to their parse-error lists (empty == compiles). Files are grouped into batches
+    (capped by ``max_files`` and ``max_bytes``) and each batch is one ``node`` process.
+    When a batch's output is unparseable (a pathological file crashed the validator), the
+    batch is split in half and retried so one bad file cannot blank out its neighbours;
+    a lone offender falls back to the single-file path (which best-effort skips it).
+
+    Mirrors ``validate_mdx``'s best-effort contract: if Node / the validator is
+    unavailable, it logs a warning and returns empty lists rather than failing the run.
+    """
+    items: list[tuple[str, str]] = list(files.items()) if isinstance(files, dict) else list(files)
+    out: dict[str, list[str]] = {key: [] for key, _ in items}
+    if not items:
+        return out
+    if not mdx_validator_available():
+        LOGGER.warning(
+            "mdx validator unavailable (node=%s, script_exists=%s); skipping MDX check",
+            shutil.which("node") is not None,
+            _VALIDATOR.exists(),
+        )
+        return out
+
+    for batch in _batch_items(items, max_files=max_files, max_bytes=max_bytes):
+        _run_batch(batch, out, timeout_s=timeout_s)
+    return out
+
+
+def _batch_items(
+    items: list[tuple[str, str]], *, max_files: int, max_bytes: int
+) -> list[list[tuple[str, str]]]:
+    batches: list[list[tuple[str, str]]] = []
+    current: list[tuple[str, str]] = []
+    size = 0
+    for key, content in items:
+        content_bytes = len(content.encode("utf-8"))
+        if current and (len(current) >= max_files or size + content_bytes > max_bytes):
+            batches.append(current)
+            current, size = [], 0
+        current.append((key, content))
+        size += content_bytes
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _run_batch(
+    batch: list[tuple[str, str]], out: dict[str, list[str]], *, timeout_s: float
+) -> None:
+    results = _invoke_batch([content for _, content in batch], timeout_s=timeout_s)
+    if results is None or len(results) != len(batch):
+        if len(batch) == 1:
+            key, content = batch[0]
+            out[key] = validate_mdx(content, timeout_s=timeout_s)
+            return
+        mid = len(batch) // 2
+        _run_batch(batch[:mid], out, timeout_s=timeout_s)
+        _run_batch(batch[mid:], out, timeout_s=timeout_s)
+        return
+    for (key, _content), result in zip(batch, results, strict=True):
+        if not isinstance(result, dict) or result.get("ok"):
+            out[key] = []
+            continue
+        out[key] = [
+            _format_error(error)
+            for error in result.get("errors", [])
+            if isinstance(error, dict)
+        ]
+
+
+def _invoke_batch(contents: list[str], *, timeout_s: float) -> list[Any] | None:
+    node = shutil.which("node")
+    if node is None:
+        return None
+    payload = json.dumps(
+        {
+            "files": [
+                {"path": str(index), "content": content}
+                for index, content in enumerate(contents)
+            ]
+        }
+    )
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed argv, content via stdin
+            [node, str(_VALIDATOR), "--batch"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        LOGGER.warning("mdx validator batch failed to run: %s", exc)
+        return None
+    if proc.returncode != 0:
+        LOGGER.warning("mdx validator batch internal error (rc=%s)", proc.returncode)
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    results = data.get("results") if isinstance(data, dict) else None
+    return results if isinstance(results, list) else None
 
 
 def _format_error(error: dict[str, object]) -> str:

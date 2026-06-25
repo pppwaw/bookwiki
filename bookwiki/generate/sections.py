@@ -736,7 +736,7 @@ def validate_section(
         for entry in skeleton_payload.get("chapter_uses", [])
         if isinstance(entry, dict) and entry.get("canonical")
     }
-    alias_map = skeleton_payload.get("alias_map", {}) or {}
+    alias_map = skeleton_payload.get("alias_map_slice", {}) or {}
     for concept in section.concepts:
         key = _concept_key(concept)
         if key in uses_by_key:
