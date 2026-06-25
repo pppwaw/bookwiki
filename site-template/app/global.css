@@ -1072,3 +1072,113 @@ body {
     transform: translateY(0);
   }
 }
+
+.feynman-panel {
+  margin-top: 2rem;
+  border: 1px solid color-mix(in oklab, var(--color-fd-primary) 24%, var(--color-fd-border));
+  border-radius: 0.9rem;
+  background: var(--color-fd-card);
+  color: var(--color-fd-card-foreground);
+  padding: 1.1rem;
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--color-fd-border) 65%, transparent);
+}
+.feynman-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px dashed var(--color-fd-border);
+}
+.feynman-heading-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  color: var(--color-fd-primary);
+  background: color-mix(in oklab, var(--color-fd-primary) 12%, transparent);
+}
+.feynman-heading h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.feynman-heading p {
+  margin: 0.2rem 0 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.feynman-keypoints {
+  margin-top: 1rem;
+  padding: 0.85rem;
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--color-fd-primary) 6%, transparent);
+}
+.feynman-keypoints h3 {
+  margin: 0 0 0.55rem;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--color-fd-primary);
+}
+.feynman-keypoints ol {
+  margin: 0;
+  padding-left: 1.35rem;
+}
+.feynman-keypoints li::marker {
+  color: var(--color-fd-primary);
+  font-weight: 700;
+}
+.feynman-composer {
+  display: flex;
+  gap: 0.75rem;
+  align-items: stretch;
+  margin-top: 1rem;
+}
+.feynman-composer textarea {
+  min-height: 5.5rem;
+  flex: 1;
+  resize: vertical;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.75rem;
+  background: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+  padding: 0.75rem 0.85rem;
+}
+.feynman-composer textarea:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.feynman-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+.feynman-msg {
+  max-width: min(36rem, 92%);
+  border-radius: 0.85rem;
+  padding: 0.8rem 0.95rem;
+  line-height: 1.6;
+}
+.feynman-msg p:first-child {
+  margin-top: 0;
+}
+.feynman-msg-user {
+  align-self: flex-end;
+  color: var(--color-fd-primary-foreground);
+  background: color-mix(in oklab, var(--color-fd-primary) 88%, black 4%);
+}
+.feynman-msg-assistant {
+  align-self: flex-start;
+  border: 1px solid var(--color-fd-border);
+  background: color-mix(in oklab, var(--color-fd-card) 88%, var(--color-fd-muted) 12%);
+}
+.feynman-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}

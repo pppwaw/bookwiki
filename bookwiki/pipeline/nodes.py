@@ -1134,7 +1134,18 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
             reused += 1
             continue
         suffix = path.suffix.lower()
-        if suffix in {".pdf", ".pptx"}:
+        if suffix in {
+            ".pdf",
+            ".pptx",
+            ".ppt",
+            ".docx",
+            ".doc",
+            ".xlsx",
+            ".xls",
+            ".odt",
+            ".odp",
+            ".ods",
+        }:
             _LOG.info("convert: mineru source=%s suffix=%s", path.name, suffix)
             parsed = convert_document_to_source(path, source_id=source_id)
             _materialize_mineru_assets(parsed, source_id, cfg)
@@ -3270,19 +3281,20 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         resolved_body = _drop_missing_local_markdown_links(
             _drop_invalid_inline_quiz_items(resolved_body), chapter_path.parent
         )
+        chapter_frontmatter = {
+            "chapter_id": ch_id,
+            "title": display_title,
+            "type": "chapter",
+            "order_index": chapter_order_index,
+            "summary": summary["summary_md"],
+            "concepts": concept_names,
+        }
+        chapter_key_points = [str(item) for item in summary.get("key_points", []) if item]
+        chapter_frontmatter["key_points"] = chapter_key_points
         write_text(
             chapter_path,
             (
-                _frontmatter(
-                    {
-                        "chapter_id": ch_id,
-                        "title": display_title,
-                        "type": "chapter",
-                        "order_index": chapter_order_index,
-                        "summary": summary["summary_md"],
-                        "concepts": concept_names,
-                    }
-                )
+                _frontmatter(chapter_frontmatter)
                 + resolved_body
                 + "\n\n"
                 + f"## Sources\n\n{citation_md}\n\n"
@@ -3332,9 +3344,16 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         )
         concept_body = _normalize_public_asset_markdown_images(concept_body)
         concept_body = _drop_missing_local_markdown_links(concept_body, concept_path.parent)
+        concept_frontmatter = {
+            "title": concept["name"],
+            "type": "concept",
+        }
+        concept_summary = str(concept.get("summary_md", "")).strip()
+        if concept_summary:
+            concept_frontmatter["summary"] = concept_summary
         write_text(
             concept_path,
-            _frontmatter({"title": concept["name"], "type": "concept"})
+            _frontmatter(concept_frontmatter)
             + f"# {concept['name']}\n\n"
             + concept_body
             + referenced_by,

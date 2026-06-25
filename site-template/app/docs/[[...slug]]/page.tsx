@@ -10,6 +10,7 @@ import {
 import { notFound, redirect } from 'next/navigation';
 import { getMDXComponents } from '@/components/mdx';
 import { ChapterSummary } from '@/components/ChapterSummary';
+import { FeynmanPanel } from '@/components/FeynmanPanel';
 import { Markdown } from '@/components/markdown';
 import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
@@ -37,6 +38,8 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const MDX = page.data.body;
   const markdownUrl = getPageMarkdownUrl(page).url;
   const summary = (page.data as { summary?: string }).summary;
+  const keyPoints = (page.data as { key_points?: string[] }).key_points ?? [];
+  const pageType = page.data.type;
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
@@ -57,6 +60,17 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
             a: createRelativeLink(source, page),
           })}
         />
+        {pageType === 'chapter' || pageType === 'concept' ? (
+          <FeynmanPanel
+            scope={
+              pageType === 'chapter'
+                ? `第 ${(page.data as { order_index?: number }).order_index ?? '?'} 章 ${page.data.title}`
+                : `概念:${page.data.title}`
+            }
+            keypoints={keyPoints}
+            summary={summary}
+          />
+        ) : null}
       </DocsBody>
     </DocsPage>
   );

@@ -10,6 +10,9 @@ const bookwikiPageSchema = pageSchema.extend({
   chapter_id: z.string().optional(),
   type: z.string().optional(),
   summary: z.string().optional(),
+  // Chapter-only structured keypoints sourced from SummaryResult.key_points.
+  // Fed to the Feynman learning panel as the "explain these" prompt.
+  key_points: z.array(z.string()).optional(),
   concepts: z.array(z.string()).optional(),
   order_index: z.number().optional(),
 });

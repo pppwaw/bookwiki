@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { UIMessage } from 'ai';
 
-const StorageKey = 'bookwiki:chat:v1';
+export const DefaultChatStorageKey = 'bookwiki:chat:v1';
+export const FeynmanChatStorageKey = 'bookwiki:feynman-chat:v1';
 const MaxConversations = 100;
 const TitleMaxLength = 48;
 
@@ -34,7 +35,9 @@ export type ChatHistory<M extends UIMessage = UIMessage> = {
   saveMessages: (id: string, pagePath: string, messages: M[]) => void;
 };
 
-export function useChatHistory<M extends UIMessage = UIMessage>(): ChatHistory<M> {
+export function useChatHistory<M extends UIMessage = UIMessage>(
+  storageKey: string = DefaultChatStorageKey,
+): ChatHistory<M> {
   const [store, setStore] = useState<ChatStore<M>>(() => ({
     conversations: [],
     activeId: newId(),
@@ -42,18 +45,18 @@ export function useChatHistory<M extends UIMessage = UIMessage>(): ChatHistory<M
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const loaded = loadStore<M>();
+    const loaded = loadStore<M>(storageKey);
     setStore({
       conversations: loaded.conversations,
       activeId: loaded.activeId || newId(),
     });
     setHydrated(true);
-  }, []);
+  }, [storageKey]);
 
   useEffect(() => {
     if (!hydrated) return;
-    saveStore(store);
-  }, [store, hydrated]);
+    saveStore(store, storageKey);
+  }, [store, hydrated, storageKey]);
 
   const newChat = useCallback(() => {
     const id = newId();
@@ -155,11 +158,11 @@ function newId(): string {
   return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function loadStore<M extends UIMessage = UIMessage>(): ChatStore<M> {
+function loadStore<M extends UIMessage = UIMessage>(storageKey: string): ChatStore<M> {
   if (typeof window === 'undefined') return { conversations: [], activeId: '' };
 
   try {
-    const raw = window.localStorage.getItem(StorageKey);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return { conversations: [], activeId: '' };
 
     const parsed = JSON.parse(raw) as Partial<ChatStore<M>>;
@@ -174,11 +177,11 @@ function loadStore<M extends UIMessage = UIMessage>(): ChatStore<M> {
   }
 }
 
-function saveStore<M extends UIMessage = UIMessage>(store: ChatStore<M>): void {
+function saveStore<M extends UIMessage = UIMessage>(store: ChatStore<M>, storageKey: string): void {
   if (typeof window === 'undefined') return;
 
   try {
-    window.localStorage.setItem(StorageKey, JSON.stringify(store));
+    window.localStorage.setItem(storageKey, JSON.stringify(store));
   } catch {
     // Ignore quota or serialization errors; chat history is best-effort.
   }

@@ -28,6 +28,14 @@ type ChatRequest = {
   question?: unknown;
   chapterId?: unknown;
   pagePath?: unknown;
+  /**
+   * Optional custom system prompt. When provided (non-empty string), it fully
+   * replaces the default "BookWiki vault assistant" persona while preserving
+   * the grounded current article and tool/format rules. Used by the Feynman
+   * learning mode to switch between the confused-peer probe persona and the
+   * reviewer persona across multi-turn dialogue.
+   */
+  system?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -42,6 +50,7 @@ export async function POST(request: Request) {
   try {
     const chapterId = typeof body.chapterId === 'string' ? body.chapterId : undefined;
     const pagePath = typeof body.pagePath === 'string' ? body.pagePath : undefined;
+    const customSystem = typeof body.system === 'string' ? body.system.trim() : '';
     const uiMessages = messagesFromBody(body);
 
     if (uiMessages.length === 0) {
@@ -76,7 +85,7 @@ export async function POST(request: Request) {
 
     const result = streamText({
       model: openrouter(model),
-      system: systemPrompt(currentArticle, groundingText),
+      system: systemPrompt(currentArticle, groundingText, customSystem),
       messages: await convertHistory(uiMessages),
       maxOutputTokens: OutputTokens,
       providerOptions: {
@@ -163,15 +172,25 @@ function chatFormatInstructions() {
   ].join(' ');
 }
 
-function systemPrompt(article: CurrentArticle | null, groundingText: string) {
-  const parts = [
-    'You answer questions about a single BookWiki vault.',
-    'The current article is provided below when available.',
-    'Use search_book when the current article does not contain enough evidence.',
-    'Answer only from the current article context and tool results. If evidence is insufficient, say so.',
-    'Earlier turns of this conversation are included; stay consistent with them.',
-    chatFormatInstructions(),
-  ];
+function systemPrompt(article: CurrentArticle | null, groundingText: string, customPersona = '') {
+  const intro = customPersona
+    ? [
+        customPersona,
+        'You are operating inside a BookWiki vault.',
+        'Stay grounded only in the current article context and tool results; if evidence is insufficient, say so.',
+        'Earlier turns of this conversation are included; stay consistent with them.',
+        chatFormatInstructions(),
+      ].join('\n')
+    : [
+        'You answer questions about a single BookWiki vault.',
+        'The current article is provided below when available.',
+        'Use search_book when the current article does not contain enough evidence.',
+        'Answer only from the current article context and tool results. If evidence is insufficient, say so.',
+        'Earlier turns of this conversation are included; stay consistent with them.',
+        chatFormatInstructions(),
+      ].join('\n');
+
+  const parts = [intro];
 
   if (article) {
     parts.push(
