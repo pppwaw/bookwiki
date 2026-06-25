@@ -32,9 +32,8 @@ class VisionCaptionAgent:
 4. `caption_md` 写成可直接放在图下的一句话，优先说明图中关系、结构、变量或实验现象；
    不要写“这是一张图片/图中显示”等空泛描述。
 5. 若某张图有 `existing_caption`，请修正和补全它；若它明显不完整或有误，以图像和上下文为准。
-6. `key_points` 只列该图真正支持的 1–4 个要点，避免重复 `caption_md`。
-7. 不要编造图像、附近文本或章节上下文中没有依据的数值、标签、结论。
-8. 保持每条 `caption_md` 简洁，通常 20–60 个中文字符或等量英文；必要的数学符号可保留。""",
+6. 不要编造图像、附近文本或章节上下文中没有依据的数值、标签、结论。
+7. `caption_md` 保持简洁，通常 20–60 个中文字符或等量英文；必要的数学符号可保留。""",
     )
 
     async def run(
@@ -49,7 +48,6 @@ class VisionCaptionAgent:
                     caption_md=str(
                         item.get("existing_caption") or item.get("nearby_text") or "Source figure."
                     ),
-                    key_points=[],
                     source_ref=str(item.get("source_ref") or inp.get("source_ref") or ""),
                     confidence=0.0,
                 )

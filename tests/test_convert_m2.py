@@ -1122,7 +1122,6 @@ def test_caption_node_adds_vision_caption_to_image_blocks(
                     {
                         "block_id": "paper-p001-b002",
                         "caption_md": "A bell-shaped sampling distribution.",
-                        "key_points": ["bell shape"],
                         "source_ref": "paper-p001",
                         "confidence": 0.91,
                     }
@@ -1200,7 +1199,6 @@ def test_caption_node_uses_nested_mineru_image_source_paths(
                     {
                         "block_id": "paper-p001-b002",
                         "caption_md": "A diagram of the sampling distribution.",
-                        "key_points": ["sampling distribution"],
                         "source_ref": "paper-p001",
                         "confidence": 0.91,
                     }
@@ -1279,7 +1277,6 @@ def test_caption_node_passes_heading_section_context_to_vision_agent(
                     {
                         "block_id": "paper-p001-b001",
                         "caption_md": "A contextual figure caption.",
-                        "key_points": ["context"],
                         "source_ref": "paper-p001",
                         "confidence": 0.91,
                     }
@@ -1359,14 +1356,12 @@ def test_caption_node_batches_same_page_images(tmp_path: Path) -> None:
                     {
                         "block_id": "paper-p001-b001",
                         "caption_md": "Caption for the first same-page figure.",
-                        "key_points": ["first"],
                         "source_ref": "paper-p001",
                         "confidence": 0.91,
                     },
                     {
                         "block_id": "paper-p001-b002",
                         "caption_md": "Caption for the second same-page figure.",
-                        "key_points": ["second"],
                         "source_ref": "paper-p001",
                         "confidence": 0.92,
                     },
@@ -1597,7 +1592,6 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
                     VisionCaptionItem(
                         block_id=block_id,
                         caption_md="successful caption",
-                        key_points=[],
                         source_ref=str(jobs[0]["candidate"]["source_ref"]),
                         confidence=0.9,
                     )
@@ -1646,7 +1640,6 @@ def test_caption_node_refines_existing_non_vision_caption_once(
                     {
                         "block_id": "paper-p001-b001",
                         "caption_md": "一百个 95% 置信区间，星号标出未覆盖真实均值的区间。",
-                        "key_points": ["confidence intervals"],
                         "source_ref": "paper-p001",
                         "confidence": 0.91,
                     }
@@ -1708,7 +1701,6 @@ def test_caption_node_preserves_latex_backslashes_when_rewriting_book_figure(
                     {
                         "block_id": "paper-p001-b001",
                         "caption_md": r"A density curve with $\lambda=2$.",
-                        "key_points": ["lambda"],
                         "source_ref": "paper-p001",
                         "confidence": 0.91,
                     }

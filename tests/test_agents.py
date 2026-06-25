@@ -217,7 +217,6 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
                     {
                         "block_id": "source-p001-b003",
                         "caption_md": "A diagram showing state expansion.",
-                        "key_points": ["states expand outward"],
                         "source_ref": "source-p001",
                         "confidence": 0.92,
                     }

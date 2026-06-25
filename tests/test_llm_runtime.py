@@ -319,7 +319,6 @@ async def test_litellm_runtime_sends_image_paths_as_multimodal_content(
     payload = {
         "block_id": "source-p001-b001",
         "caption_md": "A source figure.",
-        "key_points": [],
         "source_ref": "source-p001",
         "confidence": 0.8,
     }
@@ -361,7 +360,6 @@ async def test_openrouter_qwen_disables_reasoning_for_structured_calls(
     payload = {
         "block_id": "source-p001-b001",
         "caption_md": "A source figure.",
-        "key_points": [],
         "source_ref": "source-p001",
         "confidence": 0.8,
     }

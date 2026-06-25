@@ -123,7 +123,6 @@ class SourceLayoutRepairResult(VersionedModel):
 class VisionCaptionItem(VersionedModel):
     block_id: str
     caption_md: str
-    key_points: list[str] = Field(default_factory=list)
     source_ref: str
     confidence: float = 0.0
 
