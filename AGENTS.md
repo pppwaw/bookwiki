@@ -20,7 +20,7 @@ The `structure` stage is a hard review gate. Before running `split`, the user mu
 `work/structure/proposed-structure.yaml`, edit `work/structure/approved-structure.yaml`, and mark
 it with a line exactly `# bookwiki: approved-structure`.
 
-After `split`, `build_skeleton` runs `SkeletonAgent` once over every chapter's source to produce the
+After \`split\`, \`build_skeleton\` streams instead of shipping the whole book to one call: \`SkeletonExtractAgent\` extracts concept candidates per chapter in parallel (source chunked first so no call overflows the model budget), then \`SkeletonFoldAgent\` folds them chapter-by-chapter in order via a deterministic \`Registry\` reducer that applies LLM-emitted ops (add_concept/add_alias/rename_canonical/merge/split) to produce the
 book-wide read-only contract (`work/skeleton.json`): a canonical glossary with each concept's
 first-owning chapter, an `alias_map` (every variant → canonical), and one-line `chapter_briefs`.
 `generate` injects each chapter's slice of that contract so chapters share terminology and can write
@@ -85,7 +85,7 @@ into the explicit `BOOKWIKI_TEST_LLM=1` fake runtime.
 `lg_runner` injects a single shared `LiteLLMRuntime` onto `cfg.llm_runtime` for the whole run, so every
 agent reuses one LiteLLM `Router` (its tpm/rpm self-throttling and usage/cost accounting are
 per-Router). The runtime accumulates token/cost usage per call and enforces `budget`
-`maxCostCny` (default `70.0`; `<= 0` means unlimited), raising `BudgetExceeded` once the running total
+`maxCostCny\` (default \`150.0\`; `<= 0` means unlimited), raising `BudgetExceeded` once the running total
 crosses it. Per-token prices are registered on each Router deployment in CNY — the providers
 (`api.moonshot.cn`, DeepSeek domestic) bill in RMB — with separate cache-hit input rates so
 `cached_tokens` are priced at the discounted rate; litellm has no built-in pricing for these custom

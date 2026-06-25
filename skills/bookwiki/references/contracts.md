@@ -103,7 +103,7 @@ Path (written by `build_skeleton`, read-only downstream):
 books/<id>/work/skeleton.json
 ```
 
-`SkeletonAgent` runs once over every chapter source to produce the book-wide contract: a canonical glossary with each concept's first-owning chapter, an `alias_map` (every variant -> canonical), and one-line `chapter_briefs`. `generate` injects each chapter's slice so chapters share terminology and can write neighbour transitions. It uses the same wrapper shape as agent results (`_agent=SkeletonAgent`).
+`SkeletonExtractAgent` extracts concept candidates per chapter in parallel (source chunked first), then `SkeletonFoldAgent` folds them chapter-by-chapter in order via a deterministic `Registry` reducer (add/alias/rename/merge/split ops) to produce the book-wide contract: a canonical glossary with each concept's first-owning chapter, an `alias_map` (every variant -> canonical), one-line `chapter_briefs`, and `chapter_uses`. `generate` injects each chapter's slice (`alias_map_slice` + `chapter_owns` + `chapter_uses`) so chapters share terminology and can write neighbour transitions. It uses the same wrapper shape as agent results (`_agent=SkeletonFoldAgent`).
 
 ## Reconciled Concepts
 
