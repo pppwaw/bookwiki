@@ -204,7 +204,36 @@ function findBrokenMath(tree) {
 }
 
 async function main() {
-  const content = await readStdin();
+  const raw = await readStdin();
+  // Batch mode (``--batch``): stdin is a JSON object ``{"files":[{path,content}]}`` and we
+  // emit ``{"results":[{path,ok,errors}]}`` in the same order. One Node process validates
+  // many files, avoiding a cold start per file. Single-file mode (no flag) is unchanged:
+  // raw MDX on stdin -> ``{"ok",...}``. JSON object stdin is safe for MDX (newlines and
+  // backslashes are escaped inside JSON strings).
+  if (process.argv.includes("--batch")) {
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (err) {
+      process.stderr.write(`mdx-validate batch: invalid JSON input: ${err}\n`);
+      process.exit(2);
+      return;
+    }
+    const files = Array.isArray(payload && payload.files) ? payload.files : [];
+    const results = [];
+    for (const file of files) {
+      const path = file ? file.path : null;
+      const { ok, errors, warnings } = await validateContent(String((file && file.content) || ""));
+      results.push({ path, ok, errors, warnings });
+    }
+    process.stdout.write(JSON.stringify({ results }));
+    return;
+  }
+  const { ok, errors, warnings } = await validateContent(raw);
+  process.stdout.write(JSON.stringify({ ok, errors, warnings }));
+}
+
+async function validateContent(content) {
   const errors = [];
   const warnings = [];
   try {
@@ -229,7 +258,7 @@ async function main() {
     }
   }
   // ``ok``/``errors`` reflect build-breakers only; ``warnings`` is render-quality (KaTeX).
-  process.stdout.write(JSON.stringify({ ok: errors.length === 0, errors, warnings }));
+  return { ok: errors.length === 0, errors, warnings };
 }
 
 main().catch((err) => {
