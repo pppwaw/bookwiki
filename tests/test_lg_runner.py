@@ -22,7 +22,21 @@ import pytest
 from bookwiki.pipeline import nodes as nodes_module
 from bookwiki.scheduler.config import default_config
 from bookwiki.scheduler.lg_runner import run_pipeline
+from bookwiki.scheduler.llm import record_stage_usage
 from bookwiki.utils import logging as logging_utils
+
+
+def _spend(runtime: Any, *, cost: float, prompt: int, completion: int) -> None:
+    """Simulate one recorded API call exactly like ``LiteLLMRuntime._record_usage``:
+
+    bump the shared global counters (budget / interrupted-stage fallback) and
+    attribute the same usage to the stage active in the current context.
+    """
+    runtime.total_cost_cny += cost
+    runtime.total_prompt_tokens += prompt
+    runtime.total_completion_tokens += completion
+    record_stage_usage(cost_cny=cost, prompt_tokens=prompt, completion_tokens=completion)
+
 
 _NODE_OUTPUTS: dict[str, dict[str, Any]] = {
     "convert": {"sources_md": ["work/sources_md/a.md"], "source_ref_manifests": []},
@@ -104,9 +118,7 @@ def test_manifest_records_llm_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     _register_fakes(monkeypatch, calls)
 
     def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
-        cfg_arg.llm_runtime.total_cost_cny += 1.2345678
-        cfg_arg.llm_runtime.total_prompt_tokens += 120
-        cfg_arg.llm_runtime.total_completion_tokens += 34
+        _spend(cfg_arg.llm_runtime, cost=1.2345678, prompt=120, completion=34)
         return {**_NODE_OUTPUTS["convert"], "cache_hit": False}
 
     monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
@@ -120,14 +132,14 @@ def test_manifest_records_llm_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         "completion_tokens": 34,
         "total_tokens": 154,
         "budget_max_cost_cny": 70.0,
-        "stages": [
+        "runs": [
             {
-                "name": "convert",
-                "currency": "CNY",
-                "cost_cny": 1.234568,
-                "prompt_tokens": 120,
-                "completion_tokens": 34,
-                "total_tokens": 154,
+                "convert": {
+                    "cost_cny": 1.234568,
+                    "prompt_tokens": 120,
+                    "completion_tokens": 34,
+                    "total_tokens": 154,
+                }
             }
         ],
     }
@@ -142,9 +154,7 @@ def test_manifest_records_stage_llm_usage(tmp_path: Path, monkeypatch: pytest.Mo
     )
 
     def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
-        cfg_arg.llm_runtime.total_cost_cny += 0.25
-        cfg_arg.llm_runtime.total_prompt_tokens += 100
-        cfg_arg.llm_runtime.total_completion_tokens += 20
+        _spend(cfg_arg.llm_runtime, cost=0.25, prompt=100, completion=20)
         return {**_NODE_OUTPUTS["convert"], "cache_hit": False}
 
     monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
@@ -154,14 +164,14 @@ def test_manifest_records_stage_llm_usage(tmp_path: Path, monkeypatch: pytest.Mo
     usage = _manifest(cfg)["llm_usage"]
     assert usage["total_cost_cny"] == 0.25
     assert usage["total_tokens"] == 120
-    assert usage["stages"] == [
+    assert usage["runs"] == [
         {
-            "name": "convert",
-            "currency": "CNY",
-            "cost_cny": 0.25,
-            "prompt_tokens": 100,
-            "completion_tokens": 20,
-            "total_tokens": 120,
+            "convert": {
+                "cost_cny": 0.25,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+            }
         }
     ]
 
@@ -177,9 +187,7 @@ def test_manifest_accumulates_llm_usage_across_runs(
     )
 
     def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
-        cfg_arg.llm_runtime.total_cost_cny += 0.25
-        cfg_arg.llm_runtime.total_prompt_tokens += 100
-        cfg_arg.llm_runtime.total_completion_tokens += 20
+        _spend(cfg_arg.llm_runtime, cost=0.25, prompt=100, completion=20)
         return {**_NODE_OUTPUTS["convert"], "cache_hit": False}
 
     monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
@@ -192,22 +200,23 @@ def test_manifest_accumulates_llm_usage_across_runs(
     assert usage["prompt_tokens"] == 200
     assert usage["completion_tokens"] == 40
     assert usage["total_tokens"] == 240
-    assert usage["stages"] == [
+    # Each run is its own object keyed by stage name; runs stay grouped, not merged.
+    assert usage["runs"] == [
         {
-            "name": "convert",
-            "currency": "CNY",
-            "cost_cny": 0.25,
-            "prompt_tokens": 100,
-            "completion_tokens": 20,
-            "total_tokens": 120,
+            "convert": {
+                "cost_cny": 0.25,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+            }
         },
         {
-            "name": "convert",
-            "currency": "CNY",
-            "cost_cny": 0.25,
-            "prompt_tokens": 100,
-            "completion_tokens": 20,
-            "total_tokens": 120,
+            "convert": {
+                "cost_cny": 0.25,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+            }
         },
     ]
 
@@ -223,9 +232,7 @@ def test_manifest_is_written_when_run_is_cancelled(
     )
 
     def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
-        cfg_arg.llm_runtime.total_cost_cny += 0.25
-        cfg_arg.llm_runtime.total_prompt_tokens += 100
-        cfg_arg.llm_runtime.total_completion_tokens += 20
+        _spend(cfg_arg.llm_runtime, cost=0.25, prompt=100, completion=20)
         raise asyncio.CancelledError
 
     monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
@@ -242,15 +249,15 @@ def test_manifest_is_written_when_run_is_cancelled(
         "completion_tokens": 20,
         "total_tokens": 120,
         "budget_max_cost_cny": 70.0,
-        "stages": [
+        "runs": [
             {
-                "name": "convert",
-                "status": "interrupted",
-                "currency": "CNY",
-                "cost_cny": 0.25,
-                "prompt_tokens": 100,
-                "completion_tokens": 20,
-                "total_tokens": 120,
+                "convert": {
+                    "cost_cny": 0.25,
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                    "status": "interrupted",
+                }
             }
         ],
     }
@@ -325,9 +332,7 @@ def test_force_from_reruns_from_target_only(
     assert "index" in calls
 
 
-def test_generate_runs_as_langgraph_fanout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_generate_runs_as_langgraph_fanout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     calls: list[str] = []
 
@@ -419,9 +424,7 @@ def test_generate_langgraph_fanout_can_target_one_chapter(
     async def fake_generate_chapter(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
         ch_id = str(state["_fanout_chapter_id"])
         generated_ids.append(ch_id)
-        figures = {"chapter-2": {"fig-2": '<BookFigure id="fig-2" src="/b.png" />'}}.get(
-            ch_id, {}
-        )
+        figures = {"chapter-2": {"fig-2": '<BookFigure id="fig-2" src="/b.png" />'}}.get(ch_id, {})
         return {
             "_generate_parts": {
                 ch_id: {
@@ -531,6 +534,94 @@ def test_concept_pages_run_as_langgraph_fanout(
         "动态规划": "work/agent_results/concepts/动态规划.json",
     }
     assert probe["max"] > 1
+
+
+def test_concurrent_fanout_attributes_usage_per_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent ``concept_page`` siblings roll up into one aggregated stage row
+    whose total is the plain sum of each sibling's own usage.
+
+    Regression for the run-manifest bug where diffing a shared global counter across
+    overlapping before/after windows made every sibling log the running total, so
+    summing the stages inflated ``total_cost_cny`` (≈ N²/2 over-count). Per-task
+    attribution + per-stage aggregation now yields the exact per-node total.
+    """
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = SimpleNamespace(
+        total_cost_cny=0.0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+    )
+    costs = {"递归": 0.10, "动态规划": 0.20, "贪心": 0.30}
+
+    for name, output in _NODE_OUTPUTS.items():
+        if name == "concept_pages":
+            continue
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+                if node_name == "reconcile_concepts":
+                    concepts_path = cfg_arg.work_dir / "concepts" / "reconciled.json"
+                    concepts_path.parent.mkdir(parents=True, exist_ok=True)
+                    concepts_path.write_text(
+                        json.dumps(
+                            {
+                                "concepts": [
+                                    {"canonical": c, "aliases": [], "source_chapter_ids": []}
+                                    for c in costs
+                                ]
+                            },
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+                    return {
+                        "reconciled_concepts": "work/concepts/reconciled.json",
+                        "alias_map": "work/concepts/alias_map.json",
+                        "cache_hit": False,
+                    }
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+    async def fake_concept_page(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        item = dict(state["_fanout_concept_item"])
+        name = str(item["canonical"])
+        order = int(state["_fanout_concept_order"])
+        # Yield first so every sibling is in flight before any of them spends:
+        # this is exactly the interleaving that made the old global-diff over-count.
+        await asyncio.sleep(0.01)
+        _spend(cfg_arg.llm_runtime, cost=costs[name], prompt=100, completion=20)
+        return {
+            "_concept_page_parts": {
+                name: {
+                    "name": name,
+                    "order": order,
+                    "path": f"work/agent_results/concepts/{state['_fanout_concept_stem']}.json",
+                    "concept_generation_issues": [],
+                    "cache_hit": True,
+                }
+            }
+        }
+
+    monkeypatch.setattr(nodes_module, "concept_page_fanout_node", fake_concept_page)
+
+    run_pipeline(cfg, resume=False)
+    run_pipeline(cfg, stop_after="concept_pages", resume=True)
+
+    usage = _manifest(cfg)["llm_usage"]
+    page_entries = [run["concept_page"] for run in usage["runs"] if "concept_page" in run]
+    # The fixed node collapses all concurrent siblings into one aggregated entry whose
+    # total is the plain sum of each sibling's own spend — not a cumulative snapshot
+    # summed across siblings (the old bug would yield ~N x the real total here).
+    assert len(page_entries) == 1
+    assert page_entries[0]["cost_cny"] == pytest.approx(sum(costs.values()))
+    assert page_entries[0]["completion_tokens"] == 20 * len(costs)
+    assert usage["total_cost_cny"] == pytest.approx(sum(costs.values()))
+    assert cfg.llm_runtime.total_cost_cny == pytest.approx(sum(costs.values()))
 
 
 def test_concept_pages_langgraph_fanout_can_target_one_concept(
@@ -646,9 +737,7 @@ def test_logs_node_start_and_done(
     cfg = default_config(tmp_path / "books" / "mini")
     calls: list[str] = []
     _register_fakes(monkeypatch, calls)
-    timestamps = iter(
-        [datetime(2026, 6, 25, 16, 0, 1), datetime(2026, 6, 25, 16, 0, 1)]
-    )
+    timestamps = iter([datetime(2026, 6, 25, 16, 0, 1), datetime(2026, 6, 25, 16, 0, 1)])
 
     class Clock:
         @classmethod

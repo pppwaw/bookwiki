@@ -30,7 +30,7 @@ from langgraph.types import Send
 from bookwiki.pipeline import nodes as pipeline_nodes
 from bookwiki.pipeline.nodes import NODE_FUNCTIONS
 from bookwiki.scheduler.config import BookConfig
-from bookwiki.scheduler.llm import build_runtime
+from bookwiki.scheduler.llm import begin_stage_usage, build_runtime
 from bookwiki.scheduler.resume import (
     NODE_ORDER,
     clear_for_force,
@@ -57,12 +57,12 @@ def _bind_node(name: str, fn: Any, cfg: BookConfig):
     async def node(state: PipelineState) -> dict[str, Any]:
         LOGGER.info("node start name=%s book_id=%s", name, cfg.book_id)
         cfg._llm_active_node = name
-        usage_before = _llm_usage_totals(cfg)
+        stage_usage = begin_stage_usage()
         result = fn(state, cfg)
         if inspect.isawaitable(result):
             result = await result
         cache_hit = bool((result or {}).get("cache_hit", False))
-        _append_stage_usage(cfg, name, usage_before, _llm_usage_totals(cfg))
+        _append_stage_usage(cfg, name, stage_usage)
         LOGGER.info("node done name=%s book_id=%s cache_hit=%s", name, cfg.book_id, cache_hit)
         if getattr(cfg, "_llm_active_node", None) == name:
             cfg._llm_active_node = None
@@ -231,15 +231,54 @@ def _write_manifest(
 
 
 def _llm_usage_snapshot(cfg: BookConfig, *, include_unfinished: bool = False) -> dict[str, Any]:
+    """Roll this run's per-stage usage into one ``{stage_name: usage}`` object."""
     stages = list(getattr(cfg, "_llm_stage_usage", []))
     if include_unfinished:
         unfinished = _unfinished_stage_usage(cfg, stages)
         if unfinished["total_tokens"] or unfinished["cost_cny"]:
             stage_name = getattr(cfg, "_llm_active_node", None) or "interrupted"
-            stages.append(
-                {"name": stage_name, "status": "interrupted", "currency": "CNY", **unfinished}
-            )
-    totals = _sum_stage_usage(stages)
+            stages.append({"name": stage_name, "status": "interrupted", **unfinished})
+    return {"run": _run_usage_object(stages)}
+
+
+def _run_usage_object(stages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    # Key each stage by its node name (the graph's node set is fixed), dropping the
+    # redundant ``name``/``currency`` fields. ``_append_stage_usage`` already merged
+    # repeat invocations, so the only same-name collision here is a completed stage
+    # plus a later interrupted one — fold them together and keep the interrupted mark.
+    run: dict[str, dict[str, Any]] = {}
+    for stage in stages:
+        name = stage["name"]
+        payload = {
+            "cost_cny": round(float(stage.get("cost_cny", 0.0) or 0.0), 6),
+            "prompt_tokens": int(stage.get("prompt_tokens", 0) or 0),
+            "completion_tokens": int(stage.get("completion_tokens", 0) or 0),
+            "total_tokens": int(stage.get("total_tokens", 0) or 0),
+        }
+        existing = run.get(name)
+        if existing is None:
+            run[name] = payload
+        else:
+            existing["cost_cny"] = round(existing["cost_cny"] + payload["cost_cny"], 6)
+            existing["prompt_tokens"] += payload["prompt_tokens"]
+            existing["completion_tokens"] += payload["completion_tokens"]
+            existing["total_tokens"] += payload["total_tokens"]
+        if stage.get("status"):
+            run[name]["status"] = stage["status"]
+    return run
+
+
+def _accumulated_llm_usage(
+    prior_manifest: Any, current: dict[str, Any], cfg: BookConfig
+) -> dict[str, Any]:
+    prior_usage = prior_manifest.get("llm_usage", {}) if isinstance(prior_manifest, dict) else {}
+    prior_runs = prior_usage.get("runs", []) if isinstance(prior_usage, dict) else []
+    if not isinstance(prior_runs, list):
+        prior_runs = []
+    runs = list(prior_runs)
+    if current["run"]:  # skip a run that issued no node calls at all
+        runs.append(current["run"])
+    totals = _sum_run_objects(runs)
     return {
         "currency": "CNY",
         "total_cost_cny": totals["cost_cny"],
@@ -247,31 +286,24 @@ def _llm_usage_snapshot(cfg: BookConfig, *, include_unfinished: bool = False) ->
         "completion_tokens": totals["completion_tokens"],
         "total_tokens": totals["total_tokens"],
         "budget_max_cost_cny": cfg.budget.get("maxCostCny"),
-        "stages": stages,
+        "runs": runs,
     }
 
 
-def _accumulated_llm_usage(
-    prior_manifest: Any, current: dict[str, Any], cfg: BookConfig
-) -> dict[str, Any]:
-    prior_usage = prior_manifest.get("llm_usage", {}) if isinstance(prior_manifest, dict) else {}
-    prior_stages = prior_usage.get("stages", []) if isinstance(prior_usage, dict) else []
-    if not isinstance(prior_stages, list):
-        prior_stages = []
-    prompt_tokens = _usage_int(prior_usage, "prompt_tokens") + int(current["prompt_tokens"])
-    completion_tokens = _usage_int(prior_usage, "completion_tokens") + int(
-        current["completion_tokens"]
-    )
+def _sum_run_objects(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    prompt_tokens = 0
+    completion_tokens = 0
+    cost = 0.0
+    for run in runs:
+        for usage in run.values():
+            cost += float(usage.get("cost_cny", 0.0) or 0.0)
+            prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens += int(usage.get("completion_tokens", 0) or 0)
     return {
-        "currency": "CNY",
-        "total_cost_cny": round(
-            _usage_float(prior_usage, "total_cost_cny") + float(current["total_cost_cny"]), 6
-        ),
+        "cost_cny": round(cost, 6),
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
-        "budget_max_cost_cny": cfg.budget.get("maxCostCny"),
-        "stages": [*prior_stages, *current["stages"]],
     }
 
 
@@ -312,18 +344,6 @@ def _unfinished_stage_usage(cfg: BookConfig, stages: list[dict[str, Any]]) -> di
     }
 
 
-def _usage_int(usage: Any, key: str) -> int:
-    if not isinstance(usage, dict):
-        return 0
-    return int(usage.get(key, 0) or 0)
-
-
-def _usage_float(usage: Any, key: str) -> float:
-    if not isinstance(usage, dict):
-        return 0.0
-    return float(usage.get(key, 0.0) or 0.0)
-
-
 def _llm_usage_totals(cfg: BookConfig) -> dict[str, Any]:
     runtime = cfg.llm_runtime
     prompt_tokens = int(getattr(runtime, "total_prompt_tokens", 0) or 0)
@@ -336,21 +356,35 @@ def _llm_usage_totals(cfg: BookConfig) -> dict[str, Any]:
     }
 
 
-def _append_stage_usage(
-    cfg: BookConfig,
-    name: str,
-    before: dict[str, Any],
-    after: dict[str, Any],
-) -> None:
-    stage_usage = {
-        "name": name,
-        "currency": "CNY",
-        "cost_cny": round(after["cost_cny"] - before["cost_cny"], 6),
-        "prompt_tokens": after["prompt_tokens"] - before["prompt_tokens"],
-        "completion_tokens": after["completion_tokens"] - before["completion_tokens"],
-        "total_tokens": after["total_tokens"] - before["total_tokens"],
-    }
-    cfg.__dict__.setdefault("_llm_stage_usage", []).append(stage_usage)
+def _append_stage_usage(cfg: BookConfig, name: str, usage: dict[str, float]) -> None:
+    # ``usage`` is this stage's own per-task accumulator (see ``begin_stage_usage``),
+    # so siblings in a concurrent ``Send`` fanout never bleed into each other's totals.
+    prompt_tokens = int(usage["prompt_tokens"])
+    completion_tokens = int(usage["completion_tokens"])
+    cost_cny = float(usage["cost_cny"])
+    stages = cfg.__dict__.setdefault("_llm_stage_usage", [])
+    # The graph's node set is fixed, so collapse every invocation of a node within
+    # one run — concurrent ``Send`` fanout siblings and repair-loop repeats alike —
+    # into a single per-stage row. Cross-run grouping is preserved by ``_run``
+    # starting each run with a fresh list and ``_accumulated_llm_usage`` appending
+    # this run's rolled-up rows after the prior run's.
+    for stage in stages:
+        if stage.get("name") == name and stage.get("status") != "interrupted":
+            stage["cost_cny"] = round(stage["cost_cny"] + cost_cny, 6)
+            stage["prompt_tokens"] += prompt_tokens
+            stage["completion_tokens"] += completion_tokens
+            stage["total_tokens"] += prompt_tokens + completion_tokens
+            return
+    stages.append(
+        {
+            "name": name,
+            "currency": "CNY",
+            "cost_cny": round(cost_cny, 6),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #

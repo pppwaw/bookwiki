@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import inspect
 import json
 import mimetypes
@@ -280,6 +281,46 @@ class ToolLoopExceeded(RuntimeError):
         self.max_tool_rounds = max_tool_rounds
 
 
+# Per-stage usage attribution. ``_record_usage`` runs in whatever asyncio Task
+# issued the API call, and LangGraph executes each node — including the concurrent
+# ``Send`` fanout siblings ``generate_chapter`` / ``concept_page`` — in its own
+# Task with an isolated copy of the context. Binding a fresh accumulator at node
+# start therefore captures exactly the calls that node makes, even when siblings
+# interleave at ``await`` points. Diffing the shared global counters instead
+# over-counts: overlapping before/after windows make every sibling record a
+# cumulative running total, and summing those snapshots inflates the manifest's
+# ``total_cost_cny`` (the regression this attribution fixes).
+_ACTIVE_STAGE_USAGE: contextvars.ContextVar[dict[str, float] | None] = contextvars.ContextVar(
+    "bookwiki_active_stage_usage", default=None
+)
+
+
+def begin_stage_usage() -> dict[str, float]:
+    """Bind a fresh per-task usage accumulator for the current stage and return it.
+
+    The returned dict is mutated in place by every :func:`record_stage_usage` call
+    made within the same context, so the caller reads the stage's own usage back
+    once it finishes.
+    """
+    accumulator: dict[str, float] = {
+        "cost_cny": 0.0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+    }
+    _ACTIVE_STAGE_USAGE.set(accumulator)
+    return accumulator
+
+
+def record_stage_usage(*, cost_cny: float, prompt_tokens: int, completion_tokens: int) -> None:
+    """Attribute one API call's usage to the stage active in the current context."""
+    accumulator = _ACTIVE_STAGE_USAGE.get()
+    if accumulator is None:
+        return
+    accumulator["cost_cny"] += cost_cny
+    accumulator["prompt_tokens"] += prompt_tokens
+    accumulator["completion_tokens"] += completion_tokens
+
+
 class LiteLLMRuntime:
     def __init__(self, router: Any | None = None, *, max_cost_cny: float | None = None) -> None:
         self.router = router
@@ -309,6 +350,9 @@ class LiteLLMRuntime:
         self.total_prompt_tokens += prompt_tokens
         self.total_completion_tokens += completion_tokens
         self.total_cost_cny += cost
+        record_stage_usage(
+            cost_cny=cost, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+        )
         _LOG.info(
             "llm usage model=%s prompt_tokens=%d completion_tokens=%d "
             "cost_cny=%.6f total_cost_cny=%.6f",
