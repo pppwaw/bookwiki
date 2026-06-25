@@ -45,7 +45,7 @@ def _section(
 
 
 def _skeleton(chapter_uses: list[dict[str, Any]], alias_map: dict[str, str]) -> dict[str, Any]:
-    return {"chapter_uses": chapter_uses, "alias_map": alias_map, "chapter_owns": []}
+    return {"chapter_uses": chapter_uses, "alias_map_slice": alias_map, "chapter_owns": []}
 
 
 def test_validate_section_passes_clean_section() -> None:

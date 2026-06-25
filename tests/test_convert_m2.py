@@ -1449,7 +1449,7 @@ def test_caption_node_batches_same_page_images(tmp_path: Path) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     cfg.generation["visionCaption"] = {
         "mode": "auto",
-        "maxImagesPerSource": 20,
+        "maxImagesPerSource": 200,
         "maxConcurrent": 10,
     }
     source_dir = cfg.work_dir / "sources_md"
@@ -1569,7 +1569,7 @@ def test_caption_node_records_group_caption_failures(
     cfg = default_config(tmp_path / "books" / "mini")
     cfg.generation["visionCaption"] = {
         "mode": "auto",
-        "maxImagesPerSource": 20,
+        "maxImagesPerSource": 200,
         "maxConcurrent": 10,
     }
     source_dir = cfg.work_dir / "sources_md"

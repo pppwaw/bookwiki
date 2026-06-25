@@ -233,7 +233,14 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     }
 
     source_summary = await SourceSummaryAgent().run(
-        source, model="deepseek-v4-flash", runtime=runtime
+        {
+            "span_text": source.read_text(encoding="utf-8"),
+            "source_id": source.stem,
+            "path": str(source),
+            "heading_path": [],
+        },
+        model="deepseek-v4-flash",
+        runtime=runtime,
     )
     structure = await StructureAgent().run(
         {"summaries": [source_summary.model_dump(mode="json")]},

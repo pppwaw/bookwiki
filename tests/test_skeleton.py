@@ -14,6 +14,7 @@ Covers four pieces:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,46 @@ async def test_build_skeleton_node_writes_skeleton_json(tmp_path: Path) -> None:
     assert delta2["cache_hit"] is True
 
 
+@pytest.mark.asyncio
+async def test_build_skeleton_node_extracts_source_headings_and_assigns_first_owner(
+    tmp_path: Path,
+) -> None:
+    """The two-pass path scans the source (not just topics) and the fold gives a concept
+    repeated across chapters the earliest owner."""
+    book_dir = tmp_path / "book"
+    rel_a = _write_chapter_source(
+        book_dir,
+        "chapter-1",
+        "# 第一章\n\n## 反向传播\n\n<!-- source_ref: src-p001 -->\n首次出现。\n",
+    )
+    rel_b = _write_chapter_source(
+        book_dir,
+        "chapter-2",
+        "# 第二章\n\n## 反向传播\n\n<!-- source_ref: src-p002 -->\n再次出现。\n",
+    )
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+    state = {
+        "chapter_sources": {"chapter-1": rel_a, "chapter-2": rel_b},
+        "chapter_titles": {"chapter-1": "第一章", "chapter-2": "第二章"},
+        # No curated topics: the concept must be picked up from the source heading.
+        "chapter_topics": {"chapter-1": [], "chapter-2": []},
+    }
+
+    delta = await build_skeleton_node(state, cfg)
+
+    payload = json.loads((book_dir / delta["skeleton"]).read_text(encoding="utf-8"))
+    skeleton = payload["result"]
+    owners = {c["canonical"]: c["first_chapter_id"] for c in skeleton["glossary"]}
+    assert "反向传播" in owners, "concept from a source heading must reach the glossary"
+    assert owners["反向传播"] == "chapter-1", "earliest chapter owns the repeated concept"
+    assert skeleton["chapter_order"] == ["chapter-1", "chapter-2"]
+
+
 # --------------------------------------------------------------------------- #
 # _skeleton_payload — per-chapter projection
 # --------------------------------------------------------------------------- #
@@ -173,8 +214,25 @@ def test_skeleton_payload_splits_owns_vs_uses_and_picks_neighbours() -> None:
     assert set(uses_canonicals) == {"Bayes", "MAP"}
     assert payload["prev_brief"] == "Intro: Bayes"
     assert payload["next_brief"] == "Advanced: MAP"
-    assert payload["alias_map"]["Bayes Rule"] == "Bayes"
-    assert payload["glossary"] == skeleton["glossary"]
+    # P3: the full glossary / alias_map are no longer shipped per section; only a slice.
+    assert "glossary" not in payload
+    assert "alias_map" not in payload
+    assert payload["alias_map_slice"]["Bayes Rule"] == "Bayes"
+
+
+def test_skeleton_payload_uses_recorded_chapter_uses_to_shrink_slice() -> None:
+    skeleton = _sample_skeleton()
+    # chapter-2 owns MLE; declare it actually USES only Bayes (not MAP).
+    skeleton["chapter_uses"] = {"chapter-2": ["Bayes"]}
+
+    payload = _skeleton_payload(skeleton, "chapter-2")
+
+    assert [item["canonical"] for item in payload["chapter_owns"]] == ["MLE"]
+    assert [item["canonical"] for item in payload["chapter_uses"]] == ["Bayes"]
+    # The slice covers MLE + Bayes variants but NOT the unused MAP.
+    assert payload["alias_map_slice"]["Bayes Rule"] == "Bayes"
+    assert "MAP" not in payload["alias_map_slice"]
+    assert "map" not in payload["alias_map_slice"]
 
 
 def test_skeleton_payload_first_and_last_chapter_have_one_sided_briefs() -> None:

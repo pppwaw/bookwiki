@@ -150,7 +150,7 @@ async def test_generate_chapter_sections_records_fallback_warning(tmp_path: Path
             {"canonical": "Owned Concept", "aliases": [], "first_chapter_id": "chapter-2"}
         ],
         "chapter_owns": [],
-        "alias_map": {},
+        "alias_map_slice": {},
     }
     runtime = RecordingRuntime(
         [

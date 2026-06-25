@@ -24,7 +24,7 @@ DEFAULT_GENERATION_EXPECTED = {
     },
     "visionCaption": {
         "mode": "auto",
-        "maxImagesPerSource": 20,
+        "maxImagesPerSource": 200,
         "maxConcurrent": 10,
     },
 }
@@ -161,7 +161,7 @@ def test_load_config_merges_source_layout_repair_defaults(tmp_path) -> None:
     }
     assert cfg.generation["visionCaption"] == {
         "mode": "auto",
-        "maxImagesPerSource": 20,
+        "maxImagesPerSource": 200,
         "maxConcurrent": 10,
     }
 
@@ -185,7 +185,7 @@ def test_load_config_merges_vision_caption_defaults(tmp_path) -> None:
 
     assert cfg.generation["visionCaption"] == {
         "mode": "off",
-        "maxImagesPerSource": 20,
+        "maxImagesPerSource": 200,
         "maxConcurrent": 10,
     }
 

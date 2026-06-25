@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
 from bookwiki.agents.structure_agent import StructureAgent
+from bookwiki.pipeline import nodes as pipeline_nodes
 from bookwiki.pipeline.nodes import (
     APPROVED_STRUCTURE_MARKER,
     PENDING_STRUCTURE_MARKER,
@@ -46,6 +48,27 @@ APPROVED_V2 = """chapters:
       - Week-9-p001
       - Week-10-p001
 """
+
+
+def _source_summary_payload(source: Path) -> dict[str, object]:
+    text = source.read_text(encoding="utf-8")
+    return {
+        "span_text": text,
+        "source_id": source.stem,
+        "path": str(source),
+        "heading_path": [],
+    }
+
+
+def test_source_summary_agent_rejects_path_input(tmp_path: Path) -> None:
+    source = tmp_path / "Week-10.md"
+    source.write_text(
+        "# Week-10\n\n<!-- source_ref: Week-10-p001 -->\n\nChapter text.",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="span_text"):
+        asyncio.run(SourceSummaryAgent().run(source, model="stub", runtime=TestLLMRuntime()))
 
 
 def test_parse_approved_structure_extracts_chapters_and_sources() -> None:
@@ -202,7 +225,9 @@ def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_pa
     )
 
     runtime = TestLLMRuntime()
-    summary = asyncio.run(SourceSummaryAgent().run(source, model="stub", runtime=runtime))
+    summary = asyncio.run(
+        SourceSummaryAgent().run(_source_summary_payload(source), model="stub", runtime=runtime)
+    )
     result = asyncio.run(
         StructureAgent().run(
             {"summaries": [summary.model_dump(mode="json")]}, model="stub", runtime=runtime
@@ -222,6 +247,35 @@ def test_structure_agent_uses_detected_chapter_numbers_from_source_titles(tmp_pa
     assert "ch02" not in result.proposed_structure_yaml
 
 
+def test_structure_agent_keeps_parent_refs_for_single_detected_chapter() -> None:
+    result = asyncio.run(
+        StructureAgent().run(
+            {
+                "summaries": [
+                    {
+                        "source_id": "Week-10",
+                        "source_refs": ["Week-10-p001", "Week-10-p999"],
+                        "detected_chapters": [
+                            {
+                                "title": "Point Estimation",
+                                "heading_path": ["Chapter 6 The point estimation"],
+                                "source_refs": ["Week-10-p001"],
+                                "summary_md": "Point estimation starts here.",
+                            }
+                        ],
+                        "key_terms": ["point estimation"],
+                    }
+                ]
+            },
+            model="stub",
+            runtime=TestLLMRuntime(),
+        )
+    )
+
+    structure = yaml.safe_load(result.proposed_structure_yaml)
+    assert structure["chapters"][0]["source_refs"] == ["Week-10-p001", "Week-10-p999"]
+
+
 def test_structure_agent_reflects_source_content_in_chapter_plan(tmp_path: Path) -> None:
     source = tmp_path / "Week-10.md"
     source.write_text(
@@ -236,7 +290,9 @@ def test_structure_agent_reflects_source_content_in_chapter_plan(tmp_path: Path)
     )
 
     runtime = TestLLMRuntime()
-    summary = asyncio.run(SourceSummaryAgent().run(source, model="stub", runtime=runtime))
+    summary = asyncio.run(
+        SourceSummaryAgent().run(_source_summary_payload(source), model="stub", runtime=runtime)
+    )
     result = asyncio.run(
         StructureAgent().run(
             {"summaries": [summary.model_dump(mode="json")]}, model="stub", runtime=runtime
@@ -340,6 +396,95 @@ def test_split_sources_by_structure_accepts_page_ref_ranges(tmp_path: Path) -> N
     assert "source-p003" in result.chapters["Point-Estimation"]
     assert "source-p001" not in result.chapters["Point-Estimation"]
     assert "source-p004" in result.chapters["appendix"]
+
+
+def test_structure_node_chunks_source_and_writes_concept_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = TestLLMRuntime()
+    sources_dir = cfg.work_dir / "sources_md"
+    sources_dir.mkdir(parents=True)
+    source = sources_dir / "Week-10.md"
+    source.write_text(
+        "# Week-10\n\n"
+        "<!-- source_ref: Week-10-p001 -->\n\n"
+        "# Chapter 6 The point estimation\n\n"
+        "The method of moments introduces point estimation.\n\n"
+        "<!-- source_ref: Week-10-p999 -->\n\n"
+        "Maximum likelihood estimation closes the chapter.\n",
+        encoding="utf-8",
+    )
+
+    text = source.read_text(encoding="utf-8")
+    first, second = text.split("<!-- source_ref: Week-10-p999 -->")
+    monkeypatch.setattr(
+        pipeline_nodes,
+        "chunk_by_heading",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                text=first,
+                heading_path=["Chapter 6 The point estimation"],
+                source_refs=["Week-10-p001"],
+            ),
+            SimpleNamespace(
+                text=f"<!-- source_ref: Week-10-p999 -->{second}",
+                heading_path=["Chapter 6 The point estimation"],
+                source_refs=["Week-10-p999"],
+            ),
+        ],
+    )
+    state = {"book_id": cfg.book_id, "sources_md": ["work/sources_md/Week-10.md"]}
+
+    structure_state = asyncio.run(structure_node(state, cfg))
+
+    proposed = (cfg.book_dir / structure_state["proposed_structure"]).read_text(encoding="utf-8")
+    candidates = json.loads(
+        (cfg.work_dir / "structure" / "concept-candidates.json").read_text(encoding="utf-8")
+    )
+    assert "Week-10-p001" in proposed
+    assert "Week-10-p999" in proposed
+    assert "Week-10-p001" in candidates
+    assert "Week-10-p999" in candidates
+
+
+def test_structure_node_raises_when_chunking_drops_source_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = TestLLMRuntime()
+    sources_dir = cfg.work_dir / "sources_md"
+    sources_dir.mkdir(parents=True)
+    source = sources_dir / "Week-10.md"
+    source.write_text(
+        "# Week-10\n\n"
+        "<!-- source_ref: r1 -->\n\n"
+        "# Chapter 6 The point estimation\n\n"
+        "The method of moments introduces point estimation.\n\n"
+        "<!-- source_ref: r2 -->\n\n"
+        "Maximum likelihood estimation closes the chapter.\n",
+        encoding="utf-8",
+    )
+
+    text = source.read_text(encoding="utf-8")
+    first, _second = text.split("<!-- source_ref: r2 -->")
+    monkeypatch.setattr(
+        pipeline_nodes,
+        "chunk_by_heading",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                text=first,
+                heading_path=["Chapter 6 The point estimation"],
+                source_refs=["r1"],
+            )
+        ],
+    )
+    state = {"book_id": cfg.book_id, "sources_md": ["work/sources_md/Week-10.md"]}
+
+    with pytest.raises(ValueError, match="coverage audit failed") as excinfo:
+        asyncio.run(structure_node(state, cfg))
+
+    assert "r2" in str(excinfo.value)
 
 
 def test_structure_and_split_nodes_respect_edited_approved_structure(tmp_path: Path) -> None:

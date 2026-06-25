@@ -20,7 +20,11 @@ from bookwiki.agents.mdx_edit_repair import (
     MdxEditRepairAgent,
     MdxRepairResult,
 )
-from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
+from bookwiki.checkers.mdx_validator import (
+    mdx_validator_available,
+    validate_mdx,
+    validate_mdx_many,
+)
 from bookwiki.generate.validate_artifact import validate_artifact
 from bookwiki.pipeline.nodes import check_node
 from bookwiki.scheduler.config import BookConfig
@@ -136,6 +140,52 @@ def test_validate_mdx_allows_safe_components_and_html() -> None:
 
 def test_mdx_validator_available_returns_bool() -> None:
     assert isinstance(mdx_validator_available(), bool)
+
+
+@needs_node
+def test_validate_mdx_many_reports_per_file_and_localises_the_bad_one() -> None:
+    files = {
+        "good-1": "样本均值 $\\bar{X}$ 是干净的。",
+        "bad": "当 n<30 时不准确。",
+        "good-2": "# 标题\n\n另一段干净正文。",
+    }
+    results = validate_mdx_many(files, max_files=2)  # force >1 batch
+    assert set(results) == {"good-1", "bad", "good-2"}
+    assert results["good-1"] == []
+    assert results["good-2"] == []
+    assert results["bad"], "the bad file's MDX error must be reported"
+
+
+@needs_node
+def test_validate_mdx_many_matches_single_file_results() -> None:
+    samples = {
+        "a": "拒绝域为 {z ≥ zα}。",  # bare expression
+        "b": "干净的 $x^2$ 数学。",
+    }
+    batched = validate_mdx_many(samples)
+    for key, content in samples.items():
+        assert batched[key] == validate_mdx(content)
+
+
+def test_validate_mdx_many_returns_empty_when_validator_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = False
+
+    def fake_run(*_args: object, **_kwargs: object) -> None:
+        nonlocal called
+        called = True
+        raise AssertionError("subprocess.run should not be called when validator is unavailable")
+
+    monkeypatch.setattr("bookwiki.checkers.mdx_validator.mdx_validator_available", lambda: False)
+    monkeypatch.setattr("bookwiki.checkers.mdx_validator.subprocess.run", fake_run)
+
+    assert validate_mdx_many({"a": "some mdx", "b": "more mdx"}) == {"a": [], "b": []}
+    assert called is False
+
+
+def test_validate_mdx_many_empty_input_returns_empty() -> None:
+    assert validate_mdx_many({}) == {}
 
 
 # --------------------------------------------------------------------------- #
