@@ -19,6 +19,8 @@ from bookwiki.agents.review_agent import ReviewAgent
 from bookwiki.agents.section_agent import SectionAgent
 from bookwiki.agents.section_planner_agent import SectionPlannerAgent
 from bookwiki.agents.skeleton_agent import SkeletonAgent
+from bookwiki.agents.skeleton_extract_agent import SkeletonExtractAgent
+from bookwiki.agents.skeleton_fold_agent import SkeletonFoldAgent
 from bookwiki.agents.source_layout_repair_agent import SourceLayoutRepairAgent
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
 from bookwiki.agents.structure_agent import StructureAgent
@@ -43,7 +45,11 @@ __all__ = [
     "ReviewAgent",
     "SectionAgent",
     "SectionPlannerAgent",
+    # Legacy: build_skeleton_node now uses SkeletonExtractAgent + SkeletonFoldAgent (streaming fold).  # noqa: E501
+    # SkeletonAgent is retained for its _brief_for helper and backward-compat; do not call it for new code.  # noqa: E501
     "SkeletonAgent",
+    "SkeletonExtractAgent",
+    "SkeletonFoldAgent",
     "SourceLayoutRepairAgent",
     "SourceSummaryAgent",
     "StructureAgent",

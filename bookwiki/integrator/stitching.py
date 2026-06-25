@@ -23,20 +23,13 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from bookwiki.concepts import concept_key as _concept_key
+
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 # PreviewLink hrefs render as ``href={"/docs/concepts/<slug>"}`` (JSX expression form). Chapter
 # cross-links share the same ``<PreviewLink>`` shape but point at ``/docs/chapters/<doc_slug>``.
 _PREVIEW_HREF_RE = re.compile(r'href=\{?"[^"]*?concepts/([^"]+?)"\}?')
 _CHAPTER_HREF_RE = re.compile(r'href=\{?"[^"]*?chapters/([^"]+?)"\}?')
-
-
-def _concept_key(value: str) -> str:
-    """Normalize a concept label for comparison.
-
-    Matches :func:`bookwiki.agents.concept_reconcile._concept_key` exactly so the
-    audit uses the same identity the reconciler/integrator used to converge terms.
-    """
-    return re.sub(r"[\W_]+", "", str(value).casefold(), flags=re.UNICODE)
 
 
 def find_term_drift(mdx: str, alias_map: dict[str, str]) -> list[str]:

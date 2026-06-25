@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import re
 from typing import Any, ClassVar
 
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
+from bookwiki.concepts import concept_key as _concept_key
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.concept import (
     ConceptReconciledItem,
@@ -85,7 +85,3 @@ class ConceptReconcileAgent:
             draft=draft,
         )
         return ConceptReconcileResult.model_validate(result)
-
-
-def _concept_key(value: str) -> str:
-    return re.sub(r"[\W_]+", "", value.casefold(), flags=re.UNICODE)

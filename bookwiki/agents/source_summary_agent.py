@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
 from bookwiki.convert.common import SOURCE_REF_RE, clean_markdown
 from bookwiki.scheduler.llm import LLMRuntime
-from bookwiki.schemas.source import SourceSummaryResult
+from bookwiki.schemas.source import ConceptCandidate, DetectedChapter, SourceSummaryResult
 
 
 class SourceSummaryAgent:
@@ -32,18 +31,25 @@ class SourceSummaryAgent:
     )
 
     async def run(
-        self, inp: str | Path | dict[str, str], *, model: str, runtime: LLMRuntime
+        self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime
     ) -> SourceSummaryResult:
-        path = Path(inp["path"] if isinstance(inp, dict) else inp)
-        body = path.read_text(encoding="utf-8", errors="ignore")
-        draft = _draft_summary(path, body)
+        if not isinstance(inp, dict) or "span_text" not in inp:
+            msg = "SourceSummaryAgent.run expects a chunk payload dict with span_text"
+            raise TypeError(msg)
+
+        body = str(inp.get("span_text") or "")
+        source_id = str(inp.get("source_id") or "source")
+        path_str = str(inp.get("path") or source_id)
+        heading_path = [str(item) for item in inp.get("heading_path") or []]
+        draft = _draft_summary(source_id, body, heading_path=heading_path)
         payload = {
-            "path": str(path),
-            "source_id": path.stem,
+            "path": path_str,
+            "source_id": source_id,
             "source_text": body,
-            "sha256": inp.get("sha256") if isinstance(inp, dict) else None,
-            "language": inp.get("language") if isinstance(inp, dict) else None,
-            "book_notes": inp.get("book_notes") if isinstance(inp, dict) else None,
+            "heading_path": heading_path,
+            "sha256": inp.get("sha256"),
+            "language": inp.get("language"),
+            "book_notes": inp.get("book_notes"),
         }
         result = await generate_with_llm(
             runtime=runtime,
@@ -58,24 +64,44 @@ class SourceSummaryAgent:
         return SourceSummaryResult.model_validate(result)
 
 
-def _draft_summary(path: Path, body: str) -> SourceSummaryResult:
-    source_id = path.stem
+def _draft_summary(
+    source_id: str, body: str, *, heading_path: list[str]
+) -> SourceSummaryResult:
     source_refs = SOURCE_REF_RE.findall(body)
-    detected_chapter_id, detected_title = _detect_chapter_heading(body)
+    detected_heading_matches = _detect_all_chapter_headings(body)
+    detected_chapter_id, detected_title = (
+        detected_heading_matches[0] if detected_heading_matches else (None, None)
+    )
     headings = _extract_headings(body, source_id)
     cleaned_body = clean_markdown(SOURCE_REF_RE.sub("", body))
     summary_lines = [
         cleaned for line in cleaned_body.splitlines() if (cleaned := _clean_summary_line(line))
     ][:5]
-    summary = " ".join(summary_lines)[:600] or f"No extractable text in {path.name}."
+    summary = " ".join(summary_lines)[:600] or f"No extractable text in {source_id}."
+    key_terms = _extract_key_terms(cleaned_body, headings)
+    effective_refs = source_refs or [f"{source_id}-text"]
+    detected_chapters = [
+        DetectedChapter(
+            title=title,
+            heading_path=heading_path,
+            source_refs=list(effective_refs),
+            summary_md=summary,
+        )
+        for _chapter_id, title in detected_heading_matches
+        if title
+    ]
     return SourceSummaryResult(
         source_id=source_id,
         summary_md=f"Summary for {source_id}: {summary}",
-        source_refs=source_refs or [f"{source_id}-text"],
+        source_refs=list(effective_refs),
         detected_chapter_id=detected_chapter_id,
         detected_title=detected_title,
         headings=headings,
-        key_terms=_extract_key_terms(cleaned_body, headings),
+        key_terms=key_terms,
+        detected_chapters=detected_chapters,
+        concept_candidates=[
+            ConceptCandidate(name=term, source_refs=list(effective_refs)) for term in key_terms
+        ],
     )
 
 
@@ -167,6 +193,12 @@ def _append_unique(items: list[str], value: str) -> None:
 
 
 def _detect_chapter_heading(text: str) -> tuple[str | None, str | None]:
+    matches = _detect_all_chapter_headings(text)
+    return matches[0] if matches else (None, None)
+
+
+def _detect_all_chapter_headings(text: str) -> list[tuple[str, str]]:
+    matches: list[tuple[str, str]] = []
     for line in text.splitlines():
         heading = line.strip().lstrip("#").strip()
         match = re.match(
@@ -178,8 +210,8 @@ def _detect_chapter_heading(text: str) -> tuple[str | None, str | None]:
             continue
         chapter_id = f"ch{int(match.group(1)):02d}"
         title = _normalize_chapter_title(match.group(2))
-        return chapter_id, title
-    return None, None
+        matches.append((chapter_id, title))
+    return matches
 
 
 def _normalize_chapter_title(raw: str) -> str:

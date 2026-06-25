@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import re
 from typing import Any, ClassVar
 
 from bookwiki.agents.llm import generate_with_llm
 from bookwiki.agents.prompting import PromptTemplate
+from bookwiki.concepts import brief_for as _brief_for
+from bookwiki.concepts import concept_key as _concept_key
 from bookwiki.scheduler.llm import LLMRuntime
 from bookwiki.schemas.skeleton import BookSkeleton, CanonicalConcept
 
@@ -123,17 +124,6 @@ class SkeletonAgent:
         return BookSkeleton.model_validate(result)
 
 
-def _brief_for(title: str, topics: list[str]) -> str:
-    head = title or (topics[0] if topics else "")
-    if topics:
-        joined = "、".join(topics[:3])
-        sentence = f"{head}：{joined}" if head and head not in joined else joined
-    else:
-        sentence = head
-    sentence = sentence.strip()
-    return sentence[:80]
-
-
 def _build_alias_map(glossary: list[CanonicalConcept]) -> dict[str, str]:
     alias_map: dict[str, str] = {}
     for entry in glossary:
@@ -144,8 +134,3 @@ def _build_alias_map(glossary: list[CanonicalConcept]) -> dict[str, str]:
             if normalized:
                 alias_map[normalized] = canonical
     return alias_map
-
-
-def _concept_key(value: str) -> str:
-    """Match :func:`bookwiki.agents.concept_reconcile._concept_key` exactly."""
-    return re.sub(r"[\W_]+", "", value.casefold(), flags=re.UNICODE)

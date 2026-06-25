@@ -102,7 +102,14 @@ def _chapter_specs_from_sources(
 ) -> list[_ChapterPlan]:
     if not summaries:
         return [_fallback_plan("ch01", "Foundations"), _fallback_plan("ch02", "Practice")]
-    if len(summaries) == 1 and len(summaries[0].get("source_refs") or []) > 1:
+    detected_items = _detected_chapter_items(summaries)
+    if detected_items:
+        return _chapter_specs_from_sources(detected_items)
+    if (
+        len(summaries) == 1
+        and len(summaries[0].get("source_refs") or []) > 1
+        and not summaries[0].get("detected_chapter_id")
+    ):
         summary = summaries[0]
         refs = list(summaries[0].get("source_refs") or [])
         source_id = str(summary.get("source_id") or "source-1")
@@ -137,6 +144,43 @@ def _chapter_specs_from_sources(
     chapters = [chapters_by_id[chapter_id] for chapter_id in chapter_order]
     return chapters
 
+
+
+def _detected_chapter_items(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for index, summary in enumerate(summaries, start=1):
+        chapters = summary.get("detected_chapters") or []
+        if not chapters:
+            continue
+        source_id = str(summary.get("source_id") or f"source-{index}")
+        parent_refs = list(summary.get("source_refs") or [])
+        parent_key_terms = _string_list(summary.get("key_terms"))
+        parent_detected_id = summary.get("detected_chapter_id")
+        for chapter_index, chapter in enumerate(chapters, start=1):
+            if not isinstance(chapter, dict):
+                continue
+            if len(chapters) == 1:
+                refs = parent_refs
+            else:
+                refs = list(chapter.get("source_refs") or parent_refs)
+            title = str(chapter.get("title") or summary.get("detected_title") or source_id)
+            detected_id = parent_detected_id if len(chapters) == 1 else None
+            if detected_id is None:
+                detected_id = f"ch{len(items) + 1:02d}"
+            items.append(
+                {
+                    "source_id": source_id,
+                    "source_refs": refs,
+                    "detected_chapter_id": detected_id,
+                    "detected_title": title,
+                    "summary_md": chapter.get("summary_md") or summary.get("summary_md"),
+                    "headings": chapter.get("heading_path") or summary.get("headings") or [],
+                    "key_terms": parent_key_terms,
+                    "detected_chapters": [],
+                    "_detected_index": chapter_index,
+                }
+            )
+    return items
 
 def _title_from_source_id(source_id: str) -> str:
     return source_id.replace("-", " ").replace("_", " ").title()

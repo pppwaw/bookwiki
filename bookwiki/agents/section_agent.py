@@ -39,8 +39,9 @@ class SectionAgent:
 正文，像一位优秀的费曼式导师那样：用通俗语言建立直觉，再收敛为精确定义与公式。
 
 输入提供：本段规格 `section`（`title`、`topics_covered`、`concepts_introduced`、
-`learning_goal`）、全书术语表 `glossary` 与 `alias_map`、本章拥有的概念
-`chapter_owns`、仅引用他章的概念 `chapter_uses`、邻章摘要 `prev_brief`/`next_brief`、
+`learning_goal`）、本章拥有的概念 `chapter_owns`、仅引用他章的概念 `chapter_uses`、
+本章术语切片 `alias_map_slice`（仅本章涉及概念的「变体→规范名」）、邻章摘要
+`prev_brief`/`next_brief`、
 **本章完整小节大纲 `chapter_outline`**（各段 `index`/`title`/`learning_goal`）、
 **本段位置 `section_position`**（`index`/`total`/`is_first`/`is_last`），以及可嵌入的
 `figures`。
@@ -56,7 +57,7 @@ class SectionAgent:
 - 只覆盖本段 `topics_covered` 与 `learning_goal` 的范围，不要越界去写其他段的内容。
 - `concepts_introduced` 中的概念在本段首次定义；`chapter_uses` 中的概念**只引用、
   不重新定义**（可写「正如术语表/前文所定义的 X……」）。
-- 术语统一：凡 `alias_map` 中出现的变体，一律改写为其规范名（canonical）。
+- 术语统一：凡 `alias_map_slice` 中出现的变体，一律改写为其规范名（canonical）。
 - 衔接（关键，避免跨章误判）：参照 `chapter_outline` 了解本章整体脉络与各段先后，
   过渡只在**本章内部**承上启下（"上一段已建立 X，本段在此基础上…"）。
   - `chapter_outline` 中列出的主题**都属于本章**，**绝不可**把它们说成"下一章/后面的

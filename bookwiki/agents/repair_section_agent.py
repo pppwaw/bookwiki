@@ -40,7 +40,7 @@ class RepairSectionAgent:
   - 「未知引用」：把 `citations` 改为只引用 `allowed_source_refs` 中的 ref_id，
     不要发明新的 source_ref。
   - 「重复定义他章概念」：对 `chapter_uses` 中的概念改为引用而非重新定义。
-  - 「术语漂移」：把 `alias_map` 中的变体改写为其规范名（canonical）。
+  - 「术语漂移」：把 `alias_map_slice` 中的变体改写为其规范名（canonical）。
 - 仅做必要的最小修改，保持本段教学意图与覆盖范围不变；不要扩写到其他段的内容。
 - `body_md` 不含章节级 `# 一级标题`，也不重复本段小节标题；行内公式用 $...$，
   独立公式用 $$...$$。
