@@ -26,6 +26,15 @@ from bookwiki.agents import (
 )
 
 
+def _prompt_input_json(call: dict[str, object]) -> dict[str, object]:
+    user = str(call["user"])
+    start_marker = "Input JSON:\n```json\n"
+    end_marker = "\n```\n\nDraft JSON:"
+    start = user.index(start_marker) + len(start_marker)
+    end = user.index(end_marker, start)
+    return json.loads(user[start:end])
+
+
 class LitellmMockRuntime:
     def __init__(self, responses: list[dict[str, Any]]) -> None:
         self.responses = responses
@@ -204,10 +213,15 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
                 "notes": "Attach one caption.",
             },
             {
-                "caption_md": "A diagram showing state expansion.",
-                "key_points": ["states expand outward"],
-                "source_ref": "source-p001",
-                "confidence": 0.92,
+                "captions": [
+                    {
+                        "block_id": "source-p001-b003",
+                        "caption_md": "A diagram showing state expansion.",
+                        "key_points": ["states expand outward"],
+                        "source_ref": "source-p001",
+                        "confidence": 0.92,
+                    }
+                ]
             },
         ]
     )
@@ -321,13 +335,14 @@ async def test_all_agents_run_with_litellm_mock_response(tmp_path: Path) -> None
     assert concept.summary_md
     assert repair.action == "regenerate"
     assert layout.patches[0].action == "attach_caption"
-    assert vision.caption_md == "A diagram showing state expansion."
+    assert vision.captions[0].caption_md == "A diagram showing state expansion."
     assert runtime.calls[-1]["image_paths"] == [str(figure)]
+    assert _prompt_input_json(runtime.calls[-1])["images"][0]["block_id"] == "source-p001-b003"
     assert len(runtime.calls) == 12
     assert runtime.responses == []
     assert {call["output_model"] for call in runtime.calls} >= {
         "QuizItem",
         "CardResult",
         "SourceLayoutRepairResult",
-        "VisionCaptionResult",
+        "VisionCaptionBatchResult",
     }

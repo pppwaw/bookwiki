@@ -120,8 +120,13 @@ class SourceLayoutRepairResult(VersionedModel):
     notes: str = ""
 
 
-class VisionCaptionResult(VersionedModel):
+class VisionCaptionItem(VersionedModel):
+    block_id: str
     caption_md: str
     key_points: list[str] = Field(default_factory=list)
     source_ref: str
     confidence: float = 0.0
+
+
+class VisionCaptionBatchResult(VersionedModel):
+    captions: list[VisionCaptionItem] = Field(default_factory=list)
