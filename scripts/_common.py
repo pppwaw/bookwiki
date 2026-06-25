@@ -18,8 +18,26 @@ def book_arg_parser(description: str) -> argparse.ArgumentParser:
     return parser
 
 
-def run_stage(book_dir: str, *, stop_after: str, resume: bool = True) -> None:
+def parse_list_arg(raw: list[str] | None) -> list[str]:
+    values: list[str] = []
+    for item in raw or []:
+        values.extend(part.strip() for part in item.split(",") if part.strip())
+    return values
+
+
+def parse_chapters(raw: list[str] | None) -> list[str]:
+    return parse_list_arg(raw)
+
+
+def run_stage(
+    book_dir: str,
+    *,
+    stop_after: str,
+    resume: bool = True,
+    target_chapters: list[str] | None = None,
+) -> None:
     cfg = load_config(book_dir)
     cfg.force_from = stop_after
+    cfg.target_chapters = target_chapters or []
     run_pipeline(cfg, stop_after=stop_after, resume=resume)
     print(f"stage complete: {stop_after}")

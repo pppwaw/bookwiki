@@ -99,6 +99,16 @@ function stringAttr(node, name) {
   const attr = getAttr(node, name);
   if (!attr) return null;
   if (typeof attr.value === "string") return attr.value;
+  if (
+    attr.value &&
+    typeof attr.value === "object" &&
+    attr.value.type === "mdxJsxAttributeValueExpression"
+  ) {
+    const estree = attr.value.data && attr.value.data.estree;
+    const stmt = estree && estree.body && estree.body[0];
+    const expr = stmt && stmt.type === "ExpressionStatement" ? stmt.expression : null;
+    if (expr && expr.type === "Literal" && typeof expr.value === "string") return expr.value;
+  }
   return null;
 }
 

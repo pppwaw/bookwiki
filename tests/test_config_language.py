@@ -16,6 +16,7 @@ DEFAULT_GENERATION_EXPECTED = {
     "qualityCheck": False,
     "maxQualityRounds": 2,
     "allowMissingMdxValidator": False,
+    "siteTypeCheck": "auto",
     "sourceLayoutRepair": {
         "mode": "auto",
         "minConfidence": 0.85,

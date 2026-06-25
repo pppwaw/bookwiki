@@ -38,6 +38,7 @@ DEFAULT_GENERATION = {
     "qualityCheck": False,
     "maxQualityRounds": 2,
     "allowMissingMdxValidator": False,
+    "siteTypeCheck": "auto",
     "sourceLayoutRepair": {
         "mode": "auto",
         "minConfidence": 0.85,
@@ -64,6 +65,8 @@ class BookConfig:
     pause_after: list[str] = field(default_factory=list)
     dry_run: bool = False
     force_from: str | None = None
+    target_chapters: list[str] = field(default_factory=list)
+    target_concepts: list[str] = field(default_factory=list)
     llm_runtime: Any | None = None
 
     @property
@@ -98,6 +101,14 @@ class BookConfig:
 
     def model_for(self, key: str) -> str:
         return self.models.get(key, "stub")
+
+    @property
+    def target_chapter_ids(self) -> set[str]:
+        return {str(ch_id).strip() for ch_id in self.target_chapters if str(ch_id).strip()}
+
+    @property
+    def target_concept_names(self) -> set[str]:
+        return {str(name).strip() for name in self.target_concepts if str(name).strip()}
 
     @property
     def quiz_per_chapter(self) -> int:

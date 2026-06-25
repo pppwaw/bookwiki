@@ -15,7 +15,19 @@ in state without listing them for ``--from``/``--force`` cleanup (``chapter_topi
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
+
+
+def merge_fanout_parts(
+    current: dict[str, Any] | None, update: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Merge worker results, with ``None`` resetting stale fanout state."""
+
+    if update is None:
+        return {}
+    merged = dict(current or {})
+    merged.update(update)
+    return merged
 
 
 class PipelineState(TypedDict, total=False):
@@ -51,6 +63,10 @@ class PipelineState(TypedDict, total=False):
     agent_results: dict[str, dict[str, str]]
     generation_issues: list[Any]
     generated_figures: dict[str, dict[str, str]]
+    generated_figures_index: str
+    _generate_parts: Annotated[dict[str, Any], merge_fanout_parts]
+    _fanout_chapter_id: str
+    _fanout_chapter_source: str
 
     # --- reconcile_concepts (also re-emits agent_results) ---
     reconciled_concepts: str
@@ -58,6 +74,12 @@ class PipelineState(TypedDict, total=False):
 
     # --- concept_pages ---
     concept_pages: Any
+    concept_generation_issues: list[Any]
+    _concept_page_parts: Annotated[dict[str, Any], merge_fanout_parts]
+    _fanout_concept_order: int
+    _fanout_concept_item: dict[str, Any]
+    _fanout_concept_glossary: list[str]
+    _fanout_concept_stem: str
 
     # --- integrate ---
     content_ready: bool

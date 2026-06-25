@@ -181,6 +181,42 @@ def test_resolve_item_slots_fills_and_removes_unfilled_block() -> None:
     assert out.count("<QuizBlock>") == 1
 
 
+def test_resolve_item_slots_expression_string_props_remain_extractable() -> None:
+    body = (
+        "<QuizBlock>\n"
+        '<QuizItemSlot id="ch:s0:slot-000" topic="t" sourceRefs={["p1"]} />\n'
+        '<QuizItemSlot id="ch:s0:slot-001" topic="t" sourceRefs={["p1"]} />\n'
+        "</QuizBlock>"
+    )
+    quiz = {
+        "items": [
+            {
+                "slot_id": "ch:s0:slot-000",
+                "question": "Q1",
+                "choices": ["a", "b"],
+                "answer": "a",
+                "explanation": "e",
+                "citations": [],
+            },
+            {
+                "slot_id": "ch:s0:slot-001",
+                "question": "Q2",
+                "choices": ["a", "b"],
+                "answer": "c",
+                "explanation": "e",
+                "citations": [],
+            },
+        ]
+    }
+
+    blocks = extract_inline_quizzes(_resolve_item_slots(body, quiz))
+
+    items = blocks[0]["children"]
+    assert items[0]["answer"] == "choice-1"
+    assert items[1]["answer"] == "invalid-answer-002"
+    assert [choice["id"] for choice in items[0]["choices"]] == ["choice-1", "choice-2"]
+
+
 def test_resolve_item_slots_fail_loud_on_slotless_item() -> None:
     quiz = {"items": [{"question": "Q", "choices": ["a", "b"], "answer": "a", "explanation": "e"}]}
     with pytest.raises(ValueError, match="no slot_id"):

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
+import subprocess
 from html import escape, unescape
 from pathlib import Path
 from typing import Any
@@ -75,6 +77,8 @@ _LOG = get_logger(__name__)
 APPROVED_STRUCTURE_MARKER = "# bookwiki: approved-structure"
 PENDING_STRUCTURE_MARKER = "# bookwiki: pending-structure-review"
 CONVERT_ARTIFACT_VERSION = 2
+
+_fanout_semaphores: dict[tuple[int, str], asyncio.Semaphore] = {}
 
 
 def _rel(path: Path, base: Path) -> str:
@@ -343,14 +347,15 @@ def _choice_id(index: int) -> str:
 def _quiz_item_mdx(item: dict[str, Any], index: int) -> str:
     choices = [_markdown_text(choice) for choice in item.get("choices", [])]
     answer = _markdown_text(item.get("answer", "")).strip()
-    answer_id = next(
+    matched_answer_id = next(
         (
             _choice_id(choice_index)
             for choice_index, choice in enumerate(choices, start=1)
             if choice.strip() == answer
         ),
-        _choice_id(1),
+        None,
     )
+    answer_id = matched_answer_id or f"invalid-answer-{index:03d}"
     props = " ".join(
         [
             _jsx_prop("id", str(item.get("id") or f"quiz-{index:03d}")),
@@ -1101,10 +1106,17 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
         msg = f"no input files found in {cfg.input_dir}"
         raise FileNotFoundError(msg)
 
+    _LOG.info(
+        "convert: input_files=%d dir=%s",
+        len(input_files),
+        cfg.input_dir,
+    )
     out_dir = ensure_dir(cfg.work_dir / "sources_md")
     manifest_dir = ensure_dir(cfg.work_dir / "source_refs")
     outputs: list[str] = []
     manifests: list[str] = []
+    reused = 0
+    converted = 0
     for path in input_files:
         source_id = source_id_from_stem(path.stem)
         out_path = out_dir / f"{source_id}.md"
@@ -1119,15 +1131,18 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
         ):
             outputs.append(_rel(out_path, cfg.book_dir))
             manifests.append(_rel(manifest_path, cfg.book_dir))
+            reused += 1
             continue
         suffix = path.suffix.lower()
         if suffix in {".pdf", ".pptx"}:
+            _LOG.info("convert: mineru source=%s suffix=%s", path.name, suffix)
             parsed = convert_document_to_source(path, source_id=source_id)
             _materialize_mineru_assets(parsed, source_id, cfg)
             normalized = await _normalize_with_layout_repair(parsed, source_id, cfg)
             body = normalized.markdown
             manifest = normalized.manifest
         elif suffix in {".txt", ".md"}:
+            _LOG.info("convert: text source=%s suffix=%s", path.name, suffix)
             body = convert_text_to_md(path, source_id=source_id)
             normalized = normalize_structured_source(raw_md=body, source_id=source_id)
             manifest = normalized.manifest
@@ -1146,7 +1161,20 @@ async def convert_node(state: State, cfg: BookConfig) -> State:
         write_json(manifest_path, manifest)
         outputs.append(_rel(out_path, cfg.book_dir))
         manifests.append(_rel(manifest_path, cfg.book_dir))
+        converted += 1
+        _LOG.info(
+            "convert: wrote source_id=%s markdown=%d bytes",
+            source_id,
+            len(body),
+        )
 
+    _LOG.info(
+        "convert: done converted=%d reused=%d outputs=%d manifests=%d",
+        converted,
+        reused,
+        len(outputs),
+        len(manifests),
+    )
     return {"sources_md": outputs, "source_ref_manifests": manifests}
 
 
@@ -1165,6 +1193,14 @@ async def caption_node(state: State, cfg: BookConfig) -> State:
     cache_results: list[CacheResult] = []
     caption_failures: list[str] = []
     settings = _vision_caption_settings(cfg)
+    _LOG.info(
+        "caption: mode=%s sources=%d manifests=%d max_images=%d max_concurrent=%d",
+        settings["mode"],
+        len(source_mds),
+        len(manifests),
+        settings["max_images"],
+        settings["max_concurrent"],
+    )
 
     for manifest_rel in manifests:
         manifest_path = cfg.book_dir / manifest_rel
@@ -1189,22 +1225,33 @@ async def caption_node(state: State, cfg: BookConfig) -> State:
         ]
 
         if settings["mode"] == "off":
+            _LOG.info("caption: skip source_id=%s (mode=off)", source_id)
             continue
 
         normalized = NormalizedSource(markdown=md_text, manifest=manifest)
         candidates = _image_caption_candidates(normalized)[: settings["max_images"]]
         jobs = [_vision_caption_job(candidate, md_text) for candidate in candidates]
+        _LOG.info(
+            "caption: source_id=%s candidates=%d (after max cap=%d)",
+            source_id,
+            len(jobs),
+            settings["max_images"],
+        )
         outcomes = await _run_vision_caption_jobs(
             jobs,
             cfg,
             max_concurrent=settings["max_concurrent"],
         )
+        source_hits = 0
+        source_misses = 0
+        source_failures = 0
         for job, outcome in zip(jobs, outcomes, strict=False):
             candidate = job["candidate"]
             if isinstance(outcome, Exception):
                 warning = f"vision caption failed for {candidate['block_id']}: {outcome}"
                 warnings.append(warning)
                 caption_failures.append(warning)
+                source_failures += 1
                 continue
             result = outcome
 
@@ -1226,6 +1273,10 @@ async def caption_node(state: State, cfg: BookConfig) -> State:
                         f"vision caption markdown tag not found for {candidate['block_id']}"
                     )
             cache_results.append(result)
+            if result.cache_hit:
+                source_hits += 1
+            else:
+                source_misses += 1
             caption_results.append(
                 {
                     "block_id": candidate["block_id"],
@@ -1238,6 +1289,14 @@ async def caption_node(state: State, cfg: BookConfig) -> State:
         if warnings:
             manifest["vision_warnings"] = warnings
         write_json(manifest_path, manifest)
+        _LOG.info(
+            "caption: source_id=%s done captions=%d hits=%d misses=%d failures=%d",
+            source_id,
+            source_hits + source_misses,
+            source_hits,
+            source_misses,
+            source_failures,
+        )
         # Deliberately do NOT write md_text back to sources_md. The convert artifact
         # (work/sources_md/*.md) must stay byte-identical to convert output so the convert
         # sha-idempotency gate (_matching_convert_artifact) keeps matching and MinerU output is
@@ -1693,6 +1752,7 @@ def _int_setting(value: Any, default: int) -> int:
 
 async def structure_node(state: State, cfg: BookConfig) -> State:
     source_paths = [cfg.book_dir / rel for rel in state.get("sources_md", [])]
+    _LOG.info("structure: source_files=%d", len(source_paths))
     results: list[CacheResult] = []
     summaries = []
     book_notes = cfg.book_notes
@@ -1712,6 +1772,11 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
         )
         results.append(result)
         summaries.append(_json_model(result.result))
+    _LOG.info(
+        "structure: summaries done count=%d cache_hits=%d",
+        len(summaries),
+        sum(1 for r in results if r.cache_hit),
+    )
 
     structure = await run_with_cache(
         StructureAgent,
@@ -1747,7 +1812,15 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
         f"`{PENDING_STRUCTURE_MARKER}` with `{APPROVED_STRUCTURE_MARKER}` before running split.\n\n"
         f"Source summaries: {len(summaries)}\n",
     )
-
+    cache_hits = sum(1 for r in results if r.cache_hit)
+    _LOG.info(
+        "structure: wrote proposed=%s approved_seed=%s cache_hits=%d/%d total=%d",
+        _rel(proposed_path, cfg.book_dir),
+        approved_needs_seed,
+        cache_hits,
+        len(results),
+        len(results),
+    )
     return {
         "proposed_structure": _rel(proposed_path, cfg.book_dir),
         "approved_structure": _rel(approved_path, cfg.book_dir),
@@ -1761,6 +1834,11 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     )
     approved_structure = approved_path.read_text(encoding="utf-8")
     _assert_structure_approved(approved_structure)
+    _LOG.info(
+        "split: approved_structure=%s cache_hit=%s",
+        _rel(approved_path, cfg.book_dir),
+        bool(approved_structure),
+    )
     source_paths = [cfg.book_dir / rel for rel in state.get("sources_md", [])]
     split = await run_with_cache(
         ChapterSplitAgent,
@@ -1781,11 +1859,7 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     out_dir = ensure_dir(cfg.work_dir / "chapter_sources")
     chapter_sources: dict[str, str] = {}
     parse_titles = split.result.chapter_titles or dict(_chapter_titles(approved_structure))
-    # Authoritative reading order (approved-structure / YAML order, appendix last). Fall back to
-    # the rendered chapters dict order for any legacy cached split result without chapter_order.
     parse_order = list(split.result.chapter_order) or list(split.result.chapters.keys())
-    # Persisted slug registry: pin each chapter/group slug to its identity so an unchanged chapter
-    # keeps its dir/url even when a same-base-slug chapter is later inserted before it (zero churn).
     registry_path = cfg.work_dir / "chapter_slugs.json"
     remap, registry = compute_slug_remap(
         parse_order,
@@ -1817,6 +1891,14 @@ async def split_node(state: State, cfg: BookConfig) -> State:
 
     _clear_chapter_source_dirs(out_dir, set(chapter_order))
     caption_blocks = _caption_blocks_by_id(cfg)
+    _LOG.info(
+        "split: chapters=%d chunked=%d groups=%d slug_remap=%d caption_blocks=%d",
+        len(chapter_order),
+        len(chapters_md),
+        len(chapter_groups),
+        len(remap),
+        len(caption_blocks),
+    )
     for ch_id in chapter_order:
         md = _inject_book_figure_captions(chapters_md[ch_id], caption_blocks)
         title = titles.get(ch_id, ch_id)
@@ -1838,6 +1920,12 @@ async def split_node(state: State, cfg: BookConfig) -> State:
     )
     report_path = write_text(
         cfg.work_dir / "logs" / "chapter-split-report.md", split.result.report_md
+    )
+    _LOG.info(
+        "split: done chapter_sources=%d cache_hit=%s report=%s",
+        len(chapter_sources),
+        split.cache_hit,
+        _rel(report_path, cfg.book_dir),
     )
 
     return {
@@ -1891,6 +1979,7 @@ async def build_skeleton_node(state: State, cfg: BookConfig) -> State:
     chapter_sources: dict[str, str] = state["chapter_sources"]
     titles = state.get("chapter_titles", {})
     topics_by_chapter = state.get("chapter_topics", {})
+    _LOG.info("build_skeleton: chapters=%d", len(chapter_sources))
 
     chapters_payload: list[dict[str, Any]] = []
     for ch_id in chapter_sources:
@@ -1922,6 +2011,13 @@ async def build_skeleton_node(state: State, cfg: BookConfig) -> State:
     out_path = write_json(
         cfg.work_dir / "skeleton.json",
         _agent_result_payload(SkeletonAgent, cfg.model_for("skeleton"), skeleton.result),
+    )
+    glossary_len = len(getattr(skeleton.result, "glossary", []) or [])
+    _LOG.info(
+        "build_skeleton: wrote %s glossary=%d cache_hit=%s",
+        _rel(out_path, cfg.book_dir),
+        glossary_len,
+        skeleton.cache_hit,
     )
     return {
         "skeleton": _rel(out_path, cfg.book_dir),
@@ -2027,21 +2123,41 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
 
     chapter_items = list(state.get("chapter_sources", {}).items())
     semaphore = asyncio.Semaphore(cfg.chapter_concurrency)
+    targets = cfg.target_chapter_ids
+    _LOG.info(
+        "generate: chapters=%d concurrency=%d targets=%s",
+        len(chapter_items),
+        cfg.chapter_concurrency,
+        sorted(targets) if targets else "all",
+    )
 
     async def run_chapter(ch_id: str, rel_source: str):
         async with semaphore:
             source_md = (cfg.book_dir / rel_source).read_text(encoding="utf-8")
             title = _display_chapter_title(ch_id, str(titles.get(ch_id, ch_id)))
-            return await generate_chapter_sections(
-                cfg=cfg,
-                chapter_id=ch_id,
-                title=title,
-                source_md=source_md,
-                source_path=rel_source,
-                topics=list(topics_by_chapter.get(ch_id, [])),
-                figures=_source_figures(source_md),
-                skeleton_payload=_skeleton_payload(skeleton_data, ch_id),
+            _LOG.info("generate: chapter start ch_id=%s", ch_id)
+            try:
+                result = await generate_chapter_sections(
+                    cfg=cfg,
+                    chapter_id=ch_id,
+                    title=title,
+                    source_md=source_md,
+                    source_path=rel_source,
+                    topics=list(topics_by_chapter.get(ch_id, [])),
+                    figures=_source_figures(source_md),
+                    skeleton_payload=_skeleton_payload(skeleton_data, ch_id),
+                )
+            except Exception:
+                _LOG.error("generate: chapter failed ch_id=%s", ch_id)
+                raise
+            _LOG.info(
+                "generate: chapter done ch_id=%s cache_hit=%s issues=%d figures=%d",
+                ch_id,
+                result.cache_hit,
+                len(result.issues),
+                len(result.generated_figures),
             )
+            return result
 
     # Chapters generate in parallel (chapter-level fan-out; sections within a chapter
     # also fan out, bounded by cfg.section_concurrency - see generate.sections),
@@ -2098,12 +2214,209 @@ async def generate_node(state: State, cfg: BookConfig) -> State:
         )
         raise RuntimeError(msg) from failures[0][1]
 
+    _LOG.info(
+        "generate: done ok=%d failed=%d issues=%d figures=%d cache_hit=%s",
+        len(chapter_results),
+        len(failures),
+        len(generation_issues),
+        len(generated_figures),
+        bool(chapter_cache_hits) and all(chapter_cache_hits),
+    )
     return {
         "agent_results": chapter_results,
         "generation_issues": generation_issues,
         "generated_figures": generated_figures,
+        "generated_figures_index": _persist_generated_figures(cfg, generated_figures),
         "cache_hit": bool(chapter_cache_hits) and all(chapter_cache_hits),
     }
+
+
+def prepare_generate_fanout_node(state: State, cfg: BookConfig) -> State:
+    if not state.get("chapter_sources"):
+        msg = "generate requires chapter_sources; run split before generate"
+        raise ValueError(msg)
+    missing = sorted(cfg.target_chapter_ids - set(state.get("chapter_sources", {})))
+    if missing:
+        msg = f"generate target chapter(s) not found in split output: {missing}"
+        raise ValueError(msg)
+    available = list(state.get("chapter_sources", {}))
+    targets = cfg.target_chapter_ids
+    ensure_dir(cfg.work_dir / "agent_results")
+    _LOG.info(
+        "prepare_generate: available=%d targets=%s",
+        len(available),
+        sorted(targets) if targets else "all",
+    )
+    return {"_generate_parts": None, "cache_hit": False}
+
+
+def generate_fanout_specs(state: State, cfg: BookConfig) -> list[State]:
+    targets = cfg.target_chapter_ids
+    return [
+        {
+            "chapter_sources": state.get("chapter_sources", {}),
+            "chapter_titles": state.get("chapter_titles", {}),
+            "chapter_topics": state.get("chapter_topics", {}),
+            "skeleton": state.get("skeleton"),
+            "_fanout_chapter_id": ch_id,
+            "_fanout_chapter_source": rel_source,
+        }
+        for ch_id, rel_source in state.get("chapter_sources", {}).items()
+        if not targets or ch_id in targets
+    ]
+
+
+def _persist_generated_figures(
+    cfg: BookConfig, generated_figures: dict[str, dict[str, str]]
+) -> str:
+    path = write_json(cfg.work_dir / "generated_figures.json", generated_figures)
+    return _rel(path, cfg.book_dir)
+
+
+async def generate_chapter_fanout_node(state: State, cfg: BookConfig) -> State:
+    ch_id = str(state["_fanout_chapter_id"])
+    rel_source = str(state["_fanout_chapter_source"])
+    semaphore = _fanout_semaphores.setdefault(
+        (id(cfg), "chapter"), asyncio.Semaphore(cfg.chapter_concurrency)
+    )
+    async with semaphore:
+        _LOG.info("generate: chapter start ch_id=%s", ch_id)
+        try:
+            generated = await _run_generate_chapter_unit(state, cfg, ch_id, rel_source)
+        except Exception as exc:  # noqa: BLE001 - propagated by the collect node with context.
+            _LOG.error("generate failed for chapter %s: %s", ch_id, exc)
+            return {"_generate_parts": {ch_id: {"chapter_id": ch_id, "error": str(exc)}}}
+    _LOG.info(
+        "generate: chapter done ch_id=%s cache_hit=%s issues=%d figures=%d",
+        ch_id,
+        generated.get("cache_hit"),
+        len(generated.get("generation_issues", [])),
+        len(generated.get("generated_figures", {})),
+    )
+    return {"_generate_parts": {ch_id: generated}}
+
+
+async def _run_generate_chapter_unit(
+    state: State, cfg: BookConfig, ch_id: str, rel_source: str
+) -> dict[str, Any]:
+    result_dir = ensure_dir(cfg.work_dir / "agent_results")
+    titles = state.get("chapter_titles", {})
+    topics_by_chapter = state.get("chapter_topics", {})
+    skeleton_data = _load_skeleton(state, cfg)
+    source_md = (cfg.book_dir / rel_source).read_text(encoding="utf-8")
+    title = _display_chapter_title(ch_id, str(titles.get(ch_id, ch_id)))
+    generated = await generate_chapter_sections(
+        cfg=cfg,
+        chapter_id=ch_id,
+        title=title,
+        source_md=source_md,
+        source_path=rel_source,
+        topics=list(topics_by_chapter.get(ch_id, [])),
+        figures=_source_figures(source_md),
+        skeleton_payload=_skeleton_payload(skeleton_data, ch_id),
+    )
+    section_model = cfg.model_for("section")
+    application_quiz_model = cfg.model_for("application_quiz")
+    card_model = cfg.model_for("card")
+    summary_model = cfg.model_for("summary")
+    paths = {
+        "chapter": write_json(
+            result_dir / f"{ch_id}.chapter.json",
+            _agent_result_payload(SectionAgent, section_model, generated.chapter),
+        ),
+        "summary": write_json(
+            result_dir / f"{ch_id}.summary.json",
+            _agent_result_payload(SummaryAgent, summary_model, generated.summary),
+        ),
+        "quiz": write_json(
+            result_dir / f"{ch_id}.quiz.json",
+            _agent_result_payload(ApplicationQuizAgent, application_quiz_model, generated.quiz),
+        ),
+        "card": write_json(
+            result_dir / f"{ch_id}.card.json",
+            _agent_result_payload(CardAgent, card_model, generated.card),
+        ),
+    }
+    return {
+        "chapter_id": ch_id,
+        "agent_results": {name: _rel(path, cfg.book_dir) for name, path in paths.items()},
+        "generation_issues": [issue.model_dump(mode="json") for issue in generated.issues],
+        "generated_figures": dict(generated.generated_figures),
+        "cache_hit": generated.cache_hit,
+    }
+
+
+def collect_generate_fanout_node(state: State, cfg: BookConfig) -> State:
+    parts = state.get("_generate_parts") or {}
+    targets = cfg.target_chapter_ids
+    chapter_results: dict[str, dict[str, str]] = {
+        str(ch_id): dict(paths)
+        for ch_id, paths in state.get("agent_results", {}).items()
+        if not targets or str(ch_id) not in targets
+    }
+    chapter_cache_hits: list[bool] = []
+    generation_issues: list[dict[str, Any]] = [
+        dict(issue)
+        for issue in state.get("generation_issues", [])
+        if not targets or _issue_chapter_id(issue) not in targets
+    ]
+    generated_figures: dict[str, dict[str, str]] = {
+        str(ch_id): dict(figures)
+        for ch_id, figures in state.get("generated_figures", {}).items()
+        if not targets or str(ch_id) not in targets
+    }
+    failures: list[tuple[str, str]] = []
+
+    chapter_ids = [
+        ch_id for ch_id in state.get("chapter_sources", {}) if not targets or ch_id in targets
+    ]
+    for ch_id in chapter_ids:
+        part = parts.get(ch_id)
+        if not part:
+            failures.append((ch_id, "missing fanout result"))
+            continue
+        if part.get("error"):
+            failures.append((ch_id, str(part["error"])))
+            continue
+        chapter_results[ch_id] = dict(part["agent_results"])
+        chapter_cache_hits.append(bool(part.get("cache_hit", False)))
+        generation_issues.extend(part.get("generation_issues", []))
+        figures = part.get("generated_figures") or {}
+        if figures:
+            generated_figures[ch_id] = dict(figures)
+
+    if failures:
+        failed_ids = [ch_id for ch_id, _error in failures]
+        for ch_id, error in failures:
+            _LOG.error("generate failed for chapter %s: %s", ch_id, error)
+        msg = (
+            f"generate failed for chapters: {failed_ids}; "
+            f"{len(chapter_results)} chapter(s) completed and were written"
+        )
+        raise RuntimeError(msg)
+
+    _LOG.info(
+        "collect_generate: ok=%d failed=%d issues=%d figures=%d cache_hit=%s",
+        len(chapter_results),
+        len(failures),
+        len(generation_issues),
+        len(generated_figures),
+        bool(chapter_cache_hits) and all(chapter_cache_hits),
+    )
+    return {
+        "agent_results": chapter_results,
+        "generation_issues": generation_issues,
+        "generated_figures": generated_figures,
+        "generated_figures_index": _persist_generated_figures(cfg, generated_figures),
+        "cache_hit": bool(chapter_cache_hits) and all(chapter_cache_hits),
+    }
+
+
+def _issue_chapter_id(issue: dict[str, Any]) -> str | None:
+    owner = str(issue.get("owner_task_id") or "")
+    if ":" not in owner:
+        return None
+    return owner.split(":", 1)[0]
 
 
 async def reconcile_node(state: State, cfg: BookConfig) -> State:
@@ -2113,7 +2426,15 @@ async def reconcile_node(state: State, cfg: BookConfig) -> State:
     }
     result_dir = ensure_dir(cfg.work_dir / "agent_results")
     cache_results: list[CacheResult] = []
-    for ch_id, paths in state.get("agent_results", {}).items():
+    chapters_in = list(state.get("agent_results", {}).items())
+    reused_concepts = sum(1 for _ch, p in chapters_in if "concepts" in p)
+    extracted_concepts = 0
+    _LOG.info(
+        "reconcile: chapters=%d with_cached_concepts=%d",
+        len(chapters_in),
+        reused_concepts,
+    )
+    for ch_id, paths in chapters_in:
         if "concepts" in paths:
             extract = _agent_result(read_json(cfg.book_dir / paths["concepts"]))
             candidates.extend(extract.get("concepts", []))
@@ -2137,13 +2458,21 @@ async def reconcile_node(state: State, cfg: BookConfig) -> State:
             concepts_path, cfg.book_dir
         )
         candidates.extend(item.model_dump(mode="json") for item in extract_result.result.concepts)
+        extracted_concepts += 1
 
     skeleton = _load_skeleton(state, cfg)
     if skeleton is not None:
+        _LOG.info(
+            "reconcile: using skeleton merge candidates=%d extracted_chapters=%d",
+            len(candidates),
+            extracted_concepts,
+        )
         reconciled_model = _merge_candidates_with_skeleton(skeleton, candidates)
     else:
-        # Fallback to the legacy LLM-driven reconcile when no skeleton exists
-        # (e.g. partial reruns that skipped build_skeleton).
+        _LOG.info(
+            "reconcile: skeleton absent, falling back to LLM reconcile candidates=%d",
+            len(candidates),
+        )
         reconcile = await run_with_cache(
             ConceptReconcileAgent,
             {
@@ -2165,6 +2494,12 @@ async def reconcile_node(state: State, cfg: BookConfig) -> State:
         _json_model(reconciled_model),
     )
     alias_map = write_json(out_dir / "alias_map.json", reconciled_model.alias_map)
+    _LOG.info(
+        "reconcile: done concepts=%d alias_map=%d cache_hit=%s",
+        len(reconciled_model.concepts),
+        len(reconciled_model.alias_map),
+        _stage_cache_hit(cache_results),
+    )
     return {
         "reconciled_concepts": _rel(reconciled, cfg.book_dir),
         "alias_map": _rel(alias_map, cfg.book_dir),
@@ -2265,13 +2600,12 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
     cache_results: list[CacheResult] = []
     concept_generation_issues: list[dict[str, Any]] = []
     used_stems: set[str] = set()
-    # Canonical names of every concept in the book, so each ConceptAgent picks
-    # its `related` from a valid vocabulary (cuts down on unresolvable edges in
-    # the homepage concept graph).
     glossary_names = [
         str(c.get("canonical")) for c in data.get("concepts", []) if c.get("canonical")
     ]
-    for item in data.get("concepts", []):
+    concepts = list(data.get("concepts", []))
+    _LOG.info("concept_pages: concepts=%d", len(concepts))
+    for index, item in enumerate(concepts, start=1):
         chapter_contexts = _concept_contexts(item, state, cfg)
         concept_input = {
             **item,
@@ -2299,11 +2633,203 @@ async def concept_pages_node(state: State, cfg: BookConfig) -> State:
         safe_name = _unique_file_stem(concept.name, used_stems, fallback_prefix="concept")
         path = write_json(out_dir / f"{safe_name}.json", _json_model(concept))
         outputs[concept.name] = _rel(path, cfg.book_dir)
+        _LOG.info(
+            "concept_pages: [%d/%d] name=%s cache_hit=%s issue=%s",
+            index,
+            len(concepts),
+            concept.name,
+            result.cache_hit,
+            bool(inline_issue),
+        )
+    _LOG.info(
+        "concept_pages: done wrote=%d issues=%d cache_hit=%s",
+        len(outputs),
+        len(concept_generation_issues),
+        _stage_cache_hit(cache_results),
+    )
     return {
         "concept_pages": outputs,
         "concept_generation_issues": concept_generation_issues,
         "cache_hit": _stage_cache_hit(cache_results),
     }
+
+
+def prepare_concept_pages_fanout_node(state: State, cfg: BookConfig) -> State:
+    out_dir = ensure_dir(cfg.work_dir / "agent_results" / "concepts")
+    targets = cfg.target_concept_names
+    if targets:
+        data = read_json(cfg.book_dir / state["reconciled_concepts"], default={"concepts": []})
+        available = {_concept_item_name(item) for item in data.get("concepts", [])}
+        missing = sorted(targets - available)
+        if missing:
+            msg = f"concept_pages target concept(s) not found in reconciled concepts: {missing}"
+            raise ValueError(msg)
+        _LOG.info(
+            "prepare_concept_pages: targets=%d available=%d",
+            len(targets),
+            len(available),
+        )
+    else:
+        _clear_generated_files(out_dir, "*.json")
+        data = read_json(cfg.book_dir / state["reconciled_concepts"], default={"concepts": []})
+        _LOG.info(
+            "prepare_concept_pages: clearing outputs, available=%d",
+            len(data.get("concepts", [])),
+        )
+    return {"_concept_page_parts": None, "cache_hit": False}
+
+
+def concept_page_fanout_specs(state: State, cfg: BookConfig) -> list[State]:
+    data = read_json(cfg.book_dir / state["reconciled_concepts"], default={"concepts": []})
+    glossary_names = [
+        str(c.get("canonical")) for c in data.get("concepts", []) if c.get("canonical")
+    ]
+    used_stems: set[str] = set()
+    specs: list[State] = []
+    targets = cfg.target_concept_names
+    for order, item in enumerate(data.get("concepts", [])):
+        name = _concept_item_name(item)
+        safe_name = _unique_file_stem(name, used_stems, fallback_prefix="concept")
+        if targets and name not in targets:
+            continue
+        specs.append(
+            {
+                "agent_results": state.get("agent_results", {}),
+                "chapter_sources": state.get("chapter_sources", {}),
+                "reconciled_concepts": state.get("reconciled_concepts"),
+                "_fanout_concept_order": order,
+                "_fanout_concept_item": item,
+                "_fanout_concept_glossary": glossary_names,
+                "_fanout_concept_stem": safe_name,
+            }
+        )
+    return specs
+
+
+def _concept_item_name(item: dict[str, Any]) -> str:
+    return str(item.get("canonical") or item.get("name") or "concept").strip()
+
+
+async def concept_page_fanout_node(state: State, cfg: BookConfig) -> State:
+    item = dict(state["_fanout_concept_item"])
+    order = int(state["_fanout_concept_order"])
+    name = str(item.get("canonical") or item.get("name") or f"concept-{order}")
+    semaphore = _fanout_semaphores.setdefault(
+        (id(cfg), "concept"), asyncio.Semaphore(cfg.chapter_concurrency)
+    )
+    async with semaphore:
+        _LOG.info("concept_page: start name=%s order=%d", name, order)
+        try:
+            part = await _run_concept_page_unit(state, cfg, item, order)
+        except Exception as exc:  # noqa: BLE001 - propagated by the collect node with context.
+            _LOG.error("concept page failed for %s: %s", name, exc)
+            return {
+                "_concept_page_parts": {name: {"name": name, "order": order, "error": str(exc)}}
+            }
+    _LOG.info(
+        "concept_page: done name=%s cache_hit=%s issue=%s",
+        name,
+        part.get("cache_hit"),
+        bool(part.get("concept_generation_issues")),
+    )
+    return {"_concept_page_parts": {part["name"]: part}}
+
+
+async def _run_concept_page_unit(
+    state: State, cfg: BookConfig, item: dict[str, Any], order: int
+) -> dict[str, Any]:
+    out_dir = ensure_dir(cfg.work_dir / "agent_results" / "concepts")
+    glossary_names = list(state.get("_fanout_concept_glossary", []))
+    chapter_contexts = _concept_contexts(item, state, cfg)
+    concept_input = {
+        **item,
+        "chapter_contexts": chapter_contexts,
+        "glossary": glossary_names,
+        "language": cfg.language,
+        "book_notes": cfg.book_notes,
+    }
+    cache_results: list[CacheResult] = []
+    result = await run_with_cache(
+        ConceptAgent,
+        concept_input,
+        model=cfg.model_for("concept"),
+        cache_dir=_cache_dir(cfg),
+        runtime=cfg.llm_runtime,
+    )
+    cache_results.append(result)
+    concept, inline_cache, inline_issue = await _validate_concept_artifact_inline(
+        cfg=cfg,
+        concept=result.result,
+        chapter_contexts=chapter_contexts,
+    )
+    cache_results.extend(inline_cache)
+    safe_name = str(state["_fanout_concept_stem"])
+    path = write_json(out_dir / f"{safe_name}.json", _json_model(concept))
+    issues = [inline_issue.model_dump(mode="json")] if inline_issue is not None else []
+    return {
+        "name": concept.name,
+        "order": order,
+        "path": _rel(path, cfg.book_dir),
+        "concept_generation_issues": issues,
+        "cache_hit": _stage_cache_hit(cache_results),
+    }
+
+
+def collect_concept_pages_fanout_node(state: State, cfg: BookConfig) -> State:
+    parts = state.get("_concept_page_parts") or {}
+    targets = cfg.target_concept_names
+    outputs: dict[str, str] = {
+        str(name): str(path)
+        for name, path in state.get("concept_pages", {}).items()
+        if not targets or str(name) not in targets
+    }
+    concept_generation_issues: list[dict[str, Any]] = [
+        dict(issue)
+        for issue in state.get("concept_generation_issues", [])
+        if not targets or _issue_concept_name(issue) not in targets
+    ]
+    cache_hits: list[bool] = []
+    failures: list[tuple[str, str]] = []
+
+    ordered = sorted(parts.values(), key=lambda part: int(part.get("order", 0)))
+    for part in ordered:
+        name = str(part.get("name") or "concept")
+        if part.get("error"):
+            failures.append((name, str(part["error"])))
+            continue
+        outputs[name] = str(part["path"])
+        concept_generation_issues.extend(part.get("concept_generation_issues", []))
+        cache_hits.append(bool(part.get("cache_hit", False)))
+
+    if failures:
+        failed_names = [name for name, _error in failures]
+        for name, error in failures:
+            _LOG.error("concept page failed for %s: %s", name, error)
+        msg = (
+            f"concept_pages failed for concepts: {failed_names}; "
+            f"{len(outputs)} concept page(s) completed and were written"
+        )
+        raise RuntimeError(msg)
+
+    _LOG.info(
+        "collect_concept_pages: ok=%d failed=%d issues=%d cache_hit=%s",
+        len(outputs),
+        len(failures),
+        len(concept_generation_issues),
+        bool(cache_hits) and all(cache_hits),
+    )
+    return {
+        "concept_pages": outputs,
+        "concept_generation_issues": concept_generation_issues,
+        "cache_hit": bool(cache_hits) and all(cache_hits),
+    }
+
+
+def _issue_concept_name(issue: dict[str, Any]) -> str | None:
+    owner = str(issue.get("owner_task_id") or "")
+    if not owner.startswith("concept:"):
+        return None
+    return owner.split(":", 1)[1]
 
 
 async def _validate_concept_artifact_inline(
@@ -2633,6 +3159,13 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
     alias_map = _load_alias_map(state, cfg)
     concept_previews: dict[str, dict[str, str]] = {}
     chapter_groups = state.get("chapter_groups", {}) or {}
+    _LOG.info(
+        "integrate: chapters=%d concepts=%d alias_map=%d groups=%d",
+        len(state.get("agent_results", {})),
+        len(state.get("concept_pages", {})),
+        len(alias_map),
+        len(chapter_groups),
+    )
     leaf_to_group: dict[str, str] = {}
     group_titles: dict[str, str] = {}
     for group_id, group_info in chapter_groups.items():
@@ -2872,6 +3405,15 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             len(stitching.term_drift),
             len(stitching.unresolved_xrefs),
         )
+    _LOG.info(
+        "integrate: done chapters_written=%d concepts_written=%d home_chapters=%d home_concepts=%d "
+        "stitching_ok=%s",
+        len(chapter_home_entries),
+        len(concept_home_entries),
+        len(chapter_home_entries),
+        len(concept_home_entries),
+        stitching.ok,
+    )
     return {"content_ready": True, "content_index": _rel(index_path, cfg.book_dir)}
 
 
@@ -2901,6 +3443,167 @@ def _require_mdx_validator(cfg: BookConfig) -> None:
     raise RuntimeError(msg)
 
 
+def _site_typecheck_issues(cfg: BookConfig) -> list[Issue]:
+    mode = str(cfg.generation.get("siteTypeCheck", "auto") or "auto").lower()
+    if mode in {"off", "false", "0", "disabled"}:
+        return []
+    required = mode in {"required", "on", "true", "1"}
+    if mode not in {"auto", "required", "on", "true", "1"}:
+        _LOG.warning("unknown generation.siteTypeCheck=%s; treating as auto", mode)
+        required = False
+
+    pnpm = shutil.which("pnpm")
+    if pnpm is None:
+        message = "site type check skipped: pnpm is unavailable"
+        if required:
+            return [
+                Issue(
+                    severity="error",
+                    code="SITE_TYPECHECK_UNAVAILABLE",
+                    message=message,
+                    owner_task_id="site:typecheck",
+                )
+            ]
+        _LOG.info("%s", message)
+        return []
+
+    try:
+        from scripts.site import TEMPLATE_DIR, materialize_site
+    except ImportError as exc:
+        return [
+            Issue(
+                severity="error",
+                code="SITE_TYPECHECK_ERROR",
+                message=f"site type check failed to import site helper: {exc}",
+                owner_task_id="site:typecheck",
+            )
+        ]
+
+    template_node_modules = TEMPLATE_DIR / "node_modules"
+    if not template_node_modules.exists():
+        message = (
+            "site type check skipped: site-template/node_modules is missing; "
+            "run `pnpm install` in site-template or set "
+            "generation.siteTypeCheck=required to fail here"
+        )
+        if required:
+            return [
+                Issue(
+                    severity="error",
+                    code="SITE_TYPECHECK_UNAVAILABLE",
+                    message=message,
+                    owner_task_id="site:typecheck",
+                )
+            ]
+        _LOG.info("%s", message)
+        return []
+
+    try:
+        site_dir = materialize_site(cfg)
+    except FileNotFoundError as exc:
+        return [
+            Issue(
+                severity="error",
+                code="SITE_TYPECHECK_ERROR",
+                message=f"site type check failed to materialize site: {exc}",
+                owner_task_id="site:typecheck",
+            )
+        ]
+
+    site_node_modules = site_dir / "node_modules"
+    template_realpath = template_node_modules.resolve()
+    if site_node_modules.exists():
+        try:
+            site_realpath = site_node_modules.resolve()
+        except OSError as exc:
+            return [
+                Issue(
+                    severity="error",
+                    code="SITE_TYPECHECK_UNAVAILABLE",
+                    message=f"site type check refused unreadable site/node_modules: {exc}",
+                    owner_task_id="site:typecheck",
+                )
+            ]
+        if site_realpath != template_realpath:
+            return [
+                Issue(
+                    severity="error",
+                    code="SITE_TYPECHECK_UNAVAILABLE",
+                    message=(
+                        "site type check refused non-template site/node_modules; "
+                        "install dependencies in site-template so check uses the verified "
+                        "template tree"
+                    ),
+                    owner_task_id="site:typecheck",
+                )
+            ]
+    else:
+        if site_node_modules.is_symlink():
+            site_node_modules.unlink()
+        site_node_modules.symlink_to(template_node_modules, target_is_directory=True)
+
+    try:
+        env = _site_typecheck_env(cfg)
+        proc = subprocess.run(  # noqa: S603 - fixed argv, project-local package script
+            [pnpm, "run", "types:check"],
+            cwd=site_dir,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return [
+            Issue(
+                severity="error",
+                code="SITE_TYPECHECK_ERROR",
+                message=f"site type check failed to run: {exc}",
+                owner_task_id="site:typecheck",
+            )
+        ]
+    if proc.returncode == 0:
+        return []
+    output = _redact_site_typecheck_output(
+        "\n".join(part for part in [proc.stdout.strip(), proc.stderr.strip()] if part)
+    )
+    if len(output) > 4000:
+        output = output[:4000] + "..."
+    return [
+        Issue(
+            severity="error",
+            code="SITE_TYPECHECK_ERROR",
+            message=f"site type check failed (exit {proc.returncode}): {output}",
+            owner_task_id="site:typecheck",
+        )
+    ]
+
+
+def _site_typecheck_env(cfg: BookConfig) -> dict[str, str]:
+    env: dict[str, str] = {
+        "BOOKWIKI_SITE_LANGUAGE": cfg.language,
+        "NODE_OPTIONS": "--max-old-space-size=4096",
+    }
+    for key in ("PATH", "HOME", "TMPDIR", "TEMP", "TMP"):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    return env
+
+
+def _redact_site_typecheck_output(output: str) -> str:
+    redacted = output
+    for key, value in os.environ.items():
+        if _looks_sensitive_env_key(key) and value and len(value) >= 4:
+            redacted = redacted.replace(value, "[REDACTED]")
+    return redacted
+
+
+def _looks_sensitive_env_key(key: str) -> bool:
+    upper = key.upper()
+    return any(marker in upper for marker in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"))
+
+
 async def check_node(state: State, cfg: BookConfig) -> State:
     _require_mdx_validator(cfg)
     issues: list[Issue] = []
@@ -2910,6 +3613,13 @@ async def check_node(state: State, cfg: BookConfig) -> State:
     for raw_issue in state.get("concept_generation_issues", []):
         if isinstance(raw_issue, dict):
             issues.append(Issue.model_validate(raw_issue))
+    _LOG.info(
+        "check: seed issues from generate=%d concept_pages=%d",
+        len(state.get("generation_issues", [])),
+        len(state.get("concept_generation_issues", [])),
+    )
+    chapter_mdx_files = sorted((cfg.content_dir / "chapters").rglob("*.mdx"))
+    concept_mdx_files = sorted((cfg.content_dir / "concepts").glob("*.mdx"))
     if not (cfg.content_dir / "index.mdx").exists():
         issues.append(
             Issue(
@@ -2919,7 +3629,7 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                 owner_task_id="content:index",
             )
         )
-    for path in (cfg.content_dir / "chapters").rglob("*.mdx"):
+    for path in chapter_mdx_files:
         text = path.read_text(encoding="utf-8")
         mdx_errors = validate_mdx(text)
         for error in mdx_errors:
@@ -2989,7 +3699,7 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                     )
                 )
 
-    for path in sorted((cfg.content_dir / "concepts").glob("*.mdx")):
+    for path in concept_mdx_files:
         text = path.read_text(encoding="utf-8")
         for error in validate_mdx(text):
             issues.append(
@@ -3002,6 +3712,12 @@ async def check_node(state: State, cfg: BookConfig) -> State:
             )
 
     allowed_refs = _allowed_source_refs(state, cfg)
+    _LOG.info(
+        "check: chapter_mdx=%d concept_mdx=%d allowed_refs=%d",
+        len(chapter_mdx_files),
+        len(concept_mdx_files),
+        len(allowed_refs),
+    )
     for ch_id, paths in state.get("agent_results", {}).items():
         for kind, rel_path in paths.items():
             payload = read_json(cfg.book_dir / rel_path)
@@ -3052,12 +3768,24 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                         owner_task_id=owner,
                     )
                 )
+    issues.extend(_site_typecheck_issues(cfg))
     status = "needs_repair" if issues else "passed"
     report = CheckReport(status=status, issues=issues)
     logs_dir = ensure_dir(cfg.work_dir / "logs")
     report_path = write_json(logs_dir / "check-report.json", report.model_dump(mode="json"))
     write_json(cfg.work_dir / "check-report.json", report.model_dump(mode="json"))
     write_text(logs_dir / "check-report.md", _render_check_report_md(report))
+    by_severity: dict[str, int] = {}
+    for issue in issues:
+        key = str(issue.severity)
+        by_severity[key] = by_severity.get(key, 0) + 1
+    _LOG.info(
+        "check: done status=%s issues=%d by_severity=%s report=%s",
+        status,
+        len(issues),
+        by_severity,
+        _rel(report_path, cfg.book_dir),
+    )
     return {
         "check_report": _rel(report_path, cfg.book_dir),
         "repair_targets": report.repair_targets,
@@ -3067,6 +3795,7 @@ async def check_node(state: State, cfg: BookConfig) -> State:
 async def repair_node(state: State, cfg: BookConfig) -> State:
     targets = state.get("repair_targets", [])
     if not targets:
+        _LOG.info("repair: no targets, nothing to do")
         return {"repair_targets": []}
     rounds = dict(state.get("_repair_rounds", {}))
     out_dir = ensure_dir(cfg.work_dir / "repairs")
@@ -3074,6 +3803,15 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
     repair_actions: list[dict[str, Any]] = []
     exhausted: list[dict[str, Any]] = []
     report = read_json(cfg.book_dir / state.get("check_report", "work/logs/check-report.json"))
+    _LOG.info(
+        "repair: targets=%d rounds_state=%d max_rounds=%d",
+        len(targets),
+        len(rounds),
+        int(cfg.generation.get("maxRepairRounds", 1) or 1),
+    )
+    mdx_repaired = 0
+    review_repaired = 0
+    applied = 0
     for target in targets:
         target_issues = [
             issue for issue in report.get("issues", []) if issue.get("owner_task_id") == target
@@ -3081,9 +3819,6 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
         codes = {str(issue.get("code")) for issue in target_issues}
         max_rounds = _repair_round_limit(codes, cfg)
         if int(rounds.get(target, 0)) >= max_rounds:
-            # Exhausted: record it loudly instead of silently dropping the target, so
-            # broken-but-unrepaired content reaching index is visible to the operator
-            # (mirrors the inline loops' *_VALIDATION_UNRESOLVED warnings).
             exhausted.append(
                 {
                     "owner_task_id": target,
@@ -3099,6 +3834,15 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
             )
             continue
         rounds[target] = int(rounds.get(target, 0)) + 1
+        route = "mdx" if "MDX_PARSE_ERROR" in codes else "review"
+        _LOG.info(
+            "repair: target=%s route=%s codes=%s round=%d/%d",
+            target,
+            route,
+            sorted(codes),
+            rounds[target],
+            max_rounds,
+        )
         if "MDX_PARSE_ERROR" in codes:
             if target.startswith("concept-mdx:"):
                 repaired = await _repair_concept_mdx(target, target_issues, state, cfg)
@@ -3109,6 +3853,7 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
                     out_dir / f"{target.replace(':', '-')}.json", _json_model(repaired)
                 )
                 outputs.append(_rel(path, cfg.book_dir))
+                mdx_repaired += 1
         else:
             result = await run_with_cache(
                 ReviewAgent,
@@ -3126,9 +3871,11 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
                 out_dir / f"{target.replace(':', '-')}.json", _json_model(result.result)
             )
             outputs.append(_rel(path, cfg.book_dir))
+            review_repaired += 1
         action = _apply_repair(target, target_issues, state, cfg)
         if action is not None:
             repair_actions.append(action)
+            applied += 1
             _LOG.warning("repair applied destructive fix (content removed): %s", action)
     if repair_actions:
         write_json(
@@ -3140,6 +3887,15 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
             ensure_dir(cfg.work_dir / "logs") / "repair-exhausted.json",
             {"exhausted": exhausted},
         )
+    _LOG.info(
+        "repair: done outputs=%d mdx_repaired=%d review_repaired=%d "
+        "destructive_applied=%d exhausted=%d",
+        len(outputs),
+        mdx_repaired,
+        review_repaired,
+        applied,
+        len(exhausted),
+    )
     return {
         "repairs": outputs,
         "repair_targets": [],
@@ -3244,7 +4000,10 @@ async def _repair_concept_mdx(
 
 def index_node(state: State, cfg: BookConfig) -> State:
     db_path = cfg.site_dir / ".bookwiki" / "bookwiki.sqlite"
+    _LOG.info("index: building sqlite db=%s", _rel(db_path, cfg.book_dir))
     build_sqlite_index(cfg.content_dir, db_path)
+    size = db_path.stat().st_size if db_path.exists() else 0
+    _LOG.info("index: done db_size_bytes=%d", size)
     return {"sqlite": _rel(db_path, cfg.book_dir)}
 
 

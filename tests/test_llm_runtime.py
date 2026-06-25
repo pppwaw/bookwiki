@@ -133,6 +133,7 @@ def test_model_list_uses_short_api_base_env_alias(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
     monkeypatch.delenv("DEEPSEEK_API_BASE_URL", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_BASE", "https://deepseek-alias.example/v1")
+    monkeypatch.setattr("bookwiki.scheduler.llm.load_dotenv", lambda *args, **kwargs: False)
 
     deepseek = next(item for item in _model_list() if item["model_name"] == "deepseek-v4-pro")
 

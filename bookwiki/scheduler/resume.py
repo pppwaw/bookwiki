@@ -48,9 +48,14 @@ NODE_OUTPUT_KEYS: dict[str, set[str]] = {
         "chapter_split_report",
     },
     "build_skeleton": {"skeleton"},
-    "generate": {"agent_results", "generation_issues", "generated_figures"},
+    "generate": {
+        "agent_results",
+        "generation_issues",
+        "generated_figures",
+        "generated_figures_index",
+    },
     "reconcile_concepts": {"reconciled_concepts", "alias_map"},
-    "concept_pages": {"concept_pages"},
+    "concept_pages": {"concept_pages", "concept_generation_issues"},
     "integrate": {"content_ready", "content_index"},
     "check": {"check_report", "repair_targets"},
     "repair": {"repairs", "repair_targets", "repair_exhausted"},
@@ -93,9 +98,15 @@ def state_for_force_from(cfg: BookConfig, checkpoint_state: dict[str, Any]) -> d
     state: dict[str, Any] = dict(checkpoint_state) if checkpoint_state else {}
     state["book_id"] = str(state.get("book_id") or cfg.book_id)
     force_from = cfg.force_from
+    target_chapters = cfg.target_chapter_ids
+    target_concepts = cfg.target_concept_names
     if force_from:
         start_index = NODE_ORDER.index(force_from)
         for node_name in NODE_ORDER[start_index:]:
+            if node_name == "generate" and target_chapters:
+                continue
+            if node_name == "concept_pages" and target_concepts:
+                continue
             for key in NODE_OUTPUT_KEYS.get(node_name, set()):
                 state.pop(key, None)
     start_index = NODE_ORDER.index(force_from) if force_from else 0
@@ -135,7 +146,72 @@ def state_for_force_from(cfg: BookConfig, checkpoint_state: dict[str, Any]) -> d
                 state["chapter_alignment"] = alignment_path
             if chapter_order:
                 state["chapter_order"] = chapter_order
+    if force_from == "generate" and target_chapters:
+        if not state.get("agent_results"):
+            restored = existing_agent_results(cfg)
+            if restored:
+                state["agent_results"] = restored
+        if not state.get("generated_figures"):
+            restored_figures = existing_generated_figures(cfg)
+            if restored_figures:
+                state["generated_figures"] = restored_figures
+                state["generated_figures_index"] = "work/generated_figures.json"
+    if force_from == "concept_pages" and target_concepts:
+        if not state.get("concept_pages"):
+            restored_concepts = existing_concept_pages(cfg)
+            if restored_concepts:
+                state["concept_pages"] = restored_concepts
     return state
+
+
+def existing_agent_results(cfg: BookConfig) -> dict[str, dict[str, str]]:
+    result_dir = cfg.work_dir / "agent_results"
+    if not result_dir.exists():
+        return {}
+    outputs: dict[str, dict[str, str]] = {}
+    for chapter_path in sorted(result_dir.glob("*.chapter.json")):
+        ch_id = chapter_path.name.removesuffix(".chapter.json")
+        paths = {
+            kind: result_dir / f"{ch_id}.{kind}.json"
+            for kind in ("chapter", "summary", "quiz", "card")
+        }
+        if not all(path.exists() for path in paths.values()):
+            continue
+        outputs[ch_id] = {
+            kind: path.relative_to(cfg.book_dir).as_posix() for kind, path in paths.items()
+        }
+        concepts = result_dir / f"{ch_id}.concepts.json"
+        if concepts.exists():
+            outputs[ch_id]["concepts"] = concepts.relative_to(cfg.book_dir).as_posix()
+    return outputs
+
+
+def existing_concept_pages(cfg: BookConfig) -> dict[str, str]:
+    concepts_dir = cfg.work_dir / "agent_results" / "concepts"
+    if not concepts_dir.exists():
+        return {}
+    outputs: dict[str, str] = {}
+    for path in sorted(concepts_dir.glob("*.json")):
+        payload = read_json(path, default={})
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not isinstance(result, dict):
+            result = payload if isinstance(payload, dict) else {}
+        name = str(result.get("name") or result.get("canonical") or path.stem).strip()
+        if name:
+            outputs[name] = path.relative_to(cfg.book_dir).as_posix()
+    return outputs
+
+
+def existing_generated_figures(cfg: BookConfig) -> dict[str, dict[str, str]]:
+    path = cfg.work_dir / "generated_figures.json"
+    data = read_json(path, default={})
+    if not isinstance(data, dict):
+        return {}
+    restored: dict[str, dict[str, str]] = {}
+    for ch_id, figures in data.items():
+        if isinstance(figures, dict):
+            restored[str(ch_id)] = {str(figure_id): str(tag) for figure_id, tag in figures.items()}
+    return restored
 
 
 def existing_sources_md(cfg: BookConfig) -> list[str]:

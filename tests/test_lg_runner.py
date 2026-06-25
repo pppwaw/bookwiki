@@ -9,6 +9,7 @@ removal of ``BookGraph`` does not leave the control logic untested.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -222,6 +223,289 @@ def test_force_from_reruns_from_target_only(
     assert "generate" not in calls
     assert calls[0] == "integrate"
     assert "index" in calls
+
+
+def test_generate_runs_as_langgraph_fanout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+
+    for name, output in _NODE_OUTPUTS.items():
+        if name == "generate":
+            continue
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+                calls.append(node_name)
+                if node_name == "split":
+                    return {
+                        **payload,
+                        "chapter_sources": {
+                            "chapter-1": "work/chapter_sources/chapter-1/source.md",
+                            "chapter-2": "work/chapter_sources/chapter-2/source.md",
+                            "chapter-3": "work/chapter_sources/chapter-3/source.md",
+                        },
+                        "cache_hit": False,
+                    }
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+    probe = {"current": 0, "max": 0}
+
+    async def fake_generate_chapter(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        ch_id = str(state["_fanout_chapter_id"])
+        probe["current"] += 1
+        probe["max"] = max(probe["max"], probe["current"])
+        try:
+            await asyncio.sleep(0.01)
+            return {
+                "_generate_parts": {
+                    ch_id: {
+                        "chapter_id": ch_id,
+                        "agent_results": {"chapter": f"work/agent_results/{ch_id}.chapter.json"},
+                        "generation_issues": [],
+                        "generated_figures": {},
+                        "cache_hit": True,
+                    }
+                }
+            }
+        finally:
+            probe["current"] -= 1
+
+    monkeypatch.setattr(nodes_module, "generate_chapter_fanout_node", fake_generate_chapter)
+
+    run_pipeline(cfg, resume=False)
+    state = run_pipeline(cfg, stop_after="generate", resume=True)
+
+    assert calls[:4] == ["convert", "caption", "structure", "split"]
+    assert set(state["agent_results"]) == {"chapter-1", "chapter-2", "chapter-3"}
+    assert probe["max"] > 1
+
+
+def test_generate_langgraph_fanout_can_target_one_chapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+
+    for name, output in _NODE_OUTPUTS.items():
+        if name == "generate":
+            continue
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+                calls.append(node_name)
+                if node_name == "split":
+                    return {
+                        **payload,
+                        "chapter_sources": {
+                            "chapter-1": "work/chapter_sources/chapter-1/source.md",
+                            "chapter-2": "work/chapter_sources/chapter-2/source.md",
+                        },
+                        "cache_hit": False,
+                    }
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+    generated_ids: list[str] = []
+
+    async def fake_generate_chapter(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        ch_id = str(state["_fanout_chapter_id"])
+        generated_ids.append(ch_id)
+        figures = {"chapter-2": {"fig-2": '<BookFigure id="fig-2" src="/b.png" />'}}.get(
+            ch_id, {}
+        )
+        return {
+            "_generate_parts": {
+                ch_id: {
+                    "chapter_id": ch_id,
+                    "agent_results": {"chapter": f"work/agent_results/{ch_id}.chapter.new.json"},
+                    "generation_issues": [],
+                    "generated_figures": figures,
+                    "cache_hit": False,
+                }
+            }
+        }
+
+    monkeypatch.setattr(nodes_module, "generate_chapter_fanout_node", fake_generate_chapter)
+
+    run_pipeline(cfg, resume=False)
+    initial = run_pipeline(cfg, stop_after="generate", resume=True)
+    assert generated_ids == ["chapter-1", "chapter-2"]
+    assert initial["generated_figures"] == {
+        "chapter-2": {"fig-2": '<BookFigure id="fig-2" src="/b.png" />'}
+    }
+    generated_ids.clear()
+
+    cfg.force_from = "generate"
+    cfg.target_chapters = ["chapter-2"]
+    state = run_pipeline(cfg, stop_after="generate", resume=False)
+
+    assert generated_ids == ["chapter-2"]
+    assert state["agent_results"]["chapter-1"] == initial["agent_results"]["chapter-1"]
+    assert state["generated_figures"] == initial["generated_figures"]
+    assert set(state["agent_results"]) == {"chapter-1", "chapter-2"}
+
+
+def test_concept_pages_run_as_langgraph_fanout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+
+    for name, output in _NODE_OUTPUTS.items():
+        if name == "concept_pages":
+            continue
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+                calls.append(node_name)
+                if node_name == "reconcile_concepts":
+                    concepts_path = cfg_arg.work_dir / "concepts" / "reconciled.json"
+                    concepts_path.parent.mkdir(parents=True, exist_ok=True)
+                    concepts_path.write_text(
+                        json.dumps(
+                            {
+                                "concepts": [
+                                    {"canonical": "递归", "aliases": [], "source_chapter_ids": []},
+                                    {
+                                        "canonical": "动态规划",
+                                        "aliases": [],
+                                        "source_chapter_ids": [],
+                                    },
+                                ]
+                            },
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+                    return {
+                        "reconciled_concepts": "work/concepts/reconciled.json",
+                        "alias_map": "work/concepts/alias_map.json",
+                        "cache_hit": False,
+                    }
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+    probe = {"current": 0, "max": 0}
+
+    async def fake_concept_page(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        item = dict(state["_fanout_concept_item"])
+        name = str(item["canonical"])
+        order = int(state["_fanout_concept_order"])
+        probe["current"] += 1
+        probe["max"] = max(probe["max"], probe["current"])
+        try:
+            await asyncio.sleep(0.01)
+            return {
+                "_concept_page_parts": {
+                    name: {
+                        "name": name,
+                        "order": order,
+                        "path": f"work/agent_results/concepts/{state['_fanout_concept_stem']}.json",
+                        "concept_generation_issues": [],
+                        "cache_hit": True,
+                    }
+                }
+            }
+        finally:
+            probe["current"] -= 1
+
+    monkeypatch.setattr(nodes_module, "concept_page_fanout_node", fake_concept_page)
+
+    run_pipeline(cfg, resume=False)
+    state = run_pipeline(cfg, stop_after="concept_pages", resume=True)
+
+    assert state["concept_pages"] == {
+        "递归": "work/agent_results/concepts/递归.json",
+        "动态规划": "work/agent_results/concepts/动态规划.json",
+    }
+    assert probe["max"] > 1
+
+
+def test_concept_pages_langgraph_fanout_can_target_one_concept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+
+    for name, output in _NODE_OUTPUTS.items():
+        if name == "concept_pages":
+            continue
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+                if node_name == "reconcile_concepts":
+                    concepts_path = cfg_arg.work_dir / "concepts" / "reconciled.json"
+                    concepts_path.parent.mkdir(parents=True, exist_ok=True)
+                    concepts_path.write_text(
+                        json.dumps(
+                            {
+                                "concepts": [
+                                    {"canonical": "递归", "aliases": [], "source_chapter_ids": []},
+                                    {
+                                        "canonical": "动态规划",
+                                        "aliases": [],
+                                        "source_chapter_ids": [],
+                                    },
+                                ]
+                            },
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+                    return {
+                        "reconciled_concepts": "work/concepts/reconciled.json",
+                        "alias_map": "work/concepts/alias_map.json",
+                        "cache_hit": False,
+                    }
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+    generated_names: list[str] = []
+
+    async def fake_concept_page(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        item = dict(state["_fanout_concept_item"])
+        name = str(item["canonical"])
+        generated_names.append(name)
+        return {
+            "_concept_page_parts": {
+                name: {
+                    "name": name,
+                    "order": int(state["_fanout_concept_order"]),
+                    "path": f"work/agent_results/concepts/{state['_fanout_concept_stem']}.new.json",
+                    "concept_generation_issues": [],
+                    "cache_hit": False,
+                }
+            }
+        }
+
+    monkeypatch.setattr(nodes_module, "concept_page_fanout_node", fake_concept_page)
+
+    run_pipeline(cfg, resume=False)
+    initial = run_pipeline(cfg, stop_after="concept_pages", resume=True)
+    assert generated_names == ["递归", "动态规划"]
+    generated_names.clear()
+
+    cfg.force_from = "concept_pages"
+    cfg.target_concepts = ["动态规划"]
+    state = run_pipeline(cfg, stop_after="concept_pages", resume=False)
+
+    assert generated_names == ["动态规划"]
+    assert state["concept_pages"]["递归"] == initial["concept_pages"]["递归"]
+    assert state["concept_pages"]["动态规划"].endswith("动态规划.new.json")
 
 
 def test_repair_loop_reintegrates_until_check_is_clean(

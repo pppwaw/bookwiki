@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,7 +16,16 @@ from bookwiki.pipeline.nodes import (
 )
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import TestLLMRuntime
+from scripts import site
 from tests.fakes import RecordingRuntime
+
+
+def _write_minimal_site_template(path) -> None:  # noqa: ANN001
+    path.mkdir(parents=True)
+    (path / "package.json").write_text(
+        json.dumps({"scripts": {"types:check": "tsc --noEmit"}}),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.asyncio
@@ -780,6 +790,182 @@ async def test_check_node_escape_valve_degrades_to_error_log(
     # Does not abort; the missing content index is still flagged the normal way.
     assert "repair_targets" in result
     assert any("allowMissingMdxValidator" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_check_node_auto_skips_site_typecheck_without_node_modules(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    import logging
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
+    fake_template = tmp_path / "site-template"
+    _write_minimal_site_template(fake_template)
+    monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
+    book_dir = tmp_path / "book"
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+
+    with caplog.at_level(logging.INFO, logger="bookwiki.pipeline.nodes"):
+        result = await check_node({}, cfg)
+
+    assert result["repair_targets"] == []
+    assert any("site type check skipped" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_check_node_required_reports_missing_site_typecheck_dependencies(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
+    fake_template = tmp_path / "site-template"
+    _write_minimal_site_template(fake_template)
+    monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
+    book_dir = tmp_path / "book"
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+    cfg.generation["siteTypeCheck"] = "required"
+
+    result = await check_node({}, cfg)
+
+    assert result["repair_targets"] == ["site:typecheck"]
+    report = json.loads((book_dir / "work" / "logs" / "check-report.json").read_text())
+    assert report["issues"][-1]["code"] == "SITE_TYPECHECK_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_check_node_runs_site_typecheck_when_dependencies_exist(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
+    fake_template = tmp_path / "site-template"
+    _write_minimal_site_template(fake_template)
+    (fake_template / "node_modules").mkdir()
+    monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
+    book_dir = tmp_path / "book"
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        language="en-US",
+        llm_runtime=TestLLMRuntime(),
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_run(cmd, *, cwd, env, check, capture_output, text, timeout):  # noqa: ANN001
+        calls.append(
+            {
+                "cmd": cmd,
+                "cwd": cwd,
+                "env": env,
+                "check": check,
+                "capture_output": capture_output,
+                "text": text,
+                "timeout": timeout,
+            }
+        )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.subprocess.run", fake_run)
+
+    result = await check_node({}, cfg)
+
+    assert result["repair_targets"] == []
+    assert calls[0]["cmd"] == ["/usr/bin/pnpm", "run", "types:check"]
+    assert calls[0]["cwd"] == cfg.site_dir
+    assert calls[0]["env"]["BOOKWIKI_SITE_LANGUAGE"] == "en-US"
+    assert calls[0]["env"]["NODE_OPTIONS"] == "--max-old-space-size=4096"
+    assert "BOOKWIKI_CHAT_API_KEY" not in calls[0]["env"]
+    assert (cfg.site_dir / "node_modules").resolve() == (fake_template / "node_modules").resolve()
+
+
+@pytest.mark.asyncio
+async def test_check_node_reports_site_typecheck_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
+    monkeypatch.setenv("BOOKWIKI_CHAT_API_KEY", "secret-token")
+    fake_template = tmp_path / "site-template"
+    _write_minimal_site_template(fake_template)
+    (fake_template / "node_modules").mkdir()
+    monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
+    book_dir = tmp_path / "book"
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+    monkeypatch.setattr(
+        "bookwiki.pipeline.nodes.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="Cannot find module with secret-token"
+        ),
+    )
+
+    result = await check_node({}, cfg)
+
+    assert result["repair_targets"] == ["site:typecheck"]
+    report = json.loads((book_dir / "work" / "logs" / "check-report.json").read_text())
+    assert report["issues"][-1]["code"] == "SITE_TYPECHECK_ERROR"
+    assert "Cannot find module" in report["issues"][-1]["message"]
+    assert "secret-token" not in report["issues"][-1]["message"]
+    assert "[REDACTED]" in report["issues"][-1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_check_node_refuses_non_template_site_node_modules(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
+    fake_template = tmp_path / "site-template"
+    _write_minimal_site_template(fake_template)
+    (fake_template / "node_modules").mkdir()
+    monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
+    book_dir = tmp_path / "book"
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    cfg = BookConfig(
+        book_dir=book_dir,
+        book_id="book",
+        title="Book",
+        llm_runtime=TestLLMRuntime(),
+    )
+    (cfg.site_dir / "node_modules").mkdir(parents=True)
+
+    result = await check_node({}, cfg)
+
+    assert result["repair_targets"] == ["site:typecheck"]
+    report = json.loads((book_dir / "work" / "logs" / "check-report.json").read_text())
+    assert report["issues"][-1]["code"] == "SITE_TYPECHECK_UNAVAILABLE"
+    assert "refused non-template site/node_modules" in report["issues"][-1]["message"]
 
 
 @pytest.mark.asyncio

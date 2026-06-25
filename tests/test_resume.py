@@ -7,6 +7,7 @@ extracted functions.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +87,144 @@ def test_force_from_generate_drops_downstream_and_keeps_split(tmp_path: Path) ->
     assert state["chapter_sources"] == {"chapter-1": "work/chapter_sources/chapter-1/source.md"}
     assert state["chapter_titles"] == {"chapter-1": "Intro"}
     assert "agent_results" not in state
+
+
+def test_targeted_force_from_generate_keeps_existing_agent_results(tmp_path: Path) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.force_from = "generate"
+    cfg.target_chapters = ["chapter-2"]
+    checkpoint = {
+        "book_id": cfg.book_id,
+        "sources_md": ["work/sources_md/source.md"],
+        "chapter_sources": {
+            "chapter-1": "work/chapter_sources/chapter-1/source.md",
+            "chapter-2": "work/chapter_sources/chapter-2/source.md",
+        },
+        "agent_results": {
+            "chapter-1": {"chapter": "work/agent_results/chapter-1.chapter.json"},
+            "chapter-2": {"chapter": "work/agent_results/chapter-2.chapter.json"},
+        },
+        "generated_figures": {
+            "chapter-1": {"fig-1": '<BookFigure id="fig-1" src="/a.png" />'},
+            "chapter-2": {"fig-2": '<BookFigure id="fig-2" src="/b.png" />'},
+        },
+        "generated_figures_index": "work/generated_figures.json",
+        "reconciled_concepts": "work/concepts/reconciled.json",
+    }
+
+    state = state_for_force_from(cfg, checkpoint)
+
+    assert state["agent_results"] == checkpoint["agent_results"]
+    assert state["generated_figures"] == checkpoint["generated_figures"]
+    assert state["generated_figures_index"] == "work/generated_figures.json"
+    assert "reconciled_concepts" not in state
+
+
+def test_targeted_force_from_generate_restores_agent_results_from_files(
+    tmp_path: Path,
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.force_from = "generate"
+    cfg.target_chapters = ["chapter-2"]
+    source_dir = cfg.work_dir / "sources_md"
+    source_dir.mkdir(parents=True)
+    (source_dir / "source.md").write_text("# Source\n", encoding="utf-8")
+    chapter_dir = cfg.work_dir / "chapter_sources"
+    for ch_id in ("chapter-1", "chapter-2"):
+        path = chapter_dir / ch_id / "source.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(f"# {ch_id}\n", encoding="utf-8")
+    (chapter_dir / "_alignment.json").write_text(
+        json.dumps(
+            {
+                "chapter_order": ["chapter-1", "chapter-2"],
+                "chapter_titles": {"chapter-1": "One", "chapter-2": "Two"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result_dir = cfg.work_dir / "agent_results"
+    result_dir.mkdir(parents=True)
+    for ch_id in ("chapter-1", "chapter-2"):
+        for kind in ("chapter", "summary", "quiz", "card"):
+            (result_dir / f"{ch_id}.{kind}.json").write_text("{}", encoding="utf-8")
+    (cfg.work_dir / "generated_figures.json").write_text(
+        json.dumps(
+            {
+                "chapter-1": {"fig-1": '<BookFigure id="fig-1" src="/a.png" />'},
+                "chapter-2": {"fig-2": '<BookFigure id="fig-2" src="/b.png" />'},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = state_for_force_from(
+        cfg, {"book_id": cfg.book_id, "sources_md": ["work/sources_md/source.md"]}
+    )
+
+    assert set(state["agent_results"]) == {"chapter-1", "chapter-2"}
+    assert state["agent_results"]["chapter-1"]["summary"] == (
+        "work/agent_results/chapter-1.summary.json"
+    )
+    assert state["generated_figures"]["chapter-1"]["fig-1"] == (
+        '<BookFigure id="fig-1" src="/a.png" />'
+    )
+    assert state["generated_figures_index"] == "work/generated_figures.json"
+
+
+def test_targeted_force_from_concept_pages_keeps_existing_concept_pages(
+    tmp_path: Path,
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.force_from = "concept_pages"
+    cfg.target_concepts = ["动态规划"]
+    checkpoint = {
+        "book_id": cfg.book_id,
+        "sources_md": ["work/sources_md/source.md"],
+        "reconciled_concepts": "work/concepts/reconciled.json",
+        "concept_pages": {
+            "递归": "work/agent_results/concepts/递归.json",
+            "动态规划": "work/agent_results/concepts/动态规划.json",
+        },
+        "content_ready": True,
+    }
+
+    state = state_for_force_from(cfg, checkpoint)
+
+    assert state["concept_pages"] == checkpoint["concept_pages"]
+    assert "content_ready" not in state
+
+
+def test_targeted_force_from_concept_pages_restores_concept_pages_from_files(
+    tmp_path: Path,
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.force_from = "concept_pages"
+    cfg.target_concepts = ["动态规划"]
+    source_dir = cfg.work_dir / "sources_md"
+    source_dir.mkdir(parents=True)
+    (source_dir / "source.md").write_text("# Source\n", encoding="utf-8")
+    concepts_dir = cfg.work_dir / "agent_results" / "concepts"
+    concepts_dir.mkdir(parents=True)
+    for name in ("递归", "动态规划"):
+        (concepts_dir / f"{name}.json").write_text(
+            json.dumps({"result": {"name": name}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    state = state_for_force_from(
+        cfg,
+        {
+            "book_id": cfg.book_id,
+            "sources_md": ["work/sources_md/source.md"],
+            "reconciled_concepts": "work/concepts/reconciled.json",
+        },
+    )
+
+    assert state["concept_pages"] == {
+        "递归": "work/agent_results/concepts/递归.json",
+        "动态规划": "work/agent_results/concepts/动态规划.json",
+    }
 
 
 def test_force_from_generate_reconstructs_split_state_from_files(tmp_path: Path) -> None:

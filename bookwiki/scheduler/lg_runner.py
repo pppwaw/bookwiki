@@ -25,7 +25,9 @@ from typing import Any
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 
+from bookwiki.pipeline import nodes as pipeline_nodes
 from bookwiki.pipeline.nodes import NODE_FUNCTIONS
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.scheduler.llm import build_runtime
@@ -74,20 +76,77 @@ def _route_after_repair(state: PipelineState) -> str:
     return "integrate" if state.get("repairs") else "index"
 
 
+def _send_generate_chapters_for(cfg: BookConfig):
+    def route(state: PipelineState) -> list[Send] | str:
+        specs = pipeline_nodes.generate_fanout_specs(state, cfg)
+        if not specs:
+            return "generate"
+        return [Send("generate_chapter", spec) for spec in specs]
+
+    return route
+
+
+def _send_concept_pages_for(cfg: BookConfig):
+    def route(state: PipelineState) -> list[Send] | str:
+        specs = pipeline_nodes.concept_page_fanout_specs(state, cfg)
+        if not specs:
+            return "concept_pages"
+        return [Send("concept_page", spec) for spec in specs]
+
+    return route
+
+
 def build_graph_def(cfg: BookConfig) -> StateGraph:
     """Build the uncompiled ``StateGraph`` mirroring the legacy node topology."""
     graph = StateGraph(PipelineState)
+    use_generate_fanout = NODE_FUNCTIONS["generate"] is pipeline_nodes.generate_node
+    use_concept_fanout = NODE_FUNCTIONS["concept_pages"] is pipeline_nodes.concept_pages_node
     for name in NODE_ORDER:
-        graph.add_node(name, _bind_node(name, NODE_FUNCTIONS[name], cfg))
+        fn = NODE_FUNCTIONS[name]
+        if name == "generate" and use_generate_fanout:
+            fn = pipeline_nodes.collect_generate_fanout_node
+        elif name == "concept_pages" and use_concept_fanout:
+            fn = pipeline_nodes.collect_concept_pages_fanout_node
+        graph.add_node(name, _bind_node(name, fn, cfg))
+    if use_generate_fanout:
+        graph.add_node(
+            "prepare_generate",
+            _bind_node("prepare_generate", pipeline_nodes.prepare_generate_fanout_node, cfg),
+        )
+        graph.add_node(
+            "generate_chapter",
+            _bind_node("generate_chapter", pipeline_nodes.generate_chapter_fanout_node, cfg),
+        )
+    if use_concept_fanout:
+        graph.add_node(
+            "prepare_concept_pages",
+            _bind_node(
+                "prepare_concept_pages", pipeline_nodes.prepare_concept_pages_fanout_node, cfg
+            ),
+        )
+        graph.add_node(
+            "concept_page",
+            _bind_node("concept_page", pipeline_nodes.concept_page_fanout_node, cfg),
+        )
 
     graph.add_edge(START, "convert")
     graph.add_edge("convert", "caption")
     graph.add_edge("caption", "structure")
     graph.add_edge("structure", "split")
     graph.add_edge("split", "build_skeleton")
-    graph.add_edge("build_skeleton", "generate")
+    if use_generate_fanout:
+        graph.add_edge("build_skeleton", "prepare_generate")
+        graph.add_conditional_edges("prepare_generate", _send_generate_chapters_for(cfg))
+        graph.add_edge("generate_chapter", "generate")
+    else:
+        graph.add_edge("build_skeleton", "generate")
     graph.add_edge("generate", "reconcile_concepts")
-    graph.add_edge("reconcile_concepts", "concept_pages")
+    if use_concept_fanout:
+        graph.add_edge("reconcile_concepts", "prepare_concept_pages")
+        graph.add_conditional_edges("prepare_concept_pages", _send_concept_pages_for(cfg))
+        graph.add_edge("concept_page", "concept_pages")
+    else:
+        graph.add_edge("reconcile_concepts", "concept_pages")
     graph.add_edge("concept_pages", "integrate")
     graph.add_edge("integrate", "check")
     graph.add_conditional_edges("check", _route_after_check, {"repair": "repair", "index": "index"})

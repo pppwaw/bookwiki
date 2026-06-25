@@ -81,7 +81,14 @@ def validate_mdx(content: str, *, timeout_s: float = 30.0) -> list[str]:
 
     if data.get("ok"):
         return []
-    return [_format_error(error) for error in data.get("errors", []) if isinstance(error, dict)]
+    errors = [_format_error(error) for error in data.get("errors", []) if isinstance(error, dict)]
+    if errors:
+        preview = errors[0][:120]
+        suffix = "..." if len(errors) > 1 else ""
+        LOGGER.debug(
+            "mdx validation found %d error(s): %s%s", len(errors), preview, suffix
+        )
+    return errors
 
 
 def _format_error(error: dict[str, object]) -> str:
