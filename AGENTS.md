@@ -89,8 +89,7 @@ per-Router). The runtime accumulates token/cost usage per call and enforces `bud
 crosses it. Per-token prices are registered on each Router deployment in CNY — the providers
 (`api.moonshot.cn`, DeepSeek domestic) bill in RMB — with separate cache-hit input rates so
 `cached_tokens` are priced at the discounted rate; litellm has no built-in pricing for these custom
-model names, so without this registration every call would cost 0. Legacy configs using `maxCostUsd`
-are migrated to `maxCostCny` (number carried over; the unit is now CNY). Chapters fan out bounded by
+model names, so without this registration every call would cost 0. Chapters fan out bounded by
 `maxChapterConcurrency` (default 4); sections within a chapter
 also fan out, bounded by `maxSectionConcurrency` (default 3) — section inputs depend only on the static
 plan, never on a sibling section body, so order is preserved by `asyncio.gather` while running in

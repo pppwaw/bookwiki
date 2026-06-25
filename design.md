@@ -308,7 +308,7 @@ books/
 | `maxChapterConcurrency`    | 章节级 fan-out 并发上限(默认 4)                    | `generate_node` |
 | `maxSectionConcurrency`    | 单章内 section fan-out / 补图 fan-out 并发上限(默认 3) | `generate/sections.py` |
 | `rateLimit`                | API 限速:每分钟请求数与 token 数,全局共享                | litellm Router 的 `rpm` / `tpm` |
-| `budget.maxCostCny`        | 整次 build 的人民币硬上限,默认 70.0;`<=0` 表示不限额;旧 `maxCostUsd` 会迁移为同数值 CNY | `LiteLLMRuntime._record_usage` / `budget_guard.py` |
+| `budget.maxCostCny`        | 整次 build 的人民币硬上限，默认 70.0；`<=0` 表示不限额 | `LiteLLMRuntime._record_usage` / `budget_guard.py` |
 | `retry`                    | 瞬时错误重试次数 + instructor schema reprompt 次数  | `Router.num_retries` + `instructor.max_retries` |
 | `maxRepairRounds`          | inline MDX 修复与宏观 repair 的轮数上限(默认 3)          | `generate/sections.py` / `pipeline/nodes.py` |
 | `qualityCheck`             | 是否启用语言泄漏/质量检查;默认关                         | `validate_artifact` |
@@ -951,7 +951,7 @@ router = Router(
 - `Retry-After` 由 Router 自动尊重,业务层无需感知 429。
 - `LiteLLMRuntime` 在每次响应后累计 token 与 CNY cost;单个共享 Router 的 tpm/rpm 自限速与 usage/cost accounting 被整条流水线复用。
 
-**预算守卫**由 `LiteLLMRuntime._record_usage` 接入热路径:`lg_runner` 在 dry-run 之后把一个共享 runtime 注入 `cfg.llm_runtime = build_runtime(max_cost_cny=cfg.budget.get("maxCostCny"))`,每个 agent 通过 `run_with_cache(..., runtime=cfg.llm_runtime)` 复用它;累计花费超过 `budget.maxCostCny`(默认 70.0 CNY;`<=0` 表示不限额)时立即 raise `BudgetExceeded`。旧配置的 `maxCostUsd` 会被 `_merge_budget` 迁移成同数值的 `maxCostCny`。
+**预算守卫**由 `LiteLLMRuntime._record_usage` 接入热路径：`lg_runner` 在 dry-run 之后把一个共享 runtime 注入 `cfg.llm_runtime = build_runtime(max_cost_cny=cfg.budget.get("maxCostCny"))`，每个 agent 通过 `run_with_cache(..., runtime=cfg.llm_runtime)` 复用它；默认 `budget.maxCostCny` 为 70.0 CNY，配置为 `<=0` 表示不限额，累计花费越线时立即 raise `BudgetExceeded`。
 
 ### 10.5 instructor:structured output
 

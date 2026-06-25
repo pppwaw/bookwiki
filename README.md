@@ -78,7 +78,7 @@ convert → caption → structure → split → build_skeleton → generate
 
 ## 配置要点（`book.config.json`）
 
-- `budget.maxCostCny`：成本硬上限，默认 `70.0`（`<= 0` 为不限）；越线抛 `BudgetExceeded`。旧 `maxCostUsd` 自动迁移。每次运行后的实际花费写入 `work/logs/run-manifest.json` 的 `llm_usage.total_cost_cny`，分阶段明细见 `llm_usage.stages`。
+- `budget.maxCostCny`：成本硬上限，默认 `70.0`；`<= 0` 为不限，越线抛 `BudgetExceeded`。每次运行后的实际花费写入 `work/logs/run-manifest.json` 的 `llm_usage.total_cost_cny`，分阶段明细见 `llm_usage.stages`。
 - `generation`：`quizPerChapter=5`、`cardsPerChapter=8`、`maxChapterConcurrency=4`、`maxSectionConcurrency=3`、`maxRepairRounds=3`、`qualityCheck=false`、`maxQualityRounds=2`、`allowMissingMdxValidator=false`；`VisionCaptionAgent` 统一按 `images` 列表处理图注，同一 `source_ref` 页上的多图自动合并为一次视觉模型调用。
 - `models`：按 agent 选模型（`deepseek-*` 走 `DEEPSEEK_API_KEY`，`kimi-*` 走 `MOONSHOT_API_KEY`，`openrouter-*` 走 `OPENROUTER_API_KEY`）。API Base URL 可用 `DEEPSEEK_API_BASE_URL` / `MOONSHOT_API_BASE_URL` / `OPENROUTER_API_BASE_URL` 覆盖，短别名 `*_API_BASE` 也可用；Moonshot 默认 `https://api.moonshot.cn/v1`，OpenRouter 默认 `https://openrouter.ai/api/v1`。
 
