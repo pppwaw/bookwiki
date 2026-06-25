@@ -19,7 +19,12 @@ class StructureAgent:
         body="""你是书籍结构 agent。
 
 根据源摘要创建一个建议的学习结构。
-返回一个 `chapters` 数组，每个章节对象**仅**包含 `title`、`topics`、`source_refs` 三个字段：
+返回一个 `chapters` 数组。章节对象有两种形态：
+- **扁平章**（源文本无小节划分）：含 `title`、`topics`、`source_refs`。
+- **嵌套章**（源文本含明确小节，如 "9.2 无穷级数"）：含 `title` 和 `sections`，
+  不带 `topics`/`source_refs`；`sections` 是子条目数组，
+  每个子条目含 `title`、`topics`、`source_refs`。
+字段说明：
 - `title`：自然的章节标题（人类可读的显示名）。
   - 源文本含明确章节标题/编号时，沿用它（如 "Chapter 6 Point Estimation" 或
     "第 9 章 无穷级数"），允许编号不连续（如缺第 8 章可从 7 跳到 9）。
@@ -28,7 +33,16 @@ class StructureAgent:
   - 标题应在全书内**唯一且具体**；系统会从标题自动派生 URL slug（相同标题会被加后缀去重），
     无需自己写 slug 或内部 ID（如 `ch06`）。
 - `topics`：源文本中可见的主题或小节标题列表。
-- `source_refs`：该章节覆盖的 source_ref 列表，必须与输入完全一致。
+- `source_refs`：该章节（或子节）覆盖的 source_ref 列表，必须与输入完全一致。
+- `sections`：章下子节列表（仅嵌套章使用，父级不带 `topics`/`source_refs`）。
+
+**同一章的所有小节必须作为 `sections` 归到唯一一个嵌套章条目下**：
+- 章级标题（如 "第9章 无穷级数"）作为父级 `title`，
+  其下所有小节（如 "9.2 ..."、"9.3 ..."）作为 `sections` 子条目。
+- **禁止**对同一章同时产出"章级摘要条目"和"独立小节条目"——
+  即不得出现两个条目覆盖同一章的不同小节。
+- 若不同 source 的小节标题共享同一章号（如 "9.2 ..." 和 "9.8 ..."），
+  它们必须属于同一个嵌套章。
 
 避免空白的占位章节。
 不要包含 goal、scope、evidence、散文段落、Markdown 或代码围栏。
@@ -54,55 +68,7 @@ class StructureAgent:
             inp=inp,
             draft=draft,
         )
-        return _group_into_two_level(StructureResult.model_validate(result))
-
-
-_SECTION_TITLE_RE = re.compile(r"^\s*(\d+)\.\d")
-
-
-def _group_into_two_level(result: StructureResult) -> StructureResult:
-    """Deterministically fold section-style chapters into "Chapter N" groups.
-
-    The LLM returns a flat list where calculus-style sources carry section titles like
-    ``9.2 Infinite Series``. This nests every such leaf under a ``Chapter <N>`` group
-    (keyed by the leading integer), preserving first-seen order, so the proposed YAML is
-    already two-level. Chapter-level titles (e.g. ``Chapter 6 Point Estimation``) and any
-    title without an ``N.M`` prefix are left flat, so books without sub-sections are
-    unaffected. Group titles are bare ``Chapter N`` placeholders for the reviewer to flesh
-    out at the structure gate.
-    """
-    leaves: list[ChapterProposal] = []
-    for chapter in result.chapters:
-        leaves.extend(chapter.sections or [chapter])
-
-    sequence: list[tuple[str, object]] = []
-    group_sections: dict[int, list[ChapterProposal]] = {}
-    for leaf in leaves:
-        flat = ChapterProposal(
-            title=leaf.title,
-            topics=list(leaf.topics),
-            source_refs=list(leaf.source_refs),
-        )
-        match = _SECTION_TITLE_RE.match(leaf.title)
-        if not match:
-            sequence.append(("flat", flat))
-            continue
-        number = int(match.group(1))
-        if number not in group_sections:
-            group_sections[number] = []
-            sequence.append(("group", number))
-        group_sections[number].append(flat)
-
-    chapters: list[ChapterProposal] = []
-    for kind, value in sequence:
-        if kind == "group":
-            number = value
-            chapters.append(
-                ChapterProposal(title=f"Chapter {number}", sections=group_sections[number])
-            )
-        else:
-            chapters.append(value)  # type: ignore[arg-type]
-    return StructureResult(chapters=chapters)
+        return StructureResult.model_validate(result)
 
 
 def _draft_structure(summaries: list[dict[str, Any]]) -> StructureResult:
