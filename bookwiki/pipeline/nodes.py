@@ -1456,36 +1456,39 @@ def _safe_asset_filename(filename: str, index: int) -> str:
 def _vision_caption_job(candidate: dict[str, Any], md_text: str) -> dict[str, Any]:
     candidate_input = dict(candidate)
     section_window = _section_context_window_for_book_figure(md_text, candidate["block_id"])
-    section_span = None
     if section_window is not None:
         candidate_input["section_context"] = section_window["text"]
-        section_span = section_window["span"]
     return {
         "candidate": candidate,
         "input": candidate_input,
-        "section_span": section_span,
         "source_ref": str(candidate.get("source_ref") or ""),
     }
 
 
 async def _run_vision_caption_jobs(
-    jobs: list[dict[str, Any]], cfg: BookConfig, *, max_concurrent: int
+    jobs: list[dict[str, Any]],
+    cfg: BookConfig,
+    *,
+    max_concurrent: int,
 ) -> list[CacheResult | Exception]:
     outcomes: list[CacheResult | Exception | None] = [None] * len(jobs)
     indexed_jobs = [{**job, "index": index} for index, job in enumerate(jobs)]
-    groups = _caption_conflict_groups(indexed_jobs)
+    groups = _caption_same_page_groups(indexed_jobs)
     semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def run_one(job: dict[str, Any]) -> CacheResult | Exception:
-        async with semaphore:
-            try:
-                return await _run_vision_caption(job["input"], cfg)
-            except Exception as exc:  # noqa: BLE001 - captioning is best-effort enrichment
-                return exc
+    async def run_group_jobs(group_jobs: list[dict[str, Any]]) -> list[CacheResult | Exception]:
+        try:
+            async with semaphore:
+                result = await _run_vision_caption_group(group_jobs, cfg)
+            return _caption_group_outcomes(group_jobs, result)
+        except Exception as exc:  # noqa: BLE001 - captioning is best-effort enrichment
+            return [exc for _job in group_jobs]
 
     async def run_group(group: dict[str, Any]) -> None:
-        for job in sorted(group["jobs"], key=lambda item: int(item["index"])):
-            outcomes[int(job["index"])] = await run_one(job)
+        group_jobs = sorted(group["jobs"], key=lambda item: int(item["index"]))
+        group_outcomes = await run_group_jobs(group_jobs)
+        for job, outcome in zip(group_jobs, group_outcomes, strict=False):
+            outcomes[int(job["index"])] = outcome
 
     await asyncio.gather(*(run_group(group) for group in groups))
     return [
@@ -1493,58 +1496,28 @@ async def _run_vision_caption_jobs(
     ]
 
 
-def _caption_conflict_groups(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups: list[dict[str, Any]] = []
-    for job in jobs:
-        span = job.get("section_span")
-        if span is None:
-            groups.append(
-                {
-                    "section_span": None,
-                    "source_ref": str(job.get("source_ref") or ""),
-                    "jobs": [job],
-                }
-            )
-            continue
-        span = tuple(span)
+def _caption_same_page_groups(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    first_index: dict[str, int] = {}
+    for job in sorted(jobs, key=lambda item: int(item["index"])):
         source_ref = str(job.get("source_ref") or "")
-        merged_jobs = [job]
-        remaining = groups
-        changed = True
-        while changed:
-            changed = False
-            next_remaining = []
-            for group in remaining:
-                group_span = group.get("section_span")
-                same_source_ref = str(group.get("source_ref") or "") == source_ref
-                if (
-                    group_span is not None
-                    and same_source_ref
-                    and _spans_overlap(span, tuple(group_span))
-                ):
-                    span = _union_spans(span, tuple(group_span))
-                    merged_jobs.extend(group["jobs"])
-                    changed = True
-                else:
-                    next_remaining.append(group)
-            remaining = next_remaining
-        groups = [
-            *remaining,
-            {"section_span": span, "source_ref": source_ref, "jobs": merged_jobs},
-        ]
-    return groups
+        buckets.setdefault(source_ref, []).append(job)
+        first_index.setdefault(source_ref, int(job["index"]))
+    return [
+        {
+            "source_ref": source_ref,
+            "jobs": group_jobs,
+        }
+        for source_ref, group_jobs in sorted(
+            buckets.items(), key=lambda item: first_index[item[0]]
+        )
+    ]
 
 
-def _spans_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
-    return left[0] < right[1] and right[0] < left[1]
-
-
-def _union_spans(left: tuple[int, int], right: tuple[int, int]) -> tuple[int, int]:
-    return min(left[0], right[0]), max(left[1], right[1])
-
-
-async def _run_vision_caption(candidate: dict[str, Any], cfg: BookConfig) -> CacheResult:
-    agent_input = _vision_caption_agent_input(candidate, cfg)
+async def _run_vision_caption_group(
+    jobs: list[dict[str, Any]], cfg: BookConfig
+) -> CacheResult:
+    agent_input = _vision_caption_group_agent_input(jobs, cfg)
     return await run_with_cache(
         VisionCaptionAgent,
         agent_input,
@@ -1552,6 +1525,38 @@ async def _run_vision_caption(candidate: dict[str, Any], cfg: BookConfig) -> Cac
         cache_dir=_cache_dir(cfg),
         runtime=cfg.llm_runtime,
     )
+
+
+def _vision_caption_group_agent_input(
+    jobs: list[dict[str, Any]], cfg: BookConfig
+) -> dict[str, Any]:
+    images = [_vision_caption_agent_input(job["input"], cfg) for job in jobs]
+    source_ref = str(jobs[0].get("source_ref") or "") if jobs else ""
+    return {"source_ref": source_ref, "images": images}
+
+
+def _caption_group_outcomes(
+    jobs: list[dict[str, Any]], batch_result: CacheResult
+) -> list[CacheResult]:
+    captions = getattr(batch_result.result, "captions", [])
+    by_block_id = {str(item.block_id): item for item in captions}
+    outcomes: list[CacheResult] = []
+    for job in jobs:
+        candidate = job["candidate"]
+        block_id = str(candidate["block_id"])
+        item = by_block_id.get(block_id)
+        if item is None:
+            msg = f"batch caption missing result for {block_id}"
+            raise RuntimeError(msg)
+        outcomes.append(
+            CacheResult(
+                result=item,
+                cache_hit=batch_result.cache_hit,
+                key=batch_result.key,
+                path=batch_result.path,
+            )
+        )
+    return outcomes
 
 
 def _set_manifest_block_caption(

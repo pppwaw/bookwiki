@@ -29,7 +29,7 @@ from bookwiki.pipeline.nodes import (
 )
 from bookwiki.scheduler.cache import CacheResult
 from bookwiki.scheduler.config import default_config
-from bookwiki.schemas.source import VisionCaptionResult
+from bookwiki.schemas.source import VisionCaptionBatchResult, VisionCaptionItem
 from tests.fakes import RecordingRuntime
 
 
@@ -1118,10 +1118,15 @@ def test_caption_node_adds_vision_caption_to_image_blocks(
     cfg.llm_runtime = RecordingRuntime(
         [
             {
-                "caption_md": "A bell-shaped sampling distribution.",
-                "key_points": ["bell shape"],
-                "source_ref": "paper-p001",
-                "confidence": 0.91,
+                "captions": [
+                    {
+                        "block_id": "paper-p001-b002",
+                        "caption_md": "A bell-shaped sampling distribution.",
+                        "key_points": ["bell shape"],
+                        "source_ref": "paper-p001",
+                        "confidence": 0.91,
+                    }
+                ]
             }
         ]
     )
@@ -1178,7 +1183,7 @@ def test_caption_node_adds_vision_caption_to_image_blocks(
             "cache_hit": False,
         }
     ]
-    assert cfg.llm_runtime.calls[0]["output_model"].__name__ == "VisionCaptionResult"
+    assert cfg.llm_runtime.calls[0]["output_model"].__name__ == "VisionCaptionBatchResult"
     assert cfg.llm_runtime.calls[0]["image_paths"] == [str(figure)]
 
 
@@ -1191,10 +1196,15 @@ def test_caption_node_uses_nested_mineru_image_source_paths(
     cfg.llm_runtime = RecordingRuntime(
         [
             {
-                "caption_md": "A diagram of the sampling distribution.",
-                "key_points": ["sampling distribution"],
-                "source_ref": "paper-p001",
-                "confidence": 0.91,
+                "captions": [
+                    {
+                        "block_id": "paper-p001-b002",
+                        "caption_md": "A diagram of the sampling distribution.",
+                        "key_points": ["sampling distribution"],
+                        "source_ref": "paper-p001",
+                        "confidence": 0.91,
+                    }
+                ]
             }
         ]
     )
@@ -1265,10 +1275,15 @@ def test_caption_node_passes_heading_section_context_to_vision_agent(
     cfg.llm_runtime = RecordingRuntime(
         [
             {
-                "caption_md": "A contextual figure caption.",
-                "key_points": ["context"],
-                "source_ref": "paper-p001",
-                "confidence": 0.91,
+                "captions": [
+                    {
+                        "block_id": "paper-p001-b001",
+                        "caption_md": "A contextual figure caption.",
+                        "key_points": ["context"],
+                        "source_ref": "paper-p001",
+                        "confidence": 0.91,
+                    }
+                ]
             }
         ]
     )
@@ -1312,7 +1327,7 @@ def test_caption_node_passes_heading_section_context_to_vision_agent(
     asyncio.run(caption_node(state, cfg))
 
     prompt_input = _prompt_input_json(cfg.llm_runtime.calls[0])
-    section_context = str(prompt_input["section_context"])
+    section_context = str(prompt_input["images"][0]["section_context"])
     assert section_context.startswith("### Sampling Distribution")
     assert "Use the central limit theorem" in section_context
     assert "The picture compares the approximation" in section_context
@@ -1320,63 +1335,81 @@ def test_caption_node_passes_heading_section_context_to_vision_agent(
     assert "This text should not be in the section context" not in section_context
 
 
-def test_caption_node_parallelizes_non_overlapping_sections_and_serializes_overlaps(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_caption_node_batches_same_page_images(tmp_path: Path) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
-    source_dir = cfg.work_dir / "sources_md"
-    manifest_dir = cfg.work_dir / "source_refs"
-    source_dir.mkdir(parents=True)
-    manifest_dir.mkdir(parents=True)
     cfg.generation["visionCaption"] = {
         "mode": "auto",
         "maxImagesPerSource": 20,
         "maxConcurrent": 10,
     }
-
-    blocks: list[dict[str, object]] = []
-    markdown = ["# paper", "", "### Shared Section", ""]
-    for index in range(3):
-        block_id = f"paper-p001-b{index + 1:03d}"
-        blocks.append(
+    source_dir = cfg.work_dir / "sources_md"
+    manifest_dir = cfg.work_dir / "source_refs"
+    asset_dir = cfg.work_dir / "assets" / "paper"
+    source_dir.mkdir(parents=True)
+    manifest_dir.mkdir(parents=True)
+    asset_dir.mkdir(parents=True)
+    first_image = asset_dir / "a.png"
+    second_image = asset_dir / "b.png"
+    first_image.write_bytes(b"image-a")
+    second_image.write_bytes(b"image-b")
+    cfg.llm_runtime = RecordingRuntime(
+        [
             {
-                "block_id": block_id,
-                "page_ref": "paper-p001",
-                "page_idx": 0,
-                "block_index": index + 1,
-                "type": "image",
-                "asset_path": f"work/assets/paper/{block_id}.png",
+                "captions": [
+                    {
+                        "block_id": "paper-p001-b001",
+                        "caption_md": "Caption for the first same-page figure.",
+                        "key_points": ["first"],
+                        "source_ref": "paper-p001",
+                        "confidence": 0.91,
+                    },
+                    {
+                        "block_id": "paper-p001-b002",
+                        "caption_md": "Caption for the second same-page figure.",
+                        "key_points": ["second"],
+                        "source_ref": "paper-p001",
+                        "confidence": 0.92,
+                    },
+                ]
             }
-        )
-        markdown.append(
-            f'<BookFigure id="{block_id}" sourceRef="paper-p001" '
-            f'src="/bookwiki-assets/paper/{block_id}.png" />'
-        )
-    for index in range(12):
-        block_index = index + 4
-        block_id = f"paper-p001-b{block_index:03d}"
-        markdown.extend(["", f"### Independent {index + 1}", ""])
-        markdown.append(
-            f'<BookFigure id="{block_id}" sourceRef="paper-p001" '
-            f'src="/bookwiki-assets/paper/{block_id}.png" />'
-        )
-        blocks.append(
-            {
-                "block_id": block_id,
-                "page_ref": "paper-p001",
-                "page_idx": 0,
-                "block_index": block_index,
-                "type": "image",
-                "asset_path": f"work/assets/paper/{block_id}.png",
-            }
-        )
-
-    (source_dir / "paper.md").write_text("\n".join(markdown), encoding="utf-8")
+        ]
+    )
+    (source_dir / "paper.md").write_text(
+        "# paper\n\n"
+        "### Shared Page\n\n"
+        '<BookFigure id="paper-p001-b001" sourceRef="paper-p001" '
+        'src="/bookwiki-assets/paper/a.png" />\n\n'
+        '<BookFigure id="paper-p001-b002" sourceRef="paper-p001" '
+        'src="/bookwiki-assets/paper/b.png" />\n',
+        encoding="utf-8",
+    )
     (manifest_dir / "paper.json").write_text(
         json.dumps(
             {
                 "source_id": "paper",
-                "pages": [{"source_ref": "paper-p001", "blocks": blocks}],
+                "pages": [
+                    {
+                        "source_ref": "paper-p001",
+                        "blocks": [
+                            {
+                                "block_id": "paper-p001-b001",
+                                "page_ref": "paper-p001",
+                                "page_idx": 0,
+                                "block_index": 1,
+                                "type": "image",
+                                "asset_path": "work/assets/paper/a.png",
+                            },
+                            {
+                                "block_id": "paper-p001-b002",
+                                "page_ref": "paper-p001",
+                                "page_idx": 0,
+                                "block_index": 2,
+                                "type": "image",
+                                "asset_path": "work/assets/paper/b.png",
+                            },
+                        ],
+                    }
+                ],
             },
             ensure_ascii=False,
             indent=2,
@@ -1384,65 +1417,57 @@ def test_caption_node_parallelizes_non_overlapping_sections_and_serializes_overl
         encoding="utf-8",
     )
 
-    active = 0
-    max_active = 0
-    overlap_violation = False
-    active_by_context: dict[str, int] = {}
-
-    async def fake_run_vision_caption(candidate: dict[str, object], cfg_arg) -> CacheResult:
-        nonlocal active, max_active, overlap_violation
-        context = str(candidate.get("section_context") or candidate["block_id"])
-        if active_by_context.get(context, 0):
-            overlap_violation = True
-        active_by_context[context] = active_by_context.get(context, 0) + 1
-        active += 1
-        max_active = max(max_active, active)
-        await asyncio.sleep(0.02)
-        active -= 1
-        active_by_context[context] -= 1
-        block_id = str(candidate["block_id"])
-        return CacheResult(
-            result=VisionCaptionResult(
-                caption_md=f"caption for {block_id}",
-                key_points=[],
-                source_ref=str(candidate["source_ref"]),
-                confidence=0.9,
-            ),
-            cache_hit=False,
-            key=f"key-{block_id}",
-            path=cfg.cache_dir / f"{block_id}.json",
+    result = asyncio.run(
+        caption_node(
+            {
+                "sources_md": ["work/sources_md/paper.md"],
+                "source_ref_manifests": ["work/source_refs/paper.json"],
+            },
+            cfg,
         )
-
-    monkeypatch.setattr(
-        "bookwiki.pipeline.nodes._run_vision_caption",
-        fake_run_vision_caption,
     )
 
-    state = {
-        "sources_md": ["work/sources_md/paper.md"],
-        "source_ref_manifests": ["work/source_refs/paper.json"],
-    }
-    result = asyncio.run(caption_node(state, cfg))
+    manifest = json.loads((manifest_dir / "paper.json").read_text(encoding="utf-8"))
+    first, second = manifest["pages"][0]["blocks"]
+    assert first["caption"] == "Caption for the first same-page figure."
+    assert second["caption"] == "Caption for the second same-page figure."
+    assert result["caption_results"] == [
+        {
+            "block_id": "paper-p001-b001",
+            "source_ref": "paper-p001",
+            "manifest": "work/source_refs/paper.json",
+            "cache_hit": False,
+        },
+        {
+            "block_id": "paper-p001-b002",
+            "source_ref": "paper-p001",
+            "manifest": "work/source_refs/paper.json",
+            "cache_hit": False,
+        },
+    ]
+    assert len(cfg.llm_runtime.calls) == 1
+    assert cfg.llm_runtime.calls[0]["output_model"].__name__ == "VisionCaptionBatchResult"
+    assert cfg.llm_runtime.calls[0]["image_paths"] == [str(first_image), str(second_image)]
+    prompt_input = _prompt_input_json(cfg.llm_runtime.calls[0])
+    assert [item["block_id"] for item in prompt_input["images"]] == [
+        "paper-p001-b001",
+        "paper-p001-b002",
+    ]
 
-    assert len(result["caption_results"]) == 15
-    assert max_active > 1
-    assert max_active <= 10
-    assert overlap_violation is False
 
-
-def test_caption_node_allows_same_heading_with_different_source_refs_to_run_parallel(
+def test_caption_node_records_group_caption_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
-    source_dir = cfg.work_dir / "sources_md"
-    manifest_dir = cfg.work_dir / "source_refs"
-    source_dir.mkdir(parents=True)
-    manifest_dir.mkdir(parents=True)
     cfg.generation["visionCaption"] = {
         "mode": "auto",
         "maxImagesPerSource": 20,
         "maxConcurrent": 10,
     }
+    source_dir = cfg.work_dir / "sources_md"
+    manifest_dir = cfg.work_dir / "source_refs"
+    source_dir.mkdir(parents=True)
+    manifest_dir.mkdir(parents=True)
     blocks = [
         {
             "block_id": "paper-p001-b001",
@@ -1453,69 +1478,60 @@ def test_caption_node_allows_same_heading_with_different_source_refs_to_run_para
             "asset_path": "work/assets/paper/a.png",
         },
         {
-            "block_id": "paper-p002-b001",
-            "page_ref": "paper-p002",
-            "page_idx": 1,
-            "block_index": 1,
+            "block_id": "paper-p001-b002",
+            "page_ref": "paper-p001",
+            "page_idx": 0,
+            "block_index": 2,
             "type": "image",
             "asset_path": "work/assets/paper/b.png",
         },
     ]
     (source_dir / "paper.md").write_text(
         "# paper\n\n"
-        "### Shared Heading\n\n"
+        "### Shared Page\n\n"
         '<BookFigure id="paper-p001-b001" sourceRef="paper-p001" '
         'src="/bookwiki-assets/paper/a.png" />\n\n'
-        '<BookFigure id="paper-p002-b001" sourceRef="paper-p002" '
+        '<BookFigure id="paper-p001-b002" sourceRef="paper-p001" '
         'src="/bookwiki-assets/paper/b.png" />\n',
         encoding="utf-8",
     )
     (manifest_dir / "paper.json").write_text(
         json.dumps(
-            {
-                "source_id": "paper",
-                "pages": [{"source_ref": "paper-p001", "blocks": blocks}],
-            },
+            {"source_id": "paper", "pages": [{"source_ref": "paper-p001", "blocks": blocks}]},
             ensure_ascii=False,
             indent=2,
         ),
         encoding="utf-8",
     )
-    active = 0
-    max_active = 0
 
-    async def fake_run_vision_caption(candidate: dict[str, object], cfg_arg) -> CacheResult:
-        nonlocal active, max_active
-        active += 1
-        max_active = max(max_active, active)
-        await asyncio.sleep(0.02)
-        active -= 1
-        block_id = str(candidate["block_id"])
-        return CacheResult(
-            result=VisionCaptionResult(
-                caption_md=f"caption for {block_id}",
-                key_points=[],
-                source_ref=str(candidate["source_ref"]),
-                confidence=0.9,
-            ),
-            cache_hit=False,
-            key=f"key-{block_id}",
-            path=cfg.cache_dir / f"{block_id}.json",
-        )
+    async def fail_group(jobs: list[dict[str, object]], cfg_arg) -> CacheResult:
+        raise RuntimeError("caption unavailable")
 
     monkeypatch.setattr(
-        "bookwiki.pipeline.nodes._run_vision_caption",
-        fake_run_vision_caption,
+        "bookwiki.pipeline.nodes._run_vision_caption_group",
+        fail_group,
+        raising=False,
     )
 
-    state = {
-        "sources_md": ["work/sources_md/paper.md"],
-        "source_ref_manifests": ["work/source_refs/paper.json"],
-    }
-    result = asyncio.run(caption_node(state, cfg))
+    with pytest.raises(RuntimeError, match="caption failed for 2 images"):
+        asyncio.run(
+            caption_node(
+                {
+                    "sources_md": ["work/sources_md/paper.md"],
+                    "source_ref_manifests": ["work/source_refs/paper.json"],
+                },
+                cfg,
+            )
+        )
 
-    assert len(result["caption_results"]) == 2
-    assert max_active == 2
+    manifest = json.loads((manifest_dir / "paper.json").read_text(encoding="utf-8"))
+    first, second = manifest["pages"][0]["blocks"]
+    assert "caption" not in first
+    assert "caption" not in second
+    assert manifest["vision_warnings"] == [
+        "vision caption failed for paper-p001-b001: caption unavailable",
+        "vision caption failed for paper-p001-b002: caption unavailable",
+    ]
 
 
 def test_caption_node_fails_stage_after_recording_caption_failures(
@@ -1536,10 +1552,10 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
             "asset_path": "work/assets/paper/ok.png",
         },
         {
-            "block_id": "paper-p001-b002",
-            "page_ref": "paper-p001",
-            "page_idx": 0,
-            "block_index": 2,
+            "block_id": "paper-p002-b001",
+            "page_ref": "paper-p002",
+            "page_idx": 1,
+            "block_index": 1,
             "type": "image",
             "asset_path": "work/assets/paper/fail.png",
         },
@@ -1550,7 +1566,7 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
         '<BookFigure id="paper-p001-b001" sourceRef="paper-p001" '
         'src="/bookwiki-assets/paper/ok.png" />\n\n'
         "### Second\n\n"
-        '<BookFigure id="paper-p001-b002" sourceRef="paper-p001" '
+        '<BookFigure id="paper-p002-b001" sourceRef="paper-p002" '
         'src="/bookwiki-assets/paper/fail.png" />\n',
         encoding="utf-8",
     )
@@ -1558,7 +1574,10 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
         json.dumps(
             {
                 "source_id": "paper",
-                "pages": [{"source_ref": "paper-p001", "blocks": blocks}],
+                "pages": [
+                    {"source_ref": "paper-p001", "blocks": [blocks[0]]},
+                    {"source_ref": "paper-p002", "blocks": [blocks[1]]},
+                ],
             },
             ensure_ascii=False,
             indent=2,
@@ -1566,16 +1585,23 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
         encoding="utf-8",
     )
 
-    async def fake_run_vision_caption(candidate: dict[str, object], cfg_arg) -> CacheResult:
-        block_id = str(candidate["block_id"])
-        if block_id.endswith("002"):
+    async def fake_run_vision_caption_group(
+        jobs: list[dict[str, object]], cfg_arg
+    ) -> CacheResult:
+        block_id = str(jobs[0]["candidate"]["block_id"])
+        if block_id.endswith("002-b001"):
             raise RuntimeError("caption service unavailable")
         return CacheResult(
-            result=VisionCaptionResult(
-                caption_md="successful caption",
-                key_points=[],
-                source_ref=str(candidate["source_ref"]),
-                confidence=0.9,
+            result=VisionCaptionBatchResult(
+                captions=[
+                    VisionCaptionItem(
+                        block_id=block_id,
+                        caption_md="successful caption",
+                        key_points=[],
+                        source_ref=str(jobs[0]["candidate"]["source_ref"]),
+                        confidence=0.9,
+                    )
+                ]
             ),
             cache_hit=False,
             key=f"key-{block_id}",
@@ -1583,8 +1609,8 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
         )
 
     monkeypatch.setattr(
-        "bookwiki.pipeline.nodes._run_vision_caption",
-        fake_run_vision_caption,
+        "bookwiki.pipeline.nodes._run_vision_caption_group",
+        fake_run_vision_caption_group,
     )
 
     state = {
@@ -1595,11 +1621,12 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
         asyncio.run(caption_node(state, cfg))
 
     manifest = json.loads((manifest_dir / "paper.json").read_text(encoding="utf-8"))
-    first, second = manifest["pages"][0]["blocks"]
-    assert first["caption"] == "successful caption"
-    assert "caption" not in second
+    first_page_block = manifest["pages"][0]["blocks"][0]
+    second_page_block = manifest["pages"][1]["blocks"][0]
+    assert first_page_block["caption"] == "successful caption"
+    assert "caption" not in second_page_block
     assert manifest["vision_warnings"] == [
-        "vision caption failed for paper-p001-b002: caption service unavailable"
+        "vision caption failed for paper-p002-b001: caption service unavailable"
     ]
 
 
@@ -1615,10 +1642,15 @@ def test_caption_node_refines_existing_non_vision_caption_once(
     cfg.llm_runtime = RecordingRuntime(
         [
             {
-                "caption_md": "一百个 95% 置信区间，星号标出未覆盖真实均值的区间。",
-                "key_points": ["confidence intervals"],
-                "source_ref": "paper-p001",
-                "confidence": 0.91,
+                "captions": [
+                    {
+                        "block_id": "paper-p001-b001",
+                        "caption_md": "一百个 95% 置信区间，星号标出未覆盖真实均值的区间。",
+                        "key_points": ["confidence intervals"],
+                        "source_ref": "paper-p001",
+                        "confidence": 0.91,
+                    }
+                ]
             }
         ]
     )
@@ -1650,7 +1682,7 @@ def test_caption_node_refines_existing_non_vision_caption_once(
     asyncio.run(caption_node(state, cfg))
 
     prompt_input = _prompt_input_json(cfg.llm_runtime.calls[0])
-    assert prompt_input["existing_caption"] == "One hundred 95% Cls."
+    assert prompt_input["images"][0]["existing_caption"] == "One hundred 95% Cls."
     assert len(cfg.llm_runtime.calls) == 1
     manifest = json.loads(
         (cfg.book_dir / state["source_ref_manifests"][0]).read_text(encoding="utf-8")
@@ -1672,10 +1704,15 @@ def test_caption_node_preserves_latex_backslashes_when_rewriting_book_figure(
     cfg.llm_runtime = RecordingRuntime(
         [
             {
-                "caption_md": r"A density curve with $\lambda=2$.",
-                "key_points": ["lambda"],
-                "source_ref": "paper-p001",
-                "confidence": 0.91,
+                "captions": [
+                    {
+                        "block_id": "paper-p001-b001",
+                        "caption_md": r"A density curve with $\lambda=2$.",
+                        "key_points": ["lambda"],
+                        "source_ref": "paper-p001",
+                        "confidence": 0.91,
+                    }
+                ]
             }
         ]
     )
