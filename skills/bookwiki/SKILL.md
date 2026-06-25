@@ -55,7 +55,7 @@ Agents return Pydantic models. Cache misses call the configured real LLM through
 - Keep keys in the environment or repo root `.env`; existing environment variables take precedence.
 - Missing keys should fail loudly. Do not silently fall back to stub content.
 - Tests may use `BOOKWIKI_TEST_LLM=1` for the explicit fake runtime.
-- Budget is enforced: `budget.maxCostCny` (default `70.0`; `<= 0` means unlimited) raises `BudgetExceeded` once the running total crosses it. Prices are registered per Router deployment in CNY. Legacy `maxCostUsd` configs are migrated to `maxCostCny`.
+- Budget is enforced with `budget.maxCostCny` defaulting to `70.0`; `<= 0` means unlimited. `BudgetExceeded` is raised once the running total crosses the configured limit. Prices are registered per Router deployment in CNY.
 
 ## Failure Triage
 

@@ -139,6 +139,6 @@ Notes on the current check/repair contract:
 - Structure gate failure: add the exact approval marker after user review.
 - Stale content after changing generation settings: use `--from generate --force`.
 - `check` aborts on a missing MDX validator: install Node and run the `tools/mdx-validate` install (`node_modules`), or set `generation.allowMissingMdxValidator=true` only if you accept skipping render-time MDX checks.
-- `BudgetExceeded`: the run crossed `budget.maxCostCny` (default `70.0`); raise it in `book.config.json` or set `<= 0` for unlimited, then `--resume`.
+- `BudgetExceeded`: the run crossed `budget.maxCostCny` (default `70.0`); raise it in `book.config.json` or set it to `<= 0` for unlimited, then `--resume`.
 - SQLite missing: run `python scripts/index.py books/<id>` after content exists and check passes.
 - Site has old docs: rerun `python scripts/site.py books/<id>` when preview is requested.
