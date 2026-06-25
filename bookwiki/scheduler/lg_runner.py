@@ -56,6 +56,7 @@ RECURSION_LIMIT = 50
 def _bind_node(name: str, fn: Any, cfg: BookConfig):
     async def node(state: PipelineState) -> dict[str, Any]:
         LOGGER.info("node start name=%s book_id=%s", name, cfg.book_id)
+        cfg._llm_active_node = name
         usage_before = _llm_usage_totals(cfg)
         result = fn(state, cfg)
         if inspect.isawaitable(result):
@@ -63,6 +64,8 @@ def _bind_node(name: str, fn: Any, cfg: BookConfig):
         cache_hit = bool((result or {}).get("cache_hit", False))
         _append_stage_usage(cfg, name, usage_before, _llm_usage_totals(cfg))
         LOGGER.info("node done name=%s book_id=%s cache_hit=%s", name, cfg.book_id, cache_hit)
+        if getattr(cfg, "_llm_active_node", None) == name:
+            cfg._llm_active_node = None
         return result
 
     return node
@@ -232,7 +235,10 @@ def _llm_usage_snapshot(cfg: BookConfig, *, include_unfinished: bool = False) ->
     if include_unfinished:
         unfinished = _unfinished_stage_usage(cfg, stages)
         if unfinished["total_tokens"] or unfinished["cost_cny"]:
-            stages.append({"name": "interrupted", "currency": "CNY", **unfinished})
+            stage_name = getattr(cfg, "_llm_active_node", None) or "interrupted"
+            stages.append(
+                {"name": stage_name, "status": "interrupted", "currency": "CNY", **unfinished}
+            )
     totals = _sum_stage_usage(stages)
     return {
         "currency": "CNY",

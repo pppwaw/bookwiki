@@ -244,7 +244,8 @@ def test_manifest_is_written_when_run_is_cancelled(
         "budget_max_cost_cny": 70.0,
         "stages": [
             {
-                "name": "interrupted",
+                "name": "convert",
+                "status": "interrupted",
                 "currency": "CNY",
                 "cost_cny": 0.25,
                 "prompt_tokens": 100,
