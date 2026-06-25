@@ -40,7 +40,7 @@ from bookwiki.scheduler.resume import (
     state_for_force_from,
 )
 from bookwiki.scheduler.state import PipelineState
-from bookwiki.utils.files import write_json
+from bookwiki.utils.files import read_json, write_json
 from bookwiki.utils.logging import configure_book_file_logging, get_logger
 
 LOGGER = get_logger(__name__)
@@ -205,26 +205,35 @@ def _write_manifest(
     status: str,
     next_node: str | None,
     config_hash: str,
+    include_unfinished_usage: bool = False,
 ) -> None:
+    manifest_path = cfg.work_dir / "logs" / "run-manifest.json"
+    prior = read_json(manifest_path, default={})
     write_json(
-        cfg.work_dir / "logs" / "run-manifest.json",
+        manifest_path,
         {
             "book_id": cfg.book_id,
             "status": status,
             "next_node": next_node,
             "config_hash": config_hash,
             "nodes": nodes_log,
-            "llm_usage": _llm_usage_snapshot(cfg),
-            "outputs": {
-                "content": str(cfg.content_dir),
-                "sqlite": state.get("sqlite"),
-            },
+            "llm_usage": _accumulated_llm_usage(
+                prior,
+                _llm_usage_snapshot(cfg, include_unfinished=include_unfinished_usage),
+                cfg,
+            ),
+            "outputs": {"content": str(cfg.content_dir), "sqlite": state.get("sqlite")},
         },
     )
 
 
-def _llm_usage_snapshot(cfg: BookConfig) -> dict[str, Any]:
-    totals = _llm_usage_totals(cfg)
+def _llm_usage_snapshot(cfg: BookConfig, *, include_unfinished: bool = False) -> dict[str, Any]:
+    stages = list(getattr(cfg, "_llm_stage_usage", []))
+    if include_unfinished:
+        unfinished = _unfinished_stage_usage(cfg, stages)
+        if unfinished["total_tokens"] or unfinished["cost_cny"]:
+            stages.append({"name": "interrupted", "currency": "CNY", **unfinished})
+    totals = _sum_stage_usage(stages)
     return {
         "currency": "CNY",
         "total_cost_cny": totals["cost_cny"],
@@ -232,8 +241,81 @@ def _llm_usage_snapshot(cfg: BookConfig) -> dict[str, Any]:
         "completion_tokens": totals["completion_tokens"],
         "total_tokens": totals["total_tokens"],
         "budget_max_cost_cny": cfg.budget.get("maxCostCny"),
-        "stages": list(getattr(cfg, "_llm_stage_usage", [])),
+        "stages": stages,
     }
+
+
+def _accumulated_llm_usage(
+    prior_manifest: Any, current: dict[str, Any], cfg: BookConfig
+) -> dict[str, Any]:
+    prior_usage = prior_manifest.get("llm_usage", {}) if isinstance(prior_manifest, dict) else {}
+    prior_stages = prior_usage.get("stages", []) if isinstance(prior_usage, dict) else []
+    if not isinstance(prior_stages, list):
+        prior_stages = []
+    prompt_tokens = _usage_int(prior_usage, "prompt_tokens") + int(current["prompt_tokens"])
+    completion_tokens = _usage_int(prior_usage, "completion_tokens") + int(
+        current["completion_tokens"]
+    )
+    return {
+        "currency": "CNY",
+        "total_cost_cny": round(
+            _usage_float(prior_usage, "total_cost_cny") + float(current["total_cost_cny"]), 6
+        ),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "budget_max_cost_cny": cfg.budget.get("maxCostCny"),
+        "stages": [*prior_stages, *current["stages"]],
+    }
+
+
+def _sum_stage_usage(stages: list[dict[str, Any]]) -> dict[str, Any]:
+    prompt_tokens = sum(int(stage.get("prompt_tokens", 0) or 0) for stage in stages)
+    completion_tokens = sum(int(stage.get("completion_tokens", 0) or 0) for stage in stages)
+    return {
+        "cost_cny": round(sum(float(stage.get("cost_cny", 0.0) or 0.0) for stage in stages), 6),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def _unfinished_stage_usage(cfg: BookConfig, stages: list[dict[str, Any]]) -> dict[str, Any]:
+    baseline = getattr(cfg, "_llm_run_usage_start", None)
+    if not isinstance(baseline, dict):
+        return {"cost_cny": 0.0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    current = _llm_usage_totals(cfg)
+    completed = _sum_stage_usage(stages)
+    prompt_tokens = (
+        current["prompt_tokens"] - baseline["prompt_tokens"] - completed["prompt_tokens"]
+    )
+    completion_tokens = (
+        current["completion_tokens"]
+        - baseline["completion_tokens"]
+        - completed["completion_tokens"]
+    )
+    prompt_tokens = max(prompt_tokens, 0)
+    completion_tokens = max(completion_tokens, 0)
+    return {
+        "cost_cny": max(
+            round(current["cost_cny"] - baseline["cost_cny"] - completed["cost_cny"], 6), 0.0
+        ),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def _usage_int(usage: Any, key: str) -> int:
+    if not isinstance(usage, dict):
+        return 0
+    return int(usage.get(key, 0) or 0)
+
+
+def _usage_float(usage: Any, key: str) -> float:
+    if not isinstance(usage, dict):
+        return 0.0
+    return float(usage.get(key, 0.0) or 0.0)
 
 
 def _llm_usage_totals(cfg: BookConfig) -> dict[str, Any]:
@@ -272,8 +354,8 @@ async def _drive(
     graph: Any,
     input_state: dict[str, Any] | None,
     thread: dict[str, Any],
+    nodes_log: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], str, str | None]:
-    nodes_log: list[dict[str, Any]] = []
     async for chunk in graph.astream(input_state, thread, stream_mode="updates"):
         for node_name, delta in chunk.items():
             if node_name not in NODE_ORDER:
@@ -306,6 +388,7 @@ async def _run(
     if cfg.llm_runtime is None:
         cfg.llm_runtime = build_runtime(max_cost_cny=cfg.budget.get("maxCostCny"))
     cfg._llm_stage_usage = []
+    cfg._llm_run_usage_start = _llm_usage_totals(cfg)
 
     prior_values, prior_meta, prior_next = await _peek(db_path, cfg)
     config_matches = prior_meta.get("config_hash") == cfg_hash
@@ -362,11 +445,39 @@ async def _run(
                 as_node=NODE_ORDER[seed_index - 1],
             )
             input_state = None
-        values, nodes_log, status, next_node = await _drive(graph, input_state, thread)
-        _write_manifest(
-            cfg, values, nodes_log, status=status, next_node=next_node, config_hash=cfg_hash
-        )
-        return values
+        nodes_log: list[dict[str, Any]] = []
+        try:
+            values, nodes_log, status, next_node = await _drive(
+                graph, input_state, thread, nodes_log
+            )
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                while current_task.cancelling():
+                    current_task.uncancel()
+            values: dict[str, Any] = {}
+            next_node: str | None = None
+            try:
+                snapshot = await graph.aget_state(thread)
+                values = dict(snapshot.values) if snapshot.values else {}
+                next_node = snapshot.next[0] if snapshot.next else None
+            except Exception:
+                LOGGER.exception("failed to read checkpoint while handling interruption")
+            _write_manifest(
+                cfg,
+                values,
+                nodes_log,
+                status="interrupted",
+                next_node=next_node,
+                config_hash=cfg_hash,
+                include_unfinished_usage=True,
+            )
+            raise
+        else:
+            _write_manifest(
+                cfg, values, nodes_log, status=status, next_node=next_node, config_hash=cfg_hash
+            )
+            return values
 
 
 # --------------------------------------------------------------------------- #

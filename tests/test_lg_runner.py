@@ -96,12 +96,20 @@ def test_stop_after_runs_only_up_to_target(tmp_path: Path, monkeypatch: pytest.M
 def test_manifest_records_llm_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     cfg.llm_runtime = SimpleNamespace(
-        total_cost_cny=1.2345678,
-        total_prompt_tokens=120,
-        total_completion_tokens=34,
+        total_cost_cny=0.0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
     )
     calls: list[str] = []
     _register_fakes(monkeypatch, calls)
+
+    def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        cfg_arg.llm_runtime.total_cost_cny += 1.2345678
+        cfg_arg.llm_runtime.total_prompt_tokens += 120
+        cfg_arg.llm_runtime.total_completion_tokens += 34
+        return {**_NODE_OUTPUTS["convert"], "cache_hit": False}
+
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
 
     run_pipeline(cfg, stop_after="convert", resume=False)
 
@@ -116,10 +124,10 @@ def test_manifest_records_llm_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPa
             {
                 "name": "convert",
                 "currency": "CNY",
-                "cost_cny": 0.0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
+                "cost_cny": 1.234568,
+                "prompt_tokens": 120,
+                "completion_tokens": 34,
+                "total_tokens": 154,
             }
         ],
     }
@@ -156,6 +164,95 @@ def test_manifest_records_stage_llm_usage(tmp_path: Path, monkeypatch: pytest.Mo
             "total_tokens": 120,
         }
     ]
+
+
+def test_manifest_accumulates_llm_usage_across_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = SimpleNamespace(
+        total_cost_cny=0.0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+    )
+
+    def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        cfg_arg.llm_runtime.total_cost_cny += 0.25
+        cfg_arg.llm_runtime.total_prompt_tokens += 100
+        cfg_arg.llm_runtime.total_completion_tokens += 20
+        return {**_NODE_OUTPUTS["convert"], "cache_hit": False}
+
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
+
+    run_pipeline(cfg, stop_after="convert", resume=False)
+    run_pipeline(cfg, stop_after="convert", resume=False)
+
+    usage = _manifest(cfg)["llm_usage"]
+    assert usage["total_cost_cny"] == 0.5
+    assert usage["prompt_tokens"] == 200
+    assert usage["completion_tokens"] == 40
+    assert usage["total_tokens"] == 240
+    assert usage["stages"] == [
+        {
+            "name": "convert",
+            "currency": "CNY",
+            "cost_cny": 0.25,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+        },
+        {
+            "name": "convert",
+            "currency": "CNY",
+            "cost_cny": 0.25,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+        },
+    ]
+
+
+def test_manifest_is_written_when_run_is_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = SimpleNamespace(
+        total_cost_cny=0.0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+    )
+
+    def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        cfg_arg.llm_runtime.total_cost_cny += 0.25
+        cfg_arg.llm_runtime.total_prompt_tokens += 100
+        cfg_arg.llm_runtime.total_completion_tokens += 20
+        raise asyncio.CancelledError
+
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
+
+    with pytest.raises(asyncio.CancelledError):
+        run_pipeline(cfg, stop_after="convert", resume=False)
+
+    manifest = _manifest(cfg)
+    assert manifest["status"] == "interrupted"
+    assert manifest["llm_usage"] == {
+        "currency": "CNY",
+        "total_cost_cny": 0.25,
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120,
+        "budget_max_cost_cny": 70.0,
+        "stages": [
+            {
+                "name": "interrupted",
+                "currency": "CNY",
+                "cost_cny": 0.25,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+            }
+        ],
+    }
 
 
 def test_pause_after_halts_after_listed_node(
