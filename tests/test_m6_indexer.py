@@ -169,6 +169,44 @@ def test_build_sqlite_index_writes_full_schema_fts_and_learning_items(tmp_path: 
         assert matches
 
 
+def test_build_sqlite_index_writes_worked_items_with_grading_json(tmp_path: Path) -> None:
+    content_dir = tmp_path / "content" / "docs"
+    chapter = content_dir / "chapters" / "ch03.mdx"
+    chapter.parent.mkdir(parents=True)
+    chapter.write_text(
+        "---\n"
+        "title: Worked Problems\n"
+        "type: chapter\n"
+        "chapter_id: ch03\n"
+        "---\n"
+        "# Worked Problems\n\n"
+        '<WorkedProblem id="worked-001" chapterId="ch03" question={"证明 $a=b$。"} '
+        'referenceAnswer={"由题设得 $a=b$。"} '
+        'rubric={[{"point":"写出题设","weight":2}]} '
+        'explanation={"考查证明过程。"} '
+        'citations={[{"ref_id":"textbook-p001","quote":"a=b"}]}>'
+        '</WorkedProblem>\n',
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "site" / ".bookwiki" / "bookwiki.sqlite"
+
+    parsed = parse_mdx_file(chapter, root=content_dir)
+    build_sqlite_index(content_dir, db_path)
+
+    assert parsed.quiz_items[0]["type"] == "worked"
+    assert parsed.quiz_items[0]["grading_json"]["rubric"][0]["weight"] == 2
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "select type, question, answer, grading_json, source_refs_json from quiz_items"
+        ).fetchone()
+
+    assert row[0] == "worked"
+    assert row[1] == "证明 $a=b$。"
+    assert row[2] == "由题设得 $a=b$。"
+    assert '"reference_answer"' in row[3]
+    assert '"textbook-p001"' in row[4]
+
+
 def test_build_sqlite_index_dedupes_colliding_page_item_ids(tmp_path: Path) -> None:
     content_dir = tmp_path / "content" / "docs"
     chapter = content_dir / "chapters" / "ch01.mdx"

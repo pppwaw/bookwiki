@@ -205,6 +205,7 @@ function parseSlot(node) {
     id: stringAttr(node, "id"),
     topic: stringAttr(node, "topic"),
     concept: stringAttr(node, "concept"),
+    slotKind: stringAttr(node, "kind"),
     sourceRefs: exprAttr(node, "sourceRefs"),
   };
 }

@@ -44,6 +44,7 @@ class SlotSpec:
     topic: str
     concept: str
     source_refs: list[str]
+    kind: str = "mcq"
 
 
 @dataclass
@@ -123,6 +124,8 @@ def _render_slot(spec: SlotSpec) -> str:
     ]
     if spec.concept:
         attrs.append(f'concept="{escape(spec.concept, quote=True)}"')
+    if spec.kind != "mcq":
+        attrs.append(f'kind="{escape(spec.kind, quote=True)}"')
     attrs.append(f"sourceRefs={{{refs}}}")
     return f"<QuizItemSlot {' '.join(attrs)} />"
 
@@ -169,7 +172,12 @@ def _valid_item(child: dict[str, Any], allowed_refs: set[str]) -> dict[str, Any]
     }
 
 
-def _valid_slot(child: dict[str, Any], allowed_refs: set[str]) -> tuple[str, list[str]] | None:
+def _slot_kind(value: Any) -> str:
+    kind = str(value or "mcq").strip() or "mcq"
+    return kind if kind in {"mcq", "worked"} else "mcq"
+
+
+def _valid_slot(child: dict[str, Any], allowed_refs: set[str]) -> tuple[str, list[str], str] | None:
     topic = str(child.get("topic") or "").strip()
     if not topic or len(topic) > MAX_TOPIC_CHARS:
         return None
@@ -180,13 +188,14 @@ def _valid_slot(child: dict[str, Any], allowed_refs: set[str]) -> tuple[str, lis
     refs = [str(r) for r in raw_refs if str(r) in allowed_refs]
     if not refs:
         return None
-    return topic, refs
+    return topic, refs, _slot_kind(child.get("slotKind"))
 
 
 # --- regex fallback (used only when the section body isn't MDX-parseable yet) ----------
 
 _SLOT_TOPIC_RE = re.compile(r'\btopic="([^"]*)"')
 _SLOT_CONCEPT_RE = re.compile(r'\bconcept="([^"]*)"')
+_SLOT_KIND_RE = re.compile(r'\bkind="([^"]*)"')
 _SLOT_SOURCEREFS_RE = re.compile(r"sourceRefs=\{\s*\[([^\]]*)\]\s*\}")
 _QUOTED_STRING_RE = re.compile(r'"([^"]*)"')
 
@@ -210,7 +219,7 @@ def _rescue_slots_via_regex(
     """
     specs: list[SlotSpec] = []
     warnings: list[str] = []
-    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    seen: set[tuple[str, str, str, tuple[str, ...]]] = set()
     ordinal = 0
     changed = False
 
@@ -222,13 +231,15 @@ def _rescue_slots_via_regex(
         topic = topic_m.group(1).strip() if topic_m else ""
         concept_m = _SLOT_CONCEPT_RE.search(tag)
         concept = concept_m.group(1).strip() if concept_m else ""
+        kind_m = _SLOT_KIND_RE.search(tag)
+        kind = _slot_kind(kind_m.group(1) if kind_m else "mcq")
         refs_m = _SLOT_SOURCEREFS_RE.search(tag)
         raw_refs = _QUOTED_STRING_RE.findall(refs_m.group(1)) if refs_m else []
         refs = [r for r in raw_refs if r in allowed_refs]
         if not topic or len(topic) > MAX_TOPIC_CHARS or not refs:
             warnings.append(f"{chapter_id} s{section_index}: dropped invalid quiz slot")
             return ""
-        key = (topic, concept, tuple(sorted(refs)))
+        key = (kind, topic, concept, tuple(sorted(refs)))
         if key in seen:
             warnings.append(f"{chapter_id} s{section_index}: dropped duplicate quiz slot")
             return ""
@@ -238,7 +249,7 @@ def _rescue_slots_via_regex(
         seen.add(key)
         slot_id = f"{chapter_id}:s{section_index}:slot-{ordinal:03d}"
         ordinal += 1
-        spec = SlotSpec(slot_id=slot_id, topic=topic, concept=concept, source_refs=refs)
+        spec = SlotSpec(slot_id=slot_id, topic=topic, concept=concept, source_refs=refs, kind=kind)
         specs.append(spec)
         return _render_slot(spec)
 
@@ -298,7 +309,7 @@ def sanitize_inline_quizzes(
     replacements: list[tuple[int, int, str]] = []
     section_count = 0
     slot_ordinal = 0
-    seen_slot_keys: set[tuple[str, str, tuple[str, ...]]] = set()
+    seen_slot_keys: set[tuple[str, str, str, tuple[str, ...]]] = set()
 
     for block in blocks:
         kept: list[tuple[str, Any]] = []
@@ -320,16 +331,22 @@ def sanitize_inline_quizzes(
                 if valid is None:
                     warnings.append(f"{chapter_id} s{section_index}: dropped invalid quiz slot")
                     continue
-                topic, refs = valid
+                topic, refs, slot_kind = valid
                 concept = str(child.get("concept") or "").strip()
-                key = (topic, concept, tuple(sorted(refs)))
+                key = (slot_kind, topic, concept, tuple(sorted(refs)))
                 if key in seen_slot_keys:
                     warnings.append(f"{chapter_id} s{section_index}: dropped duplicate quiz slot")
                     continue
                 seen_slot_keys.add(key)
                 slot_id = f"{chapter_id}:s{section_index}:slot-{slot_ordinal:03d}"
                 slot_ordinal += 1
-                spec = SlotSpec(slot_id=slot_id, topic=topic, concept=concept, source_refs=refs)
+                spec = SlotSpec(
+                    slot_id=slot_id,
+                    topic=topic,
+                    concept=concept,
+                    source_refs=refs,
+                    kind=slot_kind,
+                )
                 slot_specs.append(spec)
                 kept.append(("slot", spec))
                 section_count += 1

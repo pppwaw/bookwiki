@@ -152,8 +152,8 @@ class SectionAgent:
 </QuizItem>
 </QuizBlock>
 
-【应用题：计算/推导题，你只埋占位，稍后由专门 agent 出题】在 `<QuizBlock>` 里放**单行自闭合**
-占位，每题一个：
+【应用题/过程题：你只埋占位，稍后由专门 agent 出题】在 `<QuizBlock>` 里放**单行自闭合**
+占位，每题一个。普通选择型应用题仍不写 `kind`：
 <QuizItemSlot id="auto" topic="<出题方向/情景>" concept="<概念名>" sourceRefs={["<ref>"]} />
 - `topic` 用一句话给出这道题的**出题方向和大概情景**（考什么、放在什么情境里），作为出题指引；
   不必写出具体数值（数值留给出题 agent 补全）。
@@ -161,7 +161,11 @@ class SectionAgent:
   至少一个）。
 - `id` 一律写 `"auto"`，系统会重新分配；不要自己编 id。
 - 占位**必须单独成行、自闭合**（以 `/>` 结尾），不要写成带子节点的成对标签。
-- 应用题与知识题可分块（各一个 `<QuizBlock>`）也可同块，由你决定。
+- 当本段适合让学习者写**证明过程、推导过程或多步计算过程**时，用 worked 占位：
+<QuizItemSlot id="auto" kind="worked" topic="<任务>" concept="<概念>" sourceRefs={["<ref>"]} />
+  worked 题必须有明确标准过程，不能是开放讨论题；这里只写占位，**不要**在正文提前给出答案或
+  完整过程。
+- 应用题、worked 题与知识题可分块（各一个 `<QuizBlock>`）也可同块，由你决定。
 
 不要把任何题目内容或上述标签塞进 YAML frontmatter；测验题只存在于 body_md。
 

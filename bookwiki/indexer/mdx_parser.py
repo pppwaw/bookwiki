@@ -36,6 +36,7 @@ def parse_mdx_file(path: str | Path, root: str | Path | None = None) -> MdxPage:
     slug = _slug_from_relative_path(relative_path)
     page_id = slug or "index"
     quiz_items = _component_items(body, "QuizBlock", "items")
+    quiz_items.extend(_worked_child_items(body))
     card_items = _component_items(body, "AnkiDeck", "cards")
     refs = _source_refs(frontmatter, body, quiz_items, card_items)
     page_type = str(frontmatter.get("type") or _infer_type(relative_path))
@@ -140,6 +141,27 @@ def _quiz_child_items(body: str) -> list[dict[str, Any]]:
                     "citations": _prop_json(item_block["attrs"], "citations", default=[]),
                 }
             )
+    return items
+
+
+def _worked_child_items(body: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for item_block in _component_blocks(body, "WorkedProblem"):
+        reference_answer = _prop_value(item_block["attrs"], "referenceAnswer") or ""
+        rubric = _prop_json(item_block["attrs"], "rubric", default=[])
+        items.append(
+            {
+                "id": _prop_value(item_block["attrs"], "id") or "",
+                "type": "worked",
+                "question": _prop_value(item_block["attrs"], "question") or "",
+                "answer": reference_answer,
+                "reference_answer": reference_answer,
+                "rubric": rubric,
+                "explanation": _prop_value(item_block["attrs"], "explanation") or "",
+                "citations": _prop_json(item_block["attrs"], "citations", default=[]),
+                "grading_json": {"reference_answer": reference_answer, "rubric": rubric},
+            }
+        )
     return items
 
 

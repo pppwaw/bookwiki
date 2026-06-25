@@ -18,6 +18,7 @@ DEFAULT_MODELS = {
     "section": "deepseek-v4-pro",
     "section_repair": "deepseek-v4-pro",
     "application_quiz": "deepseek-v4-pro",
+    "application_quiz_worked": "deepseek-v4-pro",
     "card": "deepseek-v4-flash",
     "supplement_image": "deepseek-v4-pro",
     "mdx_repair": "deepseek-v4-pro",

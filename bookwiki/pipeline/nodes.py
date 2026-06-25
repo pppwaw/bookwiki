@@ -386,6 +386,23 @@ def _quiz_item_mdx(item: dict[str, Any], index: int) -> str:
     return "\n".join(children)
 
 
+def _worked_problem_mdx(item: dict[str, Any], index: int) -> str:
+    slot_id = str(item.get("slot_id") or "")
+    chapter_id = slot_id.split(":", 1)[0] if ":" in slot_id else ""
+    props = " ".join(
+        [
+            _jsx_prop("id", str(item.get("id") or f"worked-{index:03d}")),
+            _jsx_prop("chapterId", chapter_id),
+            _jsx_prop("question", item.get("question", "")),
+            _jsx_prop("referenceAnswer", item.get("reference_answer", "")),
+            _jsx_prop("rubric", item.get("rubric", [])),
+            _jsx_prop("explanation", item.get("explanation", "")),
+            _jsx_prop("citations", _citation_items(item.get("citations", []))),
+        ]
+    )
+    return f"<WorkedProblem {props}>\n</WorkedProblem>"
+
+
 def _card_item_mdx(item: dict[str, Any], index: int) -> str:
     props = " ".join(
         [
@@ -558,7 +575,7 @@ def _resolve_item_slots(body_md: str, quiz: dict[str, Any]) -> str:
     empty is removed too. An item carrying no ``slot_id`` is a stale ``after_block``-era
     artifact and is a hard error (regenerate the chapter).
     """
-    items_by_slot: dict[str, tuple[dict[str, Any], int]] = {}
+    items_by_slot: dict[str, tuple[dict[str, Any], int, str]] = {}
     for index, item in enumerate(quiz.get("items", []), start=1):
         if not isinstance(item, dict):
             continue
@@ -568,15 +585,26 @@ def _resolve_item_slots(body_md: str, quiz: dict[str, Any]) -> str:
                 "quiz item has no slot_id (stale after_block artifact; regenerate): "
                 f"{str(item.get('question', ''))[:60]}"
             )
-        items_by_slot[slot_id] = (item, index)
+        items_by_slot[slot_id] = (item, index, "mcq")
+
+    for index, item in enumerate(quiz.get("worked_items", []), start=1):
+        if not isinstance(item, dict):
+            continue
+        slot_id = str(item.get("slot_id") or "")
+        if not slot_id:
+            raise ValueError(
+                "worked quiz item has no slot_id (regenerate): "
+                f"{str(item.get('question', ''))[:60]}"
+            )
+        items_by_slot[slot_id] = (item, index, "worked")
 
     def _replace(match: re.Match[str]) -> str:
         id_match = re.search(r'id="([^"]*)"', match.group(0))
         entry = items_by_slot.get(id_match.group(1) if id_match else "")
         if entry is None:
             return ""
-        item, index = entry
-        return _quiz_item_mdx(item, index)
+        item, index, kind = entry
+        return _worked_problem_mdx(item, index) if kind == "worked" else _quiz_item_mdx(item, index)
 
     resolved = _QUIZ_ITEM_SLOT_RE.sub(_replace, body_md)
     return _EMPTY_QUIZ_BLOCK_RE.sub("", resolved)

@@ -98,24 +98,26 @@ export function QuizBlock({ children }: { children: ReactNode }) {
   return (
     <DeckContext.Provider value={value}>
       <section className="quiz-block" aria-label="Quiz">
-        <header className="quiz-block-head">
-          <div className="quiz-progress" role="status" aria-live="polite">
-            <span className="quiz-progress-label">
-              {answered.length} / {total} answered · {correctCount} correct
-            </span>
-            <div className="quiz-progress-bar" aria-hidden="true">
-              <div className="quiz-progress-bar-fill" style={{ width: `${percent}%` }} />
+        {total > 0 && (
+          <header className="quiz-block-head">
+            <div className="quiz-progress" role="status" aria-live="polite">
+              <span className="quiz-progress-label">
+                {answered.length} / {total} answered · {correctCount} correct
+              </span>
+              <div className="quiz-progress-bar" aria-hidden="true">
+                <div className="quiz-progress-bar-fill" style={{ width: `${percent}%` }} />
+              </div>
             </div>
-          </div>
-          <button
-            className="quiz-reset"
-            type="button"
-            onClick={reset}
-            disabled={answered.length === 0}
-          >
-            Reset
-          </button>
-        </header>
+            <button
+              className="quiz-reset"
+              type="button"
+              onClick={reset}
+              disabled={answered.length === 0}
+            >
+              Reset
+            </button>
+          </header>
+        )}
         {children}
       </section>
     </DeckContext.Provider>

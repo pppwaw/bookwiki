@@ -17,6 +17,7 @@ import {
   QuizQuestion,
 } from './QuizBlock';
 import { SourceRef } from './SourceRef';
+import { WorkedProblem } from './WorkedProblem';
 
 export function getMDXComponents(components?: MDXComponents) {
   return {
@@ -39,6 +40,7 @@ export function getMDXComponents(components?: MDXComponents) {
     ChatBox,
     BookFigure,
     Mermaid,
+    WorkedProblem,
     ...components,
   } satisfies MDXComponents;
 }

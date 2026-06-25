@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bookwiki.agents._helpers import SOURCE_REF_RE
-from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent
+from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent, WorkedApplicationQuizAgent
 from bookwiki.agents.card_agent import CardAgent
 from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
 from bookwiki.agents.mdx_edit_repair import ChapterMdxEditRepairAgent
@@ -71,7 +71,7 @@ from bookwiki.schemas.card import CardResult
 from bookwiki.schemas.chapter import ChapterResult
 from bookwiki.schemas.common import Citation
 from bookwiki.schemas.figure import ImageSupplementResult
-from bookwiki.schemas.quiz import QuizItem, QuizResult
+from bookwiki.schemas.quiz import QuizItem, QuizResult, WorkedItem
 from bookwiki.schemas.report import Issue
 from bookwiki.schemas.section import SectionPlan, SectionResult, SectionSpec
 from bookwiki.schemas.summary import SummaryResult
@@ -228,6 +228,7 @@ async def generate_chapter_sections(
             "topic": spec.topic,
             "concept": spec.concept,
             "source_refs": spec.source_refs,
+            "kind": spec.kind,
         }
         for spec in section_slot_specs
     ]
@@ -444,16 +445,19 @@ async def _generate_application_quiz(
 
     outcomes = await asyncio.gather(*(fill(request) for request in requests))
     items: list[QuizItem] = []
+    worked_items: list[WorkedItem] = []
     cache_results: list[CacheResult] = []
     unresolved: list[str] = []
-    for slot_items, slot_cache, slot_errors in outcomes:
+    for slot_items, slot_worked_items, slot_cache, slot_errors in outcomes:
         items.extend(slot_items)
+        worked_items.extend(slot_worked_items)
         cache_results.extend(slot_cache)
         unresolved.extend(slot_errors)
 
     quiz = QuizResult(
         chapter_id=chapter.chapter_id,
         items=items,
+        worked_items=worked_items,
         owner_task_id=f"{chapter.chapter_id}:quiz",
     )
     issue: Issue | None = None
@@ -477,7 +481,7 @@ async def _fill_application_slot(
     chapter_body_stripped: str,
     request: dict[str, Any],
     allowed_refs: set[str],
-) -> tuple[list[QuizItem], list[CacheResult], list[str]]:
+) -> tuple[list[QuizItem], list[WorkedItem], list[CacheResult], list[str]]:
     """Generate one application quiz item for a single slot, with a bounded MDX repair loop.
 
     The agent returns one slot-agnostic ``QuizItem``; this slot's canonical ``slot_id`` is
@@ -494,7 +498,7 @@ async def _fill_application_slot(
         force=False,
     )
     cache_results.append(run)
-    item: QuizItem = run.result
+    item: QuizItem | WorkedItem = run.result
     errors = _application_quiz_mdx_errors([item])
     max_rounds = int(cfg.generation.get("maxRepairRounds", 1) or 1)
     rounds = 0
@@ -513,7 +517,9 @@ async def _fill_application_slot(
         item = repaired.result
         errors = _application_quiz_mdx_errors([item])
     filled = item.model_copy(update={"slot_id": str(request.get("slot_id") or "")})
-    return [filled], cache_results, errors
+    if isinstance(filled, WorkedItem):
+        return [], [filled], cache_results, errors
+    return [filled], [], cache_results, errors
 
 
 async def _run_application_quiz(
@@ -526,8 +532,10 @@ async def _run_application_quiz(
     mdx_errors: list[str],
     force: bool,
 ) -> CacheResult:
+    slot_kind = str(request.get("kind") or "mcq")
+    agent_cls = WorkedApplicationQuizAgent if slot_kind == "worked" else ApplicationQuizAgent
     return await run_with_cache(
-        ApplicationQuizAgent,
+        agent_cls,
         {
             **base_payload,
             "chapter_body_md": chapter_body_stripped,
@@ -535,21 +543,28 @@ async def _run_application_quiz(
             "allowed_source_refs": sorted(allowed_refs),
             "mdx_errors": mdx_errors,
         },
-        model=cfg.model_for("application_quiz"),
+        model=cfg.model_for(agent_cls.model_key),
         cache_dir=cfg.cache_dir / "tasks",
         force=force,
         runtime=cfg.llm_runtime,
     )
 
 
-def _application_quiz_mdx_errors(items: list[QuizItem]) -> list[str]:
+def _application_quiz_mdx_errors(items: list[QuizItem | WorkedItem]) -> list[str]:
     errors: list[str] = []
     for item_index, item in enumerate(items, start=1):
         fields = [("question", item.question), ("explanation", item.explanation)]
-        fields.extend(
-            (f"choice {choice_index}", choice)
-            for choice_index, choice in enumerate(item.choices, 1)
-        )
+        if isinstance(item, WorkedItem):
+            fields.append(("reference_answer", item.reference_answer))
+            fields.extend(
+                (f"rubric {rubric_index}", point.point)
+                for rubric_index, point in enumerate(item.rubric, 1)
+            )
+        else:
+            fields.extend(
+                (f"choice {choice_index}", choice)
+                for choice_index, choice in enumerate(item.choices, 1)
+            )
         for field_name, text in fields:
             for error in validate_mdx(normalize_mdx_for_validation(str(text))):
                 errors.append(f"item {item_index} {field_name}: {error}")

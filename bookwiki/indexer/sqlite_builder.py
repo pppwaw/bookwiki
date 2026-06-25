@@ -100,6 +100,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             options_json     TEXT,
             answer           TEXT NOT NULL,
             explanation      TEXT,
+            grading_json     TEXT,
             source_refs_json TEXT NOT NULL
         );
 
@@ -224,9 +225,10 @@ def _insert_learning_items(conn: sqlite3.Connection, pages: list[MdxPage]) -> No
                         options_json,
                         answer,
                         explanation,
+                        grading_json,
                         source_refs_json
                     )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _unique_item_id(page, item, "quiz", index, quiz_ids),
@@ -239,6 +241,11 @@ def _insert_learning_items(conn: sqlite3.Connection, pages: list[MdxPage]) -> No
                     _json(options) if options is not None else None,
                     str(item.get("answer") or ""),
                     _optional_str(item.get("explanation")),
+                    (
+                        _json(item.get("grading_json"))
+                        if item.get("grading_json") is not None
+                        else None
+                    ),
                     _json(source_refs),
                 ),
             )

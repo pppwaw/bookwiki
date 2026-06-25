@@ -57,6 +57,17 @@ def test_extractor_rejects_unsafe_expression() -> None:
     assert slot["sourceRefs"]["ok"] is False
 
 
+def test_extractor_parses_worked_slot_kind() -> None:
+    body = (
+        '<QuizBlock>\n<QuizItemSlot id="auto" kind="worked" topic="证明" '
+        'sourceRefs={["p1"]} />\n</QuizBlock>'
+    )
+    slot = extract_inline_quizzes(body)[0]["children"][0]
+
+    assert slot["kind"] == "slot"
+    assert slot["slotKind"] == "worked"
+
+
 def test_sanitize_keeps_valid_item_and_grounds_citation() -> None:
     res = sanitize_inline_quizzes(
         KNOWLEDGE_BLOCK, allowed_refs={"p1"}, chapter_id="ch", section_index=0
@@ -101,6 +112,19 @@ def test_sanitize_dedupes_identical_slots() -> None:
     assert len(res.slot_specs) == 1
 
 
+def test_sanitize_keeps_worked_slot_kind_and_dedupes_by_kind() -> None:
+    body = (
+        '<QuizBlock>\n<QuizItemSlot id="auto" topic="t" sourceRefs={["p1"]} />\n'
+        '<QuizItemSlot id="auto" kind="worked" topic="t" sourceRefs={["p1"]} />\n'
+        '<QuizItemSlot id="auto" kind="worked" topic="t" sourceRefs={["p1"]} />\n</QuizBlock>'
+    )
+
+    res = sanitize_inline_quizzes(body, allowed_refs={"p1"}, chapter_id="ch", section_index=0)
+
+    assert [spec.kind for spec in res.slot_specs] == ["mcq", "worked"]
+    assert res.body_md.count('kind="worked"') == 1
+
+
 def test_sanitize_caps_items_per_block() -> None:
     slots = "\n".join(
         f'<QuizItemSlot id="auto" topic="t{i}" sourceRefs={{["p1"]}} />' for i in range(10)
@@ -134,6 +158,19 @@ def test_sanitize_rescues_application_slot_from_unparseable_body() -> None:
     assert res.slot_specs[0].source_refs == ["p1"]
     assert 'id="ch:s0:slot-000"' in res.body_md
     assert "当 n<30 时使用 t 分布。" in res.body_md  # unparseable prose preserved for chapter heal
+
+
+def test_sanitize_rescues_worked_slot_kind_from_unparseable_body() -> None:
+    body = (
+        "当 n<30 时使用 t 分布。\n\n"
+        '<QuizItemSlot id="auto" kind="worked" topic="证明" sourceRefs={["p1"]} />'
+    )
+
+    res = sanitize_inline_quizzes(body, allowed_refs={"p1"}, chapter_id="ch", section_index=0)
+
+    assert len(res.slot_specs) == 1
+    assert res.slot_specs[0].kind == "worked"
+    assert 'kind="worked"' in res.body_md
 
 
 def test_sanitize_fallback_drops_ungrounded_slot_from_unparseable_body() -> None:
@@ -217,9 +254,41 @@ def test_resolve_item_slots_expression_string_props_remain_extractable() -> None
     assert [choice["id"] for choice in items[0]["choices"]] == ["choice-1", "choice-2"]
 
 
+def test_resolve_item_slots_renders_worked_items() -> None:
+    body = (
+        "<QuizBlock>\n"
+        '<QuizItemSlot id="ch:s0:slot-000" kind="worked" topic="证明" sourceRefs={["p1"]} />\n'
+        "</QuizBlock>"
+    )
+    quiz = {
+        "worked_items": [
+            {
+                "slot_id": "ch:s0:slot-000",
+                "question": "证明 $a=b$。",
+                "reference_answer": "由题设得 $a=b$。",
+                "rubric": [{"point": "写出题设", "weight": 1}],
+                "explanation": "考查过程。",
+                "citations": [],
+            }
+        ]
+    }
+
+    out = _resolve_item_slots(body, quiz)
+
+    assert "<WorkedProblem " in out
+    assert "referenceAnswer" in out
+    assert "<QuizItem " not in out
+
+
 def test_resolve_item_slots_fail_loud_on_slotless_item() -> None:
     quiz = {"items": [{"question": "Q", "choices": ["a", "b"], "answer": "a", "explanation": "e"}]}
     with pytest.raises(ValueError, match="no slot_id"):
+        _resolve_item_slots("body", quiz)
+
+
+def test_resolve_item_slots_fail_loud_on_slotless_worked_item() -> None:
+    quiz = {"worked_items": [{"question": "Q", "reference_answer": "A", "rubric": []}]}
+    with pytest.raises(ValueError, match="worked quiz item has no slot_id"):
         _resolve_item_slots("body", quiz)
 
 

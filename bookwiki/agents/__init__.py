@@ -1,6 +1,6 @@
 """BookWiki LLM-backed agents."""
 
-from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent
+from bookwiki.agents.application_quiz_agent import ApplicationQuizAgent, WorkedApplicationQuizAgent
 from bookwiki.agents.card_agent import CardAgent
 from bookwiki.agents.chapter_content_rewrite_agent import ChapterContentRewriteAgent
 from bookwiki.agents.chapter_split_agent import ChapterSplitAgent
@@ -26,6 +26,7 @@ __all__ = [
     "ChapterContentRewriteAgent",
     "ChapterSplitAgent",
     "ApplicationQuizAgent",
+    "WorkedApplicationQuizAgent",
     "CardAgent",
     "ConceptAgent",
     "ConceptContentRewriteAgent",
