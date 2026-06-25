@@ -14,7 +14,7 @@ BookWiki turns one book's source materials into an Obsidian-style vault, a SQLit
    The user-facing sequence is `convert -> caption -> structure -> approve -> split -> build_skeleton -> generate -> check/repair -> index -> site`; `reconcile_concepts -> concept_pages -> integrate` run inside the graph between `generate` and `check`.
 2. Use `python scripts/run.py books/<id>` for the full pipeline through `index`.
 3. Use `python scripts/run.py books/<id> --resume` after the structure review gate or after an interrupted run.
-4. Use thin stage scripts for focused work: `scripts/convert.py`, `scripts/caption.py`, `scripts/structure.py`, `scripts/split.py`, `scripts/generate.py`, `scripts/check.py`, `scripts/repair.py`, `scripts/index.py`. There is no thin script for `build_skeleton`, `reconcile_concepts`, `concept_pages`, or `integrate`; reach them through `run.py` (e.g. `--pause-after reconcile_concepts`).
+4. Use `run.py` for focused work too: `--from <stage>` reruns from that node (add `--force` to also clear the task cache). `build_skeleton`, `reconcile_concepts`, `concept_pages`, and `integrate` are only reachable through `run.py` (e.g. `--pause-after reconcile_concepts`).
 5. Do not start `scripts/site.py` unless the user asks for site preview or verification.
 
 ## Generation Stages (what each node does)
@@ -70,9 +70,9 @@ Check these first:
 - `work/skeleton.json` and `work/concepts/reconciled.json` (+ `work/concepts/alias_map.json`): the book-wide term contracts.
 - `work/agent_results/*.json`: raw Pydantic agent outputs.
 
-If `check-report.json` has error or critical `repair_targets`, run `python scripts/repair.py books/<id> --resume`, then resume through check/index. If it has only warnings, decide with the user whether to accept or revise. Note that `generate`/`concept_pages` already self-heal inline, so many issues never reach the macro `check`; the macro `repair` only drops unsalvageable items (it does not rewrite content).
+If `check-report.json` has error or critical `repair_targets`, run `python scripts/run.py books/<id> --from repair --to repair`, then resume through check/index. If it has only warnings, decide with the user whether to accept or revise. Note that `generate`/`concept_pages` already self-heal inline, so many issues never reach the macro `check`; the macro `repair` only drops unsalvageable items (it does not rewrite content).
 
 ## References
 
-- Read `references/runbook.md` for stage commands, `--from <stage> --force`, resume, site materialization, and common failures.
+- Read `references/runbook.md` for stage commands, `--from <stage>` (optional `--force`), resume, site materialization, and common failures.
 - Read `references/contracts.md` for the key artifact contracts: approved structure, reconciled concepts, check report, run manifest, and SQLite schema.

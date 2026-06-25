@@ -841,7 +841,7 @@ class Agent[InputT, OutputT: BaseModel](Protocol):
 | 生成并发 | **asyncio.gather + Semaphore** | generate 章节 fan-out 默认 4;每章 section / 补图 fan-out 默认 3 |
 | 缓存 | **per-task JSON**(`work/.cache/tasks/<key>.json`) | task_key 内容哈希命中即跳过 LLM 调用,未命中才真调 |
 
-**分层的关键判断**:LangGraph 管 workflow,**不管全局 RPM/TPM**(一次 fan-out 所有章节,全开会撞 API 限速),所以限速交给 `lg_runner` 注入到 `cfg.llm_runtime` 的单个 `LiteLLMRuntime` / Router。SQLite checkpointer 只决定"哪个 node 跑到了"(`next_node`),**不按内容级联失效**——改了 ch03 的 source,checkpoint 不会知道 ch03 下游要重算;真要重跑某段得 `--from <stage> --force`,或让对应 task 的 `task_key` 自然 miss。增量跳过则由 per-task JSON 缓存承担。
+**分层的关键判断**:LangGraph 管 workflow,**不管全局 RPM/TPM**(一次 fan-out 所有章节,全开会撞 API 限速),所以限速交给 `lg_runner` 注入到 `cfg.llm_runtime` 的单个 `LiteLLMRuntime` / Router。SQLite checkpointer 只决定"哪个 node 跑到了"(`next_node`),**不按内容级联失效**——改了 ch03 的 source,checkpoint 不会知道 ch03 下游要重算;真要重跑某段得 `--from <stage>`(带 `--force` 同时清 task 缓存),或让对应 task 的 `task_key` 自然 miss。增量跳过则由 per-task JSON 缓存承担。
 
 ### 10.2 LangGraph 顶层流水线
 
@@ -1010,7 +1010,7 @@ async def run_with_cache(agent_cls, *inputs, model, cache_dir="work/.cache/tasks
 - **改 prompt 模板**:`prompt_cache_key`(对 system + user 模板 + agent 正文做哈希)变 → 对应 agent 全部 miss。
 - **换模型**:走新模型那一路 miss,另一路命中保留。
 
-**两个前提**必须记住:① 缓存只在 node 真的执行时才查——如果 LangGraph checkpoint 已把该 node 标记跳过,`run_with_cache` 根本不会被调用(所以"改 source 文件"本身不会触发自动重跑,见 §17.7);② 没有文件监听 / 自动级联失效那一层,要强制重跑得 `--from <stage> --force`。
+**两个前提**必须记住:① 缓存只在 node 真的执行时才查——如果 LangGraph checkpoint 已把该 node 标记跳过,`run_with_cache` 根本不会被调用(所以"改 source 文件"本身不会触发自动重跑,见 §17.7);② 没有文件监听 / 自动级联失效那一层,要强制重跑得 `--from <stage> --force`(清 task 缓存)。
 
 ### 10.7 人工 interrupt 与续跑
 
@@ -1072,7 +1072,7 @@ def summarize(nodes, chapter_count=2) -> Estimate:         # generate/concept_pa
 | 模块 | 内容 |
 |---|---|
 | `lg_runner.py` | LangGraph `StateGraph` 构图、AsyncSqliteSaver checkpointer、`run_pipeline`、interrupt before split、条件边 `check/repair` 回路、共享 `LiteLLMRuntime` 注入 |
-| `resume.py` | `NODE_ORDER` / `NODE_OUTPUT_KEYS`、`config_hash`、`--from --force` 状态重建、config-change salvage、`draw_mermaid`、dry-run report |
+| `resume.py` | `NODE_ORDER` / `NODE_OUTPUT_KEYS`、`config_hash`、`--from`(+`--force`)状态重建、config-change salvage、`draw_mermaid`、dry-run report |
 | `state.py` | `PipelineState` 类型 |
 | `llm.py` | `LLMRuntime` 协议、`LiteLLMRuntime`(`build_router` litellm + `build_instructor_client` instructor)、`TestLLMRuntime`、`build_runtime` |
 | `cache.py` | per-task JSON 缓存:`run_with_cache` + `task_key`(内容哈希命中跳过) |
@@ -1397,69 +1397,42 @@ BOOKWIKI_SQLITE_PATH=.bookwiki/bookwiki.sqlite
 
 ## 17. Python 运行入口
 
-### 17.1 分阶段薄脚本
+### 17.1 统一入口 run.py
 
-每个阶段一个独立脚本,**这是用户日常体验**;阶段间通过磁盘文件 + LangGraph SQLite checkpoint 通信,任意一段跑完都可以单独看输出。
+`scripts/run.py` 是唯一用户入口;阶段间通过磁盘文件 + LangGraph SQLite checkpoint 通信,任意一段跑完都可以单独看输出。
 
 ```bash
 python scripts/init_book.py ai-intro "人工智能导论"            # 创建 books/ai-intro/ 骨架
-python scripts/convert.py    books/ai-intro                    # input/ → sources_md/(经 MinerU)
-python scripts/caption.py    books/ai-intro                    # 抽出的图片 → 视觉模型补图注
-python scripts/structure.py  books/ai-intro                    # → proposed-structure.yaml(interrupt 等待人工)
-python scripts/split.py      books/ai-intro                    # 读 approved-structure.yaml → chapter_sources/
-python scripts/generate.py   books/ai-intro                    # 跑到 generate node 停;产 skeleton.json + agent_results/
-python scripts/check.py      books/ai-intro                    # → check-report.{md,json}
-python scripts/repair.py     books/ai-intro                    # 按 owner_task_id 定向修
-python scripts/index.py      books/ai-intro                    # content/docs/ → bookwiki.sqlite
-python scripts/site.py       books/ai-intro                    # 启 Next.js + Fumadocs(长驻)
+python scripts/run.py books/ai-intro --to convert              # input/ → sources_md/(经 MinerU)
+python scripts/run.py books/ai-intro --to caption              # 抽出的图片 → 视觉模型补图注
+python scripts/run.py books/ai-intro --to structure            # → proposed-structure.yaml(interrupt 等待人工)
+python scripts/run.py books/ai-intro --to split                # 读 approved-structure.yaml → chapter_sources/
+python scripts/run.py books/ai-intro --to generate             # 跑到 generate node 停;产 skeleton.json + agent_results/
+python scripts/run.py books/ai-intro --to check                # → check-report.{md,json}
+python scripts/run.py books/ai-intro --to repair               # 按 owner_task_id 定向修
+python scripts/run.py books/ai-intro --to index                # content/docs/ → bookwiki.sqlite
+python scripts/site.py   books/ai-intro                        # 启 Next.js + Fumadocs(长驻)
 ```
 
-每个阶段脚本都是极薄的 wrapper,绑定到 LangGraph 流水线的单个 node:
+`run.py` 绑定到 LangGraph 流水线,通过 `--to <stage>` 控制跑到哪个 node 停。`run_pipeline` 处理"从头跑 vs 读 checkpoint 续跑"的二分,见 §17.6。**LangGraph runner、checkpoint、Router、per-task 缓存都是一份,入口在 `bookwiki/scheduler/lg_runner.py`**。
 
-```python
-# scripts/convert.py —— 经 _common.run_stage 的薄 wrapper
-from _common import book_arg_parser, run_stage
+**重要:`--to` 再跑时的行为**(由 LangGraph checkpoint 决定):
 
-def main():
-    args = book_arg_parser("Run BookWiki convert stage.").parse_args()
-    run_stage(args.book_dir, stop_after="convert")
-
-# scripts/_common.py —— 所有阶段脚本共用(默认 resume=True)
-def run_stage(book_dir, *, stop_after, resume=True):
-    cfg = load_config(book_dir)
-    run_pipeline(cfg, stop_after=stop_after, resume=resume)
-```
-
-八个阶段脚本结构完全一样,只差 `stop_after` 字符串:
-
-| 脚本 | `stop_after` (NODE_ORDER node) |
-|---|---|
-| `convert.py`   | `"convert"`   |
-| `caption.py`   | `"caption"`   |
-| `structure.py` | `"structure"` |
-| `split.py`     | `"split"`     |
-| `generate.py`  | `"generate"`  |
-| `check.py`     | `"check"`     |
-| `repair.py`    | `"repair"`    |
-| `index.py`     | `"index"`     |
-
-`run_pipeline` 处理"从头跑 vs 读 checkpoint 续跑"的二分,见 §17.6。**LangGraph runner、checkpoint、Router、per-task 缓存都是一份,入口在 `bookwiki/scheduler/lg_runner.py`**——脚本切多个不会拆出多套状态机。
-
-**重要:阶段脚本再跑时的行为**(由 JSON checkpoint 决定,不是脚本自己的状态机):
-
-| 当前 checkpoint 位置 | 跑 `convert.py` 的行为 |
+| 当前 checkpoint 位置 | 跑 `--to convert` 的行为 |
 |---|---|
 | thread 没有 checkpoint | 从头跑到 convert,跑完即停 |
 | checkpoint 在 convert 之前 | 从最近 checkpoint 推进到 convert 停 |
 | checkpoint 已经过 convert(比如在 split) | **直接 no-op 返回**,啥都不重跑 |
 
-也就是说阶段脚本"幂等推进",不会重跑已完成的段。**真的想重跑某一段,必须 `python scripts/run.py books/<id> --from <stage> --force`**(清该 stage 及之后的 checkpoint);或者改动该阶段的输入文件让对应 task 的 `task_key` 自然失效。这是有意设计:协作中第二次跑 `convert.py` 不会突然把别人辛苦改过的 sources_md 覆盖掉。
+也就是说 `--to` "幂等推进",不会重跑已完成的段。**真的想重跑某一段,用 `python scripts/run.py books/<id> --from <stage>`**(从该 stage 重新进入;带 `--force` 同时清 task 缓存,不带则复用已缓存的 LLM 输出);或者改动该阶段的输入文件让对应 task 的 `task_key` 自然失效。这是有意设计:协作中第二次跑 `--to convert` 不会突然把别人辛苦改过的 sources_md 覆盖掉。
 
-这样设计的好处:
+`--from` 和 `--force` 解耦:`--from X` 只决定从 X 重新进入(丢弃 X 及之后的 checkpoint state,从磁盘恢复 X 之前的产物),`--force` 额外清空 `tasks/` 缓存目录强制全部重新调 LLM。两者关系:
 
-- 命令短、好记、tab 补全友好,日常单段跑没有心智成本。
-- 5 人分工时,各自调试自己负责的阶段脚本,git 上基本不打架(共享入口集中在 `lg_runner.py` / `resume.py`)。
-- LangGraph checkpoint 共用同一个 `checkpoint.sqlite`(按 book thread_id 区分),所以单阶段脚本和 `run.py` 互相 resume 不冲突——上一段任何方式跑完,下一段都能从 checkpoint 接上。
+| 命令 | checkpoint | task 缓存 | 适用 |
+|---|---|---|---|
+| `--from X` | 删 X 及之后 | 保留 | 上游产物不变、只想重跑 X 起的 node,已缓存的 agent LLM 调用复用省钱 |
+| `--from X --force` | 删 X 及之后 | 清空 | 彻底重算(改了 source 文件、改了 prompt 模板等) |
+| `--force`(无 `--from`) | 报错 | — | `--force` 必须搭 `--from` |
 
 ### 17.2 横切入口:run.py
 
@@ -1487,7 +1460,8 @@ python scripts/run.py books/ai-intro --from split --to generate
 ```python
 # scripts/run.py main() 实质逻辑
 cfg = load_config(args.book_dir)
-cfg.force_from = resolve_force_from(args, parser)         # --from 必须配 --force,否则报错
+cfg.force_from = resolve_force_from(args, parser)         # --from 单独合法;--force 必须搭 --from
+cfg.force_clear_cache = args.force                        # --force 时清 task 缓存 + checkpoint
 state = run_pipeline(
     cfg,
     stop_after=args.to_node,                             # --to
@@ -1499,18 +1473,15 @@ state = run_pipeline(
 
 ### 17.3 人工闸门
 
-`lg_runner` 编译图时固定 `interrupt_before=["split"]`,无需运行时判断,**无论用 `structure.py` 还是 `run.py` 都生效**——前者跑完 structure node 自然停,后者跑到 interrupt 停。人工编辑完 `approved-structure.yaml` 后,任选下面一种续:
+`lg_runner` 编译图时固定 `interrupt_before=["split"]`,无需运行时判断,**`run.py` 跑到 structure 自然停**。人工编辑完 `approved-structure.yaml` 后续跑:
 
 ```bash
-python scripts/split.py books/ai-intro          # 直接从下一段开始
-python scripts/run.py   books/ai-intro --resume # 从 checkpoint 继续往下一气呵成
+python scripts/run.py books/ai-intro --resume # 从 checkpoint 继续往下一气呵成
 ```
-
-两条路命中同一份 checkpoint,效果完全一致。
 
 ### 17.4 运行开关
 
-只有 `run.py` 接受所有开关;阶段脚本仅接 book 路径(简单是它们的全部价值)。
+只有 `run.py` 接受所有开关;`--to` / `--from` 接受 `NODE_ORDER` 任意 node 名。
 
 | 开关 | 实现 |
 |---|---|
@@ -1518,7 +1489,9 @@ python scripts/run.py   books/ai-intro --resume # 从 checkpoint 继续往下一
 | `--to S` | 在 `S` node 之后停(`stop_after`);`S` 取 §17.5 任意 node 名 |
 | `--resume` | 见 §17.6 |
 | `--dry-run` | `run_pipeline(dry_run=True)` 只打印 Mermaid 与 CNY 估算,不调 router |
-| `--from S --force` | `clear_for_force()` 删掉 per-task 缓存目录 `tasks/`,并删除 `checkpoint.sqlite` 及 WAL/SHM,再从 `S` 重新进入(`S` 之前节点的产物从 `work/` 磁盘文件恢复进 state)。两个开关必须成对给:单独 `--from` 或单独 `--force` 都会报错;全量重跑用 `--from convert --force`;不存在 `--force-from`。**改了 source 文件必须用这个让对应 node 重新执行**——见 §17.7 |
+| `--from S` | 从 `S` 重新进入(`S` 之前节点的产物从 `work/` 磁盘文件恢复进 state;`S` 及之后的 checkpoint state 丢弃)。不带 `--force` 时保留 per-task 缓存,已缓存的 agent LLM 调用复用。**改了 source 文件需带 `--force` 让对应 node 重新执行**——见 §17.7 |
+| `--from S --force` | 在 `--from S` 基础上,`clear_for_force()` 删掉 per-task 缓存目录 `tasks/`,并删除 `checkpoint.sqlite` 及 WAL/SHM,强制全部重新调 LLM。全量重跑用 `--from convert --force`;不存在 `--force-from` |
+| `--force`(无 `--from`) | 报错;`--force` 必须搭 `--from` |
 | `--only chXX` | M1 CLI 兼容保留,`run.py` 接受但**忽略**(不做任何章节过滤;真实行为见 `scripts/run.py`) |
 
 ### 17.5 冻结的 NODE_ORDER node 名
@@ -1529,19 +1502,20 @@ python scripts/run.py   books/ai-intro --resume # 从 checkpoint 继续往下一
 convert  caption  structure  split  build_skeleton  generate  reconcile_concepts  concept_pages  integrate  check  repair  index
 ```
 
-阶段脚本覆盖 8 个用户视角阶段(见 §7.3 表;`generate.py` 在 `generate` 后即停);`build_skeleton`、`reconcile_concepts`、`concept_pages`、`integrate` 没有独立阶段脚本,只通过 `run.py` 访问,reconcile 闸门通过 `--pause-after reconcile_concepts` 实现。
+`build_skeleton`、`reconcile_concepts`、`concept_pages`、`integrate` 只通过 `run.py` 访问(reconcile 闸门通过 `--pause-after reconcile_concepts` 实现);其余 node 也可用 `--to` 单独跑到。
 
-### 17.6 `--resume` 与阶段脚本的 resume 语义
+### 17.6 `--resume` 语义
 
-阶段脚本和 `run.py` 共用同一份 LangGraph checkpoint(`work/.cache/checkpoint.sqlite`,按 `book_id` thread_id 区分)。所有入口都经 `run_pipeline(..., resume=...)`,由 LangGraph snapshot 决定从哪个 node 续:
+`run.py` 用 LangGraph checkpoint(`work/.cache/checkpoint.sqlite`,按 `book_id` thread_id 区分)。所有入口都经 `run_pipeline(..., resume=...)`,由 LangGraph snapshot 决定从哪个 node 续:
 
 ```python
 # bookwiki/scheduler/lg_runner.py(简化)
 prior_values, prior_meta, prior_next = await _peek(db_path, cfg)
 config_matches = prior_meta.get("config_hash") == cfg_hash
 if cfg.force_from:
-    clear_for_force(cfg)
-    _delete_checkpoint_db(db_path)
+    if cfg.force_clear_cache:
+        clear_for_force(cfg)
+        _delete_checkpoint_db(db_path)
     seed_state = state_for_force_from(cfg, prior_values)
 elif resume and prior_values and not prior_next and config_matches:
     return prior_values                            # 整本已完成 → 整轮 no-op
@@ -1555,7 +1529,7 @@ else:
 - **checkpoint 有 next node** 的两种情况:① 上次在 `interrupt_before=["split"]` 的 split 之前停;② 上次 `--pause-after reconcile_concepts` 在其后停。两种都靠 `resume=True` 从 checkpoint 续。
 - **没有 checkpoint** = 没跑过,用新 dict 启动;**没有 next node 且 config_hash 匹配** = 整本已跑完,`resume=True` 直接返回旧 state、不重跑。
 
-这条逻辑在 `lg_runner._run` 里,阶段脚本(`run_stage` 默认 `resume=True`)和 `run.py`(给 `--resume` 时)都走它。**这就是为什么 `structure.py` 跑完后再跑 `split.py` 不会再次卡在 split 闸门**:LangGraph snapshot 的 next node 已经是 `split`,`resume=True` 会从该节点继续。
+这条逻辑在 `lg_runner._run` 里。**这就是为什么 `--to structure` 跑完后再跑 `--to split` 不会再次卡在 split 闸门**:LangGraph snapshot 的 next node 已经是 `split`,`resume=True` 会从该节点继续。
 
 ### 17.7 checkpoint 与 per-task 缓存的两层结构
 
@@ -1563,8 +1537,8 @@ else:
 
 | 层 | 范围 | 失效条件 |
 |---|---|---|
-| **LangGraph checkpoint** (`work/.cache/checkpoint.sqlite`) | 决定 **node 是否重新执行**——已完成 node 默认不重跑;`--resume` 遇已完成 snapshot 整轮 no-op | `--from <stage> --force` 删除 sqlite/wal/shm |
-| **per-task JSON 缓存** (`work/.cache/tasks/<key>.json`) | 决定 node 内部 **每个 agent 任务的 LLM 是否真调用**——`<key>.json` 已存在即跳过 | `task_key` 由 agent 类名、`kind`、`model`、prompt 模板(`prompt_cache_key`)、输入 共同 sha256[:24];任一变化即 miss |
+| **LangGraph checkpoint** (`work/.cache/checkpoint.sqlite`) | 决定 **node 是否重新执行**——已完成 node 默认不重跑;`--resume` 遇已完成 snapshot 整轮 no-op | `--from <stage>` 丢弃该 stage 及之后的 state;`--from <stage> --force` 删除 sqlite/wal/shm |
+| **per-task JSON 缓存** (`work/.cache/tasks/<key>.json`) | 决定 node 内部 **每个 agent 任务的 LLM 是否真调用**——`<key>.json` 已存在即跳过 | `task_key` 由 agent 类名、`kind`、`model`、prompt 模板(`prompt_cache_key`)、输入 共同 sha256[:24];任一变化即 miss;`--from <stage> --force` 清空整个 `tasks/` |
 
 **关键认知**:per-task 缓存只在 node 真的执行时才生效。如果 LangGraph checkpoint 已把 node 标完成而被跳过(甚至 `--resume` 遇已完成 snapshot 整轮 no-op),`run_with_cache` 根本不会被调用——**改 source 文件不会自动触发重跑该 node**。
 
@@ -1575,6 +1549,8 @@ python scripts/run.py books/ai-intro --from convert --force
 ```
 
 `--from convert --force` 同时删掉 `checkpoint.sqlite`(含 WAL/SHM)和整个 `tasks/` 缓存目录,从 convert 重新进入。**因为缓存目录被一并清空,这一轮所有章节都会真去调 LLM**——`--force` 是彻底重来,不做"只重算变更章节"的增量。要做到"只让 ch03 失效、其余命中缓存"当前实现办不到(得另写按文件粒度失效 `tasks/` 的逻辑)。
+
+不带 `--force` 的 `--from convert` 只丢弃 convert 及之后的 checkpoint state(从磁盘恢复 convert 之前的产物,实际上没有),但保留 `tasks/` 缓存——适用于"上游产物不变、只想重跑该 node 起的 workflow,已缓存的 agent LLM 调用复用"的场景。
 
 per-task 缓存的真正价值是:① `generate` 跑到一半 Ctrl-C,`--resume` 重跑整个 node 时已完成的章节凭 `task_key` 命中、跳过 LLM;② 5 人并行开发共用同一 `work/.cache/tasks/` 时,未变 task 跨分支命中。它**不**做自动文件变更检测,也**不**在 `--force` 后保留(`--force` 会清空整个 `tasks/`)。要按文件粒度增量失效得另起一层,目前不在范围内。
 
@@ -1601,7 +1577,7 @@ books/ai-intro/input/
 ### 18.2 资料转换
 
 ```bash
-python scripts/convert.py books/ai-intro
+python scripts/run.py books/ai-intro --to convert
 ```
 
 检查 `work/sources_md/`:确认 Markdown 可读、页码/幻灯片边界合理、每段关键内容都有 `source_ref`。
@@ -1609,15 +1585,15 @@ python scripts/convert.py books/ai-intro
 ### 18.3 结构生成与锁定
 
 ```bash
-python scripts/structure.py books/ai-intro
+python scripts/run.py books/ai-intro --to structure
 ```
 
-人工检查 `work/structure/proposed-structure.yaml` 和 `work/structure/structure-review.md`,必要时修改章节标题、顺序和范围,编辑产出 `work/structure/approved-structure.yaml`,并加入一行精确的 `# bookwiki: approved-structure`。无论用 `structure.py` 还是 `run.py`,LangGraph 都会在 `interrupt_before=["split"]` 处等待。
+人工检查 `work/structure/proposed-structure.yaml` 和 `work/structure/structure-review.md`,必要时修改章节标题、顺序和范围,编辑产出 `work/structure/approved-structure.yaml`,并加入一行精确的 `# bookwiki: approved-structure`。LangGraph 会在 `interrupt_before=["split"]` 处等待。
 
 ### 18.4 章节切分
 
 ```bash
-python scripts/split.py books/ai-intro
+python scripts/run.py books/ai-intro --to split
 ```
 
 检查 `work/chapter_sources/` 和 `work/logs/chapter-split-report.md`:确认每章资料包完整,未归属片段和低置信度片段需要人工处理。
@@ -1633,22 +1609,22 @@ python scripts/run.py books/ai-intro --dry-run
 ### 18.6 内容生成与续跑
 
 ```bash
-python scripts/generate.py books/ai-intro
+python scripts/run.py books/ai-intro --to generate
 ```
 
 `generate` 内部 fan-out 每章一个子任务,per-task 缓存按 `task_key` 跳过已完成任务。中途 Ctrl-C 后任选下面一种继续:
 
 ```bash
-python scripts/generate.py books/ai-intro          # 单段重入,LangGraph checkpoint 自动接
-python scripts/run.py      books/ai-intro --resume # 一气贯通直到结束
+python scripts/run.py books/ai-intro --to generate   # 单段重入,LangGraph checkpoint 自动接
+python scripts/run.py books/ai-intro --resume        # 一气贯通直到结束
 ```
 
 ### 18.7 检查与定向修复
 
 ```bash
-python scripts/check.py  books/ai-intro
-python scripts/repair.py books/ai-intro            # 仅当 check-report 里有 repair_targets 时
-python scripts/check.py  books/ai-intro            # 修完再过一遍
+python scripts/run.py books/ai-intro --to check
+python scripts/run.py books/ai-intro --to repair    # 仅当 check-report 里有 repair_targets 时
+python scripts/run.py books/ai-intro --to check     # 修完再过一遍
 ```
 
 `repair` 优先执行确定性删除:丢弃不可核验 citation、答案不在 choices 的题目和空面卡片,并把动作写入 `work/logs/repair-actions.json`;渲染态 MDX 破坏才走 MDX fallback repair。若 target 超过轮数,写入 `work/logs/repair-exhausted.json`,人工修改对应 agent 结果后再 `check`。这一段也可以由 `run.py --resume` 自动完成:条件边判断有无 `repair_targets`,有则自动回 `repair` → `integrate` → `check` 循环。
@@ -1656,7 +1632,7 @@ python scripts/check.py  books/ai-intro            # 修完再过一遍
 ### 18.8 索引与网站
 
 ```bash
-python scripts/index.py books/ai-intro             # content/docs/ → site/.bookwiki/bookwiki.sqlite
+python scripts/run.py books/ai-intro --to index    # content/docs/ → site/.bookwiki/bookwiki.sqlite
 python scripts/site.py  books/ai-intro             # 启 Next.js + Fumadocs(长驻)
 ```
 

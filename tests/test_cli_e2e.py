@@ -82,10 +82,10 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
     assert "resume: completed checkpoint found" in resumed.stdout
     assert "cache_hit" in resumed.stdout
 
-    checked = run_script("scripts/check.py", str(book_dir))
+    checked = run_script("scripts/run.py", str(book_dir), "--from", "check", "--to", "check")
 
     assert "resume: completed checkpoint found" not in checked.stdout
-    assert "stage complete: check" in checked.stdout
+    assert "run status:" in checked.stdout
 
     db_path = book_dir / "site" / ".bookwiki" / "bookwiki.sqlite"
     content_index = book_dir / "content" / "docs" / "index.mdx"
@@ -122,10 +122,10 @@ def test_completed_checkpoint_is_not_reused_after_language_change(tmp_path) -> N
     config["language"] = "en-US"
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    result = run_script("scripts/structure.py", str(book_dir))
+    result = run_script("scripts/run.py", str(book_dir), "--from", "structure", "--to", "structure")
 
     assert "completed checkpoint found" not in result.stdout
-    assert "stage complete: structure" in result.stdout
+    assert "run status:" in result.stdout
     manifest = json.loads(
         (book_dir / "work" / "logs" / "run-manifest.json").read_text(encoding="utf-8")
     )
@@ -140,10 +140,10 @@ def test_caption_stage_script_runs_after_convert(tmp_path) -> None:
     source.write_text("BookWiki caption stage smoke source.", encoding="utf-8")
 
     run_script("scripts/init_book.py", str(book_dir), "--source", str(source))
-    run_script("scripts/convert.py", str(book_dir))
-    result = run_script("scripts/caption.py", str(book_dir))
+    run_script("scripts/run.py", str(book_dir), "--from", "convert", "--to", "convert")
+    result = run_script("scripts/run.py", str(book_dir), "--from", "caption", "--to", "caption")
 
-    assert "stage complete: caption" in result.stdout
+    assert "run status:" in result.stdout
     manifest = json.loads(
         (book_dir / "work" / "logs" / "run-manifest.json").read_text(encoding="utf-8")
     )
@@ -176,8 +176,8 @@ def test_structure_then_split_allows_manual_approved_structure_edit(tmp_path) ->
     input_dir.mkdir(parents=True, exist_ok=True)
     (input_dir / advanced.name).write_text(advanced.read_text(encoding="utf-8"), encoding="utf-8")
 
-    run_script("scripts/convert.py", str(book_dir))
-    run_script("scripts/structure.py", str(book_dir))
+    run_script("scripts/run.py", str(book_dir), "--from", "convert", "--to", "convert")
+    run_script("scripts/run.py", str(book_dir), "--from", "structure", "--to", "structure")
 
     manifest = json.loads(
         (book_dir / "work" / "logs" / "run-manifest.json").read_text(encoding="utf-8")
@@ -202,7 +202,7 @@ def test_structure_then_split_allows_manual_approved_structure_edit(tmp_path) ->
         encoding="utf-8",
     )
 
-    run_script("scripts/split.py", str(book_dir))
+    run_script("scripts/run.py", str(book_dir), "--from", "split", "--to", "split")
 
     ch01 = book_dir / "work" / "chapter_sources" / "Chapter-1-Intro-Search" / "source.md"
     ch02 = book_dir / "work" / "chapter_sources" / "Chapter-2-Heuristic-Search" / "source.md"

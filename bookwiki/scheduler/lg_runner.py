@@ -404,8 +404,9 @@ async def _run(
     input_state: dict[str, Any] | None = None
 
     if cfg.force_from:
-        clear_for_force(cfg)
-        _delete_checkpoint_db(db_path)
+        if cfg.force_clear_cache:
+            clear_for_force(cfg)
+            _delete_checkpoint_db(db_path)
         seed_state = state_for_force_from(cfg, prior_values)
         seed_index = NODE_ORDER.index(cfg.force_from)
     elif resume and prior_values and not prior_next and config_matches:

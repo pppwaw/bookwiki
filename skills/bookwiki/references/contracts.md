@@ -232,5 +232,5 @@ Core tables and views:
 Rebuild with:
 
 ```bash
-python scripts/index.py books/<id>
+python scripts/run.py books/<id> --to index
 ```

@@ -2,11 +2,11 @@
 
 BookWiki turns one book's source materials into an Obsidian-style vault, a SQLite index, and a local learning site.
 
-Use `scripts/run.py <book_dir>` for the full pipeline. Use the thin stage scripts for focused work:
-`convert`, `caption`, `structure`, `split`, `generate`, `check`, `repair`, and `index`. The full graph
+Use `scripts/run.py <book_dir>` for the full pipeline. The full graph
 runs `convert → caption → structure → split → build_skeleton → generate → reconcile_concepts →
-concept_pages → integrate → check → repair → index`. Control entry/exit with `--from <stage> --force`,
-`--to <stage>`, `--pause-after <stage>`, `--resume`, and `--dry-run` (there is no `--force-from`).
+concept_pages → integrate → check → repair → index`. Control entry/exit with `--from <stage>`
+(optionally with `--force` to also clear the task cache), `--to <stage>`, `--pause-after <stage>`,
+`--resume`, and `--dry-run` (there is no `--force-from`).
 
 The default runnable pipeline scope is the full graph through `index`; the pipeline is feature-complete,
 with only optional follow-ups left. Do not start the long-running site dev server

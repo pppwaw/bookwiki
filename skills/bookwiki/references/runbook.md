@@ -43,14 +43,14 @@ python scripts/run.py books/<id> --resume
 Run one focused stage:
 
 ```bash
-python scripts/convert.py books/<id>
-python scripts/caption.py books/<id>
-python scripts/structure.py books/<id>
-python scripts/split.py books/<id>
-python scripts/generate.py books/<id>
-python scripts/check.py books/<id>
-python scripts/repair.py books/<id>
-python scripts/index.py books/<id>
+python scripts/run.py books/<id> --to convert
+python scripts/run.py books/<id> --to caption
+python scripts/run.py books/<id> --to structure
+python scripts/run.py books/<id> --to split
+python scripts/run.py books/<id> --to generate
+python scripts/run.py books/<id> --to check
+python scripts/run.py books/<id> --to repair
+python scripts/run.py books/<id> --to index
 ```
 
 Materialize and preview the site only when explicitly asked:
@@ -86,20 +86,21 @@ Use `--resume` when a run paused or was interrupted:
 python scripts/run.py books/<id> --resume
 ```
 
-Use `--from <stage> --force` when upstream artifacts are valid but downstream outputs should be regenerated (both flags are required together):
+Use `--from <stage>` when upstream artifacts are valid but downstream outputs should be regenerated. Add `--force` to also clear the task cache (forces fresh LLM calls); without `--force`, cached agent outputs are reused:
 
 ```bash
-python scripts/run.py books/<id> --from generate --force
+python scripts/run.py books/<id> --from generate          # reuse cached LLM outputs
+python scripts/run.py books/<id> --from generate --force   # clear cache, full recompute
 ```
 
 Useful cases:
 
-- `--from structure --force`: converted source Markdown is valid; rebuild structure and downstream stages.
-- `--from build_skeleton --force`: split chapter sources are valid; rebuild `work/skeleton.json` (the book-wide term contract) and everything after it.
-- `--from generate --force`: split chapter sources and skeleton are valid; regenerate agent content and downstream stages.
-- `--from check --force`: MDX content is valid; rerun check and downstream routing.
+- `--from structure`: converted source Markdown is valid; rebuild structure and downstream stages.
+- `--from build_skeleton`: split chapter sources are valid; rebuild `work/skeleton.json` (the book-wide term contract) and everything after it.
+- `--from generate`: split chapter sources and skeleton are valid; regenerate agent content and downstream stages.
+- `--from check`: MDX content is valid; rerun check and downstream routing.
 
-`build_skeleton`, `reconcile_concepts`, `concept_pages`, and `integrate` have no thin stage script; reach them only through `run.py` (e.g. pause at the concept-merge gate with `--pause-after reconcile_concepts`).
+`build_skeleton`, `reconcile_concepts`, `concept_pages`, and `integrate` are only reachable through `run.py` (e.g. pause at the concept-merge gate with `--pause-after reconcile_concepts`).
 
 Stop entry/exit points with `--to <stage>` or `--pause-after <stage>`, and preview without executing using `--dry-run`.
 
@@ -110,7 +111,7 @@ Do not use `--from split --force` unless `approved-structure.yaml` is already re
 Run:
 
 ```bash
-python scripts/check.py books/<id>
+python scripts/run.py books/<id> --to check
 ```
 
 Then read:
@@ -123,7 +124,7 @@ books/<id>/work/logs/check-report.md
 Decision rules:
 
 - `status: ok`: proceed to `index`.
-- `status: needs_repair` with `repair_targets`: run `python scripts/repair.py books/<id> --resume`, then resume the pipeline.
+- `status: needs_repair` with `repair_targets`: run `python scripts/run.py books/<id> --from repair --to repair`, then resume the pipeline.
 - Warnings only: show the warnings to the user; do not regenerate blindly.
 - Unknown source refs or broken links after repair: inspect the related `work/agent_results/*.json` and source manifests before rerunning broad stages.
 
@@ -140,5 +141,5 @@ Notes on the current check/repair contract:
 - Stale content after changing generation settings: use `--from generate --force`.
 - `check` aborts on a missing MDX validator: install Node and run the `tools/mdx-validate` install (`node_modules`), or set `generation.allowMissingMdxValidator=true` only if you accept skipping render-time MDX checks.
 - `BudgetExceeded`: the run crossed `budget.maxCostCny` (default `70.0`); raise it in `book.config.json` or set it to `<= 0` for unlimited, then `--resume`.
-- SQLite missing: run `python scripts/index.py books/<id>` after content exists and check passes.
+- SQLite missing: run `python scripts/run.py books/<id> --to index` after content exists and check passes.
 - Site has old docs: rerun `python scripts/site.py books/<id>` when preview is requested.

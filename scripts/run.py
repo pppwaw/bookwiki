@@ -18,7 +18,7 @@ def build_parser():
         "--from",
         dest="from_node",
         choices=NODE_ORDER,
-        help="Node to rerun from; requires --force",
+        help="Node to rerun from; pair with --force to also clear the task cache",
     )
     parser.add_argument(
         "--force",
@@ -53,11 +53,9 @@ def parse_pause_after(raw: str | None) -> list[str]:
 
 
 def resolve_force_from(args, parser) -> str | None:
-    if args.from_node and not args.force:
-        parser.error("--from requires --force")
     if args.force and not args.from_node:
         parser.error("--force requires --from")
-    return args.from_node if args.force else None
+    return args.from_node
 
 
 def resolve_target_chapters(args, parser) -> list[str]:
@@ -80,6 +78,7 @@ def main() -> None:
 
     cfg = load_config(args.book_dir)
     cfg.force_from = resolve_force_from(args, parser)
+    cfg.force_clear_cache = args.force
     cfg.target_chapters = resolve_target_chapters(args, parser)
     cfg.target_concepts = resolve_target_concepts(args, parser)
     state = run_pipeline(

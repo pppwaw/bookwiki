@@ -33,9 +33,8 @@ def test_run_cli_uses_explicit_from_force_pair() -> None:
     assert parse_force_from(["books/mini", "--from", "integrate", "--force"]) == "integrate"
 
 
-def test_run_cli_rejects_from_without_force() -> None:
-    with pytest.raises(SystemExit):
-        parse_force_from(["books/mini", "--from", "integrate"])
+def test_run_cli_accepts_from_without_force() -> None:
+    assert parse_force_from(["books/mini", "--from", "integrate"]) == "integrate"
 
 
 def test_run_cli_rejects_force_without_from() -> None:

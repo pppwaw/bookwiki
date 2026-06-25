@@ -68,11 +68,11 @@ convert → caption → structure → split → build_skeleton → generate
 
 缺这一行则停下要求复核，不绕过闸门。
 
-## 阶段脚本
+## 阶段控制
 
-聚焦单段时用薄脚本：`scripts/{convert,caption,structure,split,generate,check,repair,index}.py books/<id>`。
+聚焦单段时统一用 `run.py` 控制：`--from <stage>`（不带 `--force` 时保留 task 缓存复用 LLM 结果，带 `--force` 时清缓存强制重算）、`--to <stage>`、`--pause-after <stage>`、`--resume`、`--dry-run`。
 
-`build_skeleton`、`reconcile_concepts`、`concept_pages`、`integrate` 没有独立薄脚本，只能经 `run.py` 访问（如 `--pause-after reconcile_concepts`）。`run.py` 额外支持 `--from <stage> --force`（两者必须同时给）、`--to`、`--pause-after`、`--resume`、`--dry-run`。
+`build_skeleton`、`reconcile_concepts`、`concept_pages`、`integrate` 只能经 `run.py` 访问（如 `--pause-after reconcile_concepts`）。
 
 默认不要启动长驻站点 `scripts/site.py`，除非用户明确要求预览或验证。
 

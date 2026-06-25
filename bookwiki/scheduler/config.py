@@ -68,6 +68,7 @@ class BookConfig:
     pause_after: list[str] = field(default_factory=list)
     dry_run: bool = False
     force_from: str | None = None
+    force_clear_cache: bool = False
     target_chapters: list[str] = field(default_factory=list)
     target_concepts: list[str] = field(default_factory=list)
     llm_runtime: Any | None = None
