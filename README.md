@@ -15,10 +15,12 @@
 ```bash
 # 1. 配置密钥（缺失时直接报错，不降级到 stub）
 export DEEPSEEK_API_KEY="..."     # deepseek-* 模型
-export MOONSHOT_API_KEY="..."     # kimi-*（含 kimi-k2.6 视觉图注）
+export MOONSHOT_API_KEY="..."     # kimi-* 模型（可选）
+export OPENROUTER_API_KEY="..."   # openrouter-* 模型；默认视觉图注 openrouter-qwen3.6-35b-a3b
 # 可选：使用代理 / 兼容网关时覆盖 API Base URL
 export DEEPSEEK_API_BASE_URL="https://.../v1"
 export MOONSHOT_API_BASE_URL="https://.../v1"
+export OPENROUTER_API_BASE_URL="https://openrouter.ai/api/v1"
 
 # 2. 初始化一本书，并把源文件放进 input/
 python scripts/init_book.py books/<id> --source path/to/source.pdf
@@ -42,7 +44,7 @@ convert → caption → structure → split → build_skeleton → generate
 | 节点 | 作用 |
 |---|---|
 | `convert` | MinerU VLM 解析 PDF/PPTX（失败即报错，不本地降级）+ 可选 LLM 版面修复 → `work/sources_md/` + `work/source_refs/` |
-| `caption` | 把抽出的图送 `kimi-k2.6` 视觉模型补图注 |
+| `caption` | 把抽出的图送配置的 `models.vision` 视觉模型补图注（默认 `openrouter-qwen3.6-35b-a3b`） |
 | `structure` | `StructureAgent` 产 `work/structure/proposed-structure.yaml`（**硬复核闸门**，见下） |
 | `split` | `ChapterSplitAgent` 按主题把片段对齐到章节 → `work/chapter_sources/<id>/` |
 | `build_skeleton` | `SkeletonAgent` 通览全书产只读契约 `work/skeleton.json`（canonical 术语表 + `alias_map` + `chapter_briefs`） |
@@ -77,8 +79,8 @@ convert → caption → structure → split → build_skeleton → generate
 ## 配置要点（`book.config.json`）
 
 - `budget.maxCostCny`：成本硬上限，默认 `70.0`（`<= 0` 为不限）；越线抛 `BudgetExceeded`。旧 `maxCostUsd` 自动迁移。每次运行后的实际花费写入 `work/logs/run-manifest.json` 的 `llm_usage.total_cost_cny`，分阶段明细见 `llm_usage.stages`。
-- `generation`：`quizPerChapter=5`、`cardsPerChapter=8`、`maxChapterConcurrency=4`、`maxSectionConcurrency=3`、`maxRepairRounds=3`、`qualityCheck=false`、`maxQualityRounds=2`、`allowMissingMdxValidator=false`。
-- `models`：按 agent 选模型（`deepseek-*` 走 `DEEPSEEK_API_KEY`，`kimi-*` 走 `MOONSHOT_API_KEY`）。API Base URL 可用 `DEEPSEEK_API_BASE_URL` / `MOONSHOT_API_BASE_URL` 覆盖，短别名 `DEEPSEEK_API_BASE` / `MOONSHOT_API_BASE` 也可用；Moonshot 默认 `https://api.moonshot.cn/v1`。
+- `generation`：`quizPerChapter=5`、`cardsPerChapter=8`、`maxChapterConcurrency=4`、`maxSectionConcurrency=3`、`maxRepairRounds=3`、`qualityCheck=false`、`maxQualityRounds=2`、`allowMissingMdxValidator=false`；`VisionCaptionAgent` 统一按 `images` 列表处理图注，同一 `source_ref` 页上的多图自动合并为一次视觉模型调用。
+- `models`：按 agent 选模型（`deepseek-*` 走 `DEEPSEEK_API_KEY`，`kimi-*` 走 `MOONSHOT_API_KEY`，`openrouter-*` 走 `OPENROUTER_API_KEY`）。API Base URL 可用 `DEEPSEEK_API_BASE_URL` / `MOONSHOT_API_BASE_URL` / `OPENROUTER_API_BASE_URL` 覆盖，短别名 `*_API_BASE` 也可用；Moonshot 默认 `https://api.moonshot.cn/v1`，OpenRouter 默认 `https://openrouter.ai/api/v1`。
 
 ## 排错先看
 
