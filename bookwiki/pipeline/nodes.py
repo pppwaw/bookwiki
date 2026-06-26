@@ -741,6 +741,11 @@ def _concept_link_terms(
     return sorted(terms.values(), key=lambda item: len(item[0]), reverse=True)
 
 
+_CONCEPT_LINK_PROTECTED_RE = re.compile(
+    r"(<PreviewLink\b[\s\S]*?</PreviewLink>|```[\s\S]*?```|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$|\[[^\]\n]+\]\([^)]+\)|<[^>\n]+>)"
+)
+
+
 def _auto_link_concept_terms(
     markdown: str,
     terms: list[tuple[str, str, dict[str, str]]],
@@ -748,32 +753,28 @@ def _auto_link_concept_terms(
 ) -> str:
     if not terms:
         return markdown
-    lines: list[str] = []
-    for line in markdown.splitlines(keepends=True):
-        if line.lstrip().startswith("#"):
-            lines.append(line)
+    # Split protected spans on the WHOLE document first, so MULTI-LINE ``$$ ... $$`` display
+    # math and fenced code blocks are excluded as single units. Splitting per line first let
+    # the interior lines of a multi-line ``$$`` block look like prose and get a <PreviewLink>
+    # injected inside the math (e.g. ``$\operatorname{<PreviewLink ...$``), which breaks the
+    # MDX/KaTeX parse. The ``[\s\S]*?`` in the regex only works when applied across lines.
+    out: list[str] = []
+    for part in _CONCEPT_LINK_PROTECTED_RE.split(markdown):
+        if not part:
+            continue
+        if _CONCEPT_LINK_PROTECTED_RE.fullmatch(part):
+            out.append(part)
         else:
-            lines.append(_auto_link_concept_terms_in_line(line, terms, linked_canonicals))
-    return "".join(lines)
-
-
-_CONCEPT_LINK_PROTECTED_RE = re.compile(
-    r"(<PreviewLink\b[\s\S]*?</PreviewLink>|```[\s\S]*?```|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$|\[[^\]\n]+\]\([^)]+\)|<[^>\n]+>)"
-)
-
-
-def _auto_link_concept_terms_in_line(
-    line: str,
-    terms: list[tuple[str, str, dict[str, str]]],
-    linked_canonicals: set[str],
-) -> str:
-    parts = _CONCEPT_LINK_PROTECTED_RE.split(line)
-    return "".join(
-        part
-        if _CONCEPT_LINK_PROTECTED_RE.fullmatch(part)
-        else _auto_link_concept_terms_in_text(part, terms, linked_canonicals)
-        for part in parts
-    )
+            # Prose between protected spans: still skip heading lines so titles stay unlinked.
+            out.append(
+                "".join(
+                    line
+                    if line.lstrip().startswith("#")
+                    else _auto_link_concept_terms_in_text(line, terms, linked_canonicals)
+                    for line in part.splitlines(keepends=True)
+                )
+            )
+    return "".join(out)
 
 
 def _auto_link_concept_terms_in_text(
@@ -3322,7 +3323,13 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
             "summary": summary["summary_md"],
             "concepts": concept_names,
         }
-        chapter_key_points = [str(item) for item in summary.get("key_points", []) if item]
+        # key_points carry inline LaTeX and are rendered by the site's <Markdown> component,
+        # so normalize their math like body prose — most importantly undoubling JSON
+        # round-tripped escapes (``\\nabla`` -> ``\nabla``; KaTeX reads ``\\`` as a linebreak,
+        # which is the "莫名换行 + 命令不渲染" bug in the 要点清单).
+        chapter_key_points = [
+            normalize_mdx_math(str(item)).strip() for item in summary.get("key_points", []) if item
+        ]
         chapter_frontmatter["key_points"] = chapter_key_points
         write_text(
             chapter_path,
@@ -3520,7 +3527,7 @@ def _site_typecheck_issues(cfg: BookConfig) -> list[Issue]:
         return []
 
     try:
-        from scripts.site import TEMPLATE_DIR, materialize_site
+        from scripts.site import materialize_site
     except ImportError as exc:
         return [
             Issue(
@@ -3530,25 +3537,6 @@ def _site_typecheck_issues(cfg: BookConfig) -> list[Issue]:
                 owner_task_id="site:typecheck",
             )
         ]
-
-    template_node_modules = TEMPLATE_DIR / "node_modules"
-    if not template_node_modules.exists():
-        message = (
-            "site type check skipped: site-template/node_modules is missing; "
-            "run `pnpm install` in site-template or set "
-            "generation.siteTypeCheck=required to fail here"
-        )
-        if required:
-            return [
-                Issue(
-                    severity="error",
-                    code="SITE_TYPECHECK_UNAVAILABLE",
-                    message=message,
-                    owner_task_id="site:typecheck",
-                )
-            ]
-        _LOG.info("%s", message)
-        return []
 
     try:
         site_dir = materialize_site(cfg)
@@ -3562,40 +3550,46 @@ def _site_typecheck_issues(cfg: BookConfig) -> list[Issue]:
             )
         ]
 
-    site_node_modules = site_dir / "node_modules"
-    template_realpath = template_node_modules.resolve()
-    if site_node_modules.exists():
-        try:
-            site_realpath = site_node_modules.resolve()
-        except OSError as exc:
-            return [
-                Issue(
-                    severity="error",
-                    code="SITE_TYPECHECK_UNAVAILABLE",
-                    message=f"site type check refused unreadable site/node_modules: {exc}",
-                    owner_task_id="site:typecheck",
-                )
-            ]
-        if site_realpath != template_realpath:
-            return [
-                Issue(
-                    severity="error",
-                    code="SITE_TYPECHECK_UNAVAILABLE",
-                    message=(
-                        "site type check refused non-template site/node_modules; "
-                        "install dependencies in site-template so check uses the verified "
-                        "template tree"
-                    ),
-                    owner_task_id="site:typecheck",
-                )
-            ]
-    else:
-        if site_node_modules.is_symlink():
-            site_node_modules.unlink()
-        site_node_modules.symlink_to(template_node_modules, target_is_directory=True)
+    env = _site_typecheck_env(cfg)
+    try:
+        install_proc = subprocess.run(  # noqa: S603 - fixed argv, project-local package manager
+            [pnpm, "install"],
+            cwd=site_dir,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return [
+            Issue(
+                severity="error",
+                code="SITE_TYPECHECK_ERROR",
+                message=f"site dependency install failed to run: {exc}",
+                owner_task_id="site:typecheck",
+            )
+        ]
+    if install_proc.returncode != 0:
+        output = _redact_site_typecheck_output(
+            "\n".join(
+                part for part in [install_proc.stdout.strip(), install_proc.stderr.strip()] if part
+            )
+        )
+        if len(output) > 4000:
+            output = output[:4000] + "..."
+        return [
+            Issue(
+                severity="error",
+                code="SITE_TYPECHECK_ERROR",
+                message=(
+                    f"site dependency install failed (exit {install_proc.returncode}): {output}"
+                ),
+                owner_task_id="site:typecheck",
+            )
+        ]
 
     try:
-        env = _site_typecheck_env(cfg)
         proc = subprocess.run(  # noqa: S603 - fixed argv, project-local package script
             [pnpm, "run", "types:check"],
             cwd=site_dir,

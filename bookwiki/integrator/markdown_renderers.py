@@ -13,11 +13,13 @@ def normalize_concept_links(mdx: str, alias_map: dict[str, str]) -> str:
 
 
 def normalize_mdx_math(mdx: str) -> str:
-    parts = re.split(r"(```[\s\S]*?```|`[^`\n]*`)", mdx)
-    normalized = "".join(
-        part if part.startswith("`") else _normalize_math_segment(part) for part in parts
-    )
-    normalized = _repair_split_display_math_linebreaks(normalized)
+    # ``\[ ... \]`` / ``\( ... \)`` are deliberately NOT auto-converted to ``$$``/``$``.
+    # Every agent prompt mandates ``$``/``$$`` delimiters, so a stray ``\[`` is a contract
+    # violation that ``find_forbidden_latex_delimiters`` flags for repair — not something to
+    # silently rewrite. Auto-rewriting it here used to run document-wide (no JSX-prop guard)
+    # and corrupt JSON string literals inside props like ``citations={[...]}``, injecting raw
+    # newlines that broke the MDX expression parse at build time.
+    normalized = _repair_split_display_math_linebreaks(mdx)
     normalized = _normalize_katex_text_mode_chars(normalized)
     return _canonicalize_display_fences(normalized)
 
@@ -92,6 +94,25 @@ _LABEL_SPLIT_RE = re.compile(r"^(?P<label>.{1,80}?[:：])\s*(?P<rest>\S[\s\S]*)$
 _TRAILING_PUNCT_RE = re.compile(r"[.,;:!?。，；：！？]+$")
 
 
+def _convert_latex_delimiters_to_dollar(text: str) -> str:
+    """Rewrite ``\\[ ... \\]`` / ``\\( ... \\)`` delimiters to ``$$``/``$``.
+
+    Used ONLY on citation quotes, which are VERBATIM source text (the textbook itself may
+    use ``\\[ ... \\]``) — unlike model-authored prose, where the same delimiters are a
+    contract violation. The quote output lands in the ``## Sources`` Markdown list, never in
+    a JSX prop / JSON string literal, so the multi-line ``$$`` form is safe here (the reason
+    this was removed from the document-wide ``normalize_mdx_math``).
+    """
+    text = re.sub(r"(?m)^[ \t]*\\\[[ \t]*$", "$$", text)
+    text = re.sub(r"(?m)^[ \t]*\\\][ \t]*$", "$$", text)
+    text = re.sub(
+        r"\s*\\\[([\s\S]*?)\\\]\s*[.,;:]?",
+        lambda match: f"\n\n$$\n{match.group(1).strip()}\n$$\n\n",
+        text,
+    )
+    return re.sub(r"\\\(([\s\S]*?)\\\)", lambda match: f"${match.group(1).strip()}$", text)
+
+
 def normalize_citation_quote_math(quote: str) -> str:
     """Ensure math inside a citation quote carries ``$`` delimiters so it renders as KaTeX.
 
@@ -100,9 +121,10 @@ def normalize_citation_quote_math(quote: str) -> str:
     math in an ambiguous way (e.g. ``\\frac{1}{n} is not unbiased``) is left untouched, and
     quotes that already contain ``$...$`` are returned unchanged (idempotent). This runs
     BEFORE ``_escape_mdx_text_outside_math`` so wrapped regions keep their raw ``{}`` for
-    KaTeX instead of being HTML-escaped.
+    KaTeX instead of being HTML-escaped. Verbatim source ``\\[ \\]`` / ``\\( \\)`` delimiters
+    are converted (they are source text, not a model contract violation).
     """
-    text = normalize_mdx_math(str(quote).strip())
+    text = _convert_latex_delimiters_to_dollar(normalize_mdx_math(str(quote).strip()))
     if not text or _DOLLAR_MATH_RE.search(text) or not _LATEX_MATH_SIGNAL_RE.search(text):
         return text
 
@@ -404,18 +426,3 @@ def _escape_mdx_text_segment(segment: str) -> str:
 def _css_to_camel(prop: str) -> str:
     head, *rest = prop.split("-")
     return head + "".join(word[:1].upper() + word[1:] for word in rest if word)
-
-
-def _normalize_math_segment(segment: str) -> str:
-    segment = re.sub(r"(?m)^[ \t]*\\\[[ \t]*$", "$$", segment)
-    segment = re.sub(r"(?m)^[ \t]*\\\][ \t]*$", "$$", segment)
-    segment = re.sub(
-        r"\s*\\\[([\s\S]*?)\\\]\s*[.,;:]?",
-        lambda match: f"\n\n$$\n{match.group(1).strip()}\n$$\n\n",
-        segment,
-    )
-    return re.sub(
-        r"\\\(([\s\S]*?)\\\)",
-        lambda match: f"${match.group(1).strip()}$",
-        segment,
-    )

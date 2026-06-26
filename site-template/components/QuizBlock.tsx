@@ -2,13 +2,16 @@
 
 import {
   createContext,
+  Fragment,
   type ReactNode,
   useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
+import { renderPendingKatex } from './KatexClient';
 import { MathText } from './MathText';
 
 type Citation = {
@@ -254,7 +257,9 @@ export function QuizChoice({ children, id }: { children: ReactNode; id: string }
       <span className="quiz-option-marker" aria-hidden="true">
         {showAnswer ? '✓' : showWrong ? '✕' : ''}
       </span>
-      <span className="quiz-option-body">{children}</span>
+      <span className="quiz-option-body">
+        <MathContent>{children}</MathContent>
+      </span>
     </button>
   );
 }
@@ -283,12 +288,21 @@ export function QuizCheck() {
 
 export function QuizExplanation({ children }: { children: ReactNode }) {
   const quiz = useItemContext();
+  const feedbackRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (quiz.checked && feedbackRef.current) {
+      renderPendingKatex(feedbackRef.current);
+    }
+  }, [quiz.checked, quiz.answerContent, children]);
+
   if (!quiz.checked) return null;
 
   const isCorrect = quiz.selected === quiz.answer;
 
   return (
     <div
+      ref={feedbackRef}
       className={isCorrect ? 'quiz-feedback correct' : 'quiz-feedback wrong'}
       role="status"
       aria-live="polite"
@@ -296,9 +310,9 @@ export function QuizExplanation({ children }: { children: ReactNode }) {
       <div className="quiz-feedback-headline">
         <strong>{isCorrect ? '✓ Correct' : '✕ Not quite'}</strong>
         {!isCorrect ? (
-          <span className="quiz-feedback-answer">
-            Answer: {quiz.answerContent ?? quiz.answer}
-          </span>
+          <div className="quiz-feedback-answer">
+            Answer: <MathContent>{quiz.answerContent ?? quiz.answer}</MathContent>
+          </div>
         ) : null}
       </div>
       <div className="quiz-feedback-body">{children}</div>
@@ -319,6 +333,24 @@ export function QuizExplanation({ children }: { children: ReactNode }) {
       )}
     </div>
   );
+}
+
+function MathContent({ children }: { children: ReactNode }) {
+  return <>{renderMathContent(children)}</>;
+}
+
+function renderMathContent(content: ReactNode): ReactNode {
+  if (typeof content === 'string') {
+    return <MathText text={content} />;
+  }
+
+  if (Array.isArray(content)) {
+    return content.map((child, index) => (
+      <Fragment key={index}>{renderMathContent(child)}</Fragment>
+    ));
+  }
+
+  return content;
 }
 
 function useItemContext(): ItemContextValue {

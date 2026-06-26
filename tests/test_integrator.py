@@ -229,6 +229,8 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         summary: Search summary.
         concepts:
         - state space
+        key_points:
+        - State space
         ---
 
         # Search
@@ -268,6 +270,7 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
         ---
         title: state space
         type: concept
+        summary: State space is the reachable-state set.
         ---
 
         # state space
@@ -458,6 +461,32 @@ def test_normalize_concept_links_preserves_mermaid_fences() -> None:
     assert "D[[电阻]] --> B" in fence
     # Prose outside the fence is still linked as usual.
     assert "<PreviewLink" in after
+
+
+def test_normalize_concept_links_preserves_multiline_display_math() -> None:
+    """Concept-link normalization must never inject ``<PreviewLink>`` inside a MULTI-LINE
+    ``$$ ... $$`` display block — the 14.4 ``$\\operatorname{<PreviewLink ...$`` break, where
+    the interior line of a display block was treated as prose by per-line processing."""
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    alias_map = {"散度": "Divergence"}
+    previews = {"Divergence": {"href": "/c/Div", "title": "散度", "summary": "div"}}
+    body = (
+        "先讲背景。\n\n"
+        "$$\n"
+        "\\operatorname{散度} \\vec F = \\nabla \\cdot \\vec F\n"
+        "$$\n\n"
+        "再讲散度的意义。"
+    )
+
+    out = _normalize_concept_links(body, alias_map, previews)
+    math = out.split("$$", 2)[1]  # content between the first pair of $$
+
+    # Display-math interior is byte-for-byte preserved: no PreviewLink injected.
+    assert "<PreviewLink" not in math
+    assert "\\operatorname{散度}" in math
+    # Prose outside the math is still linked as usual.
+    assert "<PreviewLink" in out.split("$$", 2)[2]
 
 
 def test_normalize_concept_links_resolves_chapter_wikilinks() -> None:

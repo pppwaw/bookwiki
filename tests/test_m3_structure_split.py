@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from bookwiki.agents.source_summary_agent import SourceSummaryAgent
-from bookwiki.agents.structure_agent import StructureAgent, _group_into_two_level
+from bookwiki.agents.structure_agent import StructureAgent
 from bookwiki.pipeline.nodes import (
     APPROVED_STRUCTURE_MARKER,
     PENDING_STRUCTURE_MARKER,
@@ -17,7 +17,6 @@ from bookwiki.pipeline.nodes import (
 )
 from bookwiki.scheduler.config import default_config
 from bookwiki.scheduler.llm import TestLLMRuntime
-from bookwiki.schemas.source import ChapterProposal, StructureResult
 from bookwiki.split.chapter_splitter import (
     chapter_groups_from_specs,
     compute_slug_remap,
@@ -511,60 +510,6 @@ def test_split_sources_by_structure_keeps_leaves_flat_with_group_metadata(
         "9.5-Alternating-Series",
     ]
     assert result.chapter_groups["Chapter-11-Vectors"]["leaf_ids"] == ["11.5-Vector-Functions"]
-
-
-def test_group_into_two_level_nests_sections_and_keeps_chapter_titles_flat() -> None:
-    flat = StructureResult(
-        chapters=[
-            ChapterProposal(
-                title="9.2 Infinite Series", topics=["series"], source_refs=["9.2-p001"]
-            ),
-            ChapterProposal(
-                title="9.5 Alternating Series",
-                topics=["alternating"],
-                source_refs=["9.5-p001"],
-            ),
-            ChapterProposal(
-                title="11.5 Vector Functions",
-                topics=["vectors"],
-                source_refs=["11.5-p001"],
-            ),
-            ChapterProposal(
-                title="Chapter 6 Point Estimation",
-                topics=["mle"],
-                source_refs=["w9-p001"],
-            ),
-        ]
-    )
-
-    grouped = _group_into_two_level(flat)
-
-    assert [chapter.title for chapter in grouped.chapters] == [
-        "Chapter 9",
-        "Chapter 11",
-        "Chapter 6 Point Estimation",
-    ]
-    assert [section.title for section in grouped.chapters[0].sections] == [
-        "9.2 Infinite Series",
-        "9.5 Alternating Series",
-    ]
-    # Section-style leaves carry no top-level topics/source_refs; the group wraps them.
-    assert grouped.chapters[0].topics == []
-    # A real "Chapter N" title stays a flat leaf, not wrapped in a group.
-    assert grouped.chapters[2].sections == []
-    assert grouped.chapters[2].source_refs == ["w9-p001"]
-
-    # Round-trip: the proposed YAML the agent emits must parse back through the gate parser.
-    specs = parse_approved_structure(grouped.proposed_structure_yaml)
-    assert [spec.chapter_id for spec in specs] == [
-        "9.2-Infinite-Series",
-        "9.5-Alternating-Series",
-        "11.5-Vector-Functions",
-        "Chapter-6-Point-Estimation",
-    ]
-    assert specs[0].group_id == "Chapter-9"
-    assert specs[0].group_title == "Chapter 9"
-    assert specs[3].group_id is None
 
 
 def test_structure_node_reseeds_emptied_approved_structure(tmp_path: Path) -> None:

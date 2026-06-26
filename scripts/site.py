@@ -29,7 +29,6 @@ SITE_ENV_KEYS = (
 PRESERVE_SITE_NAMES = {
     ".bookwiki",
     ".env.local",
-    "node_modules",
     "tsconfig.tsbuildinfo",
 }
 SKIP_TEMPLATE_NAMES = {
@@ -131,7 +130,9 @@ def sync_site_env(site_dir: Path) -> Path | None:
 
 
 def _remove_path(path: Path) -> None:
-    if path.is_dir():
+    if path.is_symlink():
+        path.unlink()
+    elif path.is_dir():
         shutil.rmtree(path)
     else:
         path.unlink()

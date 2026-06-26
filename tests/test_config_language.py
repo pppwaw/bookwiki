@@ -367,6 +367,51 @@ def test_materialize_site_removes_content_derived_caches(tmp_path) -> None:
     assert not next_cache.exists()
 
 
+def test_materialize_site_removes_node_modules_by_default(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    (book_dir / "book.config.json").write_text(
+        json.dumps({"book_id": "mini", "title": "Mini"}),
+        encoding="utf-8",
+    )
+    node_modules = book_dir / "site" / "node_modules"
+    node_modules.mkdir(parents=True)
+    (node_modules / "stale.txt").write_text("old deps", encoding="utf-8")
+
+    site.materialize_site(load_config(book_dir))
+
+    assert not node_modules.exists()
+
+
+def test_materialize_site_removes_symlinked_node_modules(tmp_path) -> None:
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    content_dir = book_dir / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    (book_dir / "book.config.json").write_text(
+        json.dumps({"book_id": "mini", "title": "Mini"}),
+        encoding="utf-8",
+    )
+    target = tmp_path / "shared-node-modules"
+    target.mkdir()
+    site_dir = book_dir / "site"
+    site_dir.mkdir()
+    node_modules = site_dir / "node_modules"
+    node_modules.symlink_to(target, target_is_directory=True)
+
+    site.materialize_site(load_config(book_dir))
+
+    assert not node_modules.exists()
+    assert not node_modules.is_symlink()
+    assert target.exists()
+
+
 def test_site_main_fails_loudly_when_content_docs_is_missing(
     tmp_path, monkeypatch
 ) -> None:

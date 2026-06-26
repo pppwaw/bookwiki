@@ -120,6 +120,7 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
                     "slot_id": "",
                 }
             ],
+            "worked_items": [],
             "owner_task_id": "chapter-1:quiz",
         },
     ),

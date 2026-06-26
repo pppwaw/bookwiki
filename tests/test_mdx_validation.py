@@ -18,7 +18,11 @@ from bookwiki.agents.mdx_edit_repair import (
     ChapterMdxEditRepairAgent,
     ConceptMdxEditRepairAgent,
 )
-from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
+from bookwiki.checkers.mdx_validator import (
+    find_forbidden_latex_delimiters,
+    mdx_validator_available,
+    validate_mdx,
+)
 from bookwiki.generate.validate_artifact import validate_artifact
 from bookwiki.pipeline.nodes import check_node
 from bookwiki.scheduler.config import BookConfig
@@ -134,6 +138,34 @@ def test_validate_mdx_allows_safe_components_and_html() -> None:
 
 def test_mdx_validator_available_returns_bool() -> None:
     assert isinstance(mdx_validator_available(), bool)
+
+
+# --------------------------------------------------------------------------- #
+# forbidden LaTeX delimiters - pure-Python contract check (no Node needed), so it
+# guards every pipeline level and still works when the compiler is unavailable
+# --------------------------------------------------------------------------- #
+def test_forbidden_delimiters_flags_bare_display_and_inline() -> None:
+    errors = find_forbidden_latex_delimiters("独立 \\[E = mc^2\\] 与行内 \\(a+b\\)。")
+    assert len(errors) == 2
+    assert any("\\[" in error for error in errors)
+    assert any("\\(" in error for error in errors)
+
+
+def test_forbidden_delimiters_ignores_doubled_backslash_in_citation_quote() -> None:
+    # ``\\[`` (JSON-escaped backslash / LaTeX linebreak) is NOT a forbidden delimiter.
+    mdx = 'citations={[\n  {\n    "quote": "几何 \\\\[ \\\\frac{1}{n} \\\\]"\n  }\n]}'
+    assert find_forbidden_latex_delimiters(mdx) == []
+
+
+def test_forbidden_delimiters_ignores_code_and_math_spans() -> None:
+    assert find_forbidden_latex_delimiters("示例 `\\[x\\]` 与 $\\left[ a \\right]$。") == []
+    assert find_forbidden_latex_delimiters("```\n\\[x\\]\n```") == []
+
+
+def test_validate_mdx_reports_forbidden_delimiter() -> None:
+    # Runs without @needs_node: the delimiter layer is pure Python and always included.
+    errors = validate_mdx("独立公式 \\[E = mc^2\\]。")
+    assert any("forbidden LaTeX delimiter" in error for error in errors)
 
 
 # --------------------------------------------------------------------------- #

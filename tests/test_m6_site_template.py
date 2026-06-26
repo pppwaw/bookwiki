@@ -71,7 +71,7 @@ def test_home_page_renders_generated_book_index() -> None:
 def test_site_template_build_script_uses_next_defaults() -> None:
     package = json.loads((SITE / "package.json").read_text(encoding="utf-8"))
 
-    assert package["scripts"]["build"] == "next build"
+    assert package["scripts"]["build"] == "next build --webpack"
 
 
 def test_site_template_wires_bookwiki_components_and_server_only_data_paths() -> None:

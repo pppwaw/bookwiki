@@ -191,7 +191,9 @@ export function FeynmanPanel({ scope, keypoints, summary }: FeynmanPanelProps) {
         {keypoints.length ? (
           <ol>
             {keypoints.map((point, index) => (
-              <li key={`${index}-${point}`}>{point}</li>
+              <li key={`${index}-${point}`}>
+                <Markdown text={point} inline />
+              </li>
             ))}
           </ol>
         ) : summary ? (

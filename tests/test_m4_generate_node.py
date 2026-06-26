@@ -282,8 +282,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
             {
                 "name": "Point Estimation",
                 "body_md": (
-                    "Point estimation may use formulas like \\(\\hat\\theta\\). "
-                    "Display math may be written as \\[E(X)=\\theta\\]."
+                    "Point estimation may use formulas like $\\hat\\theta$. "
+                    "Display math may be written as $$E(X)=\\theta$$."
                 ),
             },
             ensure_ascii=False,
@@ -311,7 +311,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                         "## Checkpoint\n\n"
                         '<QuizBlock>\n<QuizItemSlot id="chapter-6:s0:slot-000" '
                         'topic="t" sourceRefs={["Week-9-p001"]} />\n</QuizBlock>\n\n'
-                        "Middle derivation with \\(\\frac{x}{\\theta}\\).\n\n"
+                        "Middle derivation with $\\frac{x}{\\theta}$.\n\n"
                         "## Practice\n\n"
                         '<QuizBlock>\n<QuizItemSlot id="chapter-6:s0:slot-001" '
                         'topic="t" sourceRefs={["Week-9-p001"]} />\n</QuizBlock>\n\n'
@@ -344,10 +344,10 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                     "chapter_id": "chapter-6",
                     "items": [
                         {
-                            "question": "What does \\(\\hat\\theta\\) estimate?",
-                            "choices": ["Estimate \\(\\theta\\)", "Delete samples"],
-                            "answer": "Estimate \\(\\theta\\)",
-                            "explanation": "It returns a single estimate of \\(\\theta\\).",
+                            "question": "What does $\\hat\\theta$ estimate?",
+                            "choices": ["Estimate $\\theta$", "Delete samples"],
+                            "answer": "Estimate $\\theta$",
+                            "explanation": "It returns a single estimate of $\\theta$.",
                             "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
                             "slot_id": "chapter-6:s0:slot-000",
                         },
@@ -372,8 +372,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
                     "chapter_id": "chapter-6",
                     "items": [
                         {
-                            "front": "Point estimation for \\(\\theta\\)",
-                            "back": "Estimate an unknown parameter with \\[\\hat\\theta\\].",
+                            "front": "Point estimation for $\\theta$",
+                            "back": "Estimate an unknown parameter with $$\\hat\\theta$$.",
                             "citations": [{"ref_id": "Week-9-p001", "quote": "source"}],
                         }
                     ],
@@ -438,7 +438,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert (
         '<PreviewLink href={"/docs/concepts/Point-Estimation"} title={"Point Estimation"} '
         'summary={"Point estimation may use formulas like $\\\\hat\\\\theta$. '
-        'Display math may be written as $$ E(X)=\\\\theta $$"}>point estimation</PreviewLink>'
+        'Display math may be written as $$E(X)=\\\\theta$$."}>point estimation</PreviewLink>'
         in body
     )
     assert "<QuizBlock" in chapter_text
@@ -473,7 +473,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "$\\frac{x}{\\theta}$" in chapter_text
     assert "$\\hat\\theta$" in chapter_text
     assert "$\\theta$" in chapter_text
-    assert "$$\n\\hat\\theta\n$$" in chapter_text
+    assert "$$\\hat\\theta$$" in chapter_text
     assert "The moment estimator is \\hat&#123;\\theta&#125;_M" in chapter_text
     assert "\\frac&#123;1&#125;&#123;2n&#125;" in chapter_text
     assert "<Markdown" not in chapter_text
@@ -484,7 +484,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "\\(" not in concept_text
     assert "\\[" not in concept_text
     assert "$\\hat\\theta$" in concept_text
-    assert "\n\n$$\nE(X)=\\theta\n$$\n\n" in concept_text
+    assert "$$E(X)=\\theta$$" in concept_text
     assert "$\\hat\\theta$" in concept_text
     assert "## Referenced By" in concept_text
     assert (

@@ -61,12 +61,27 @@ def test_display_fence_with_content_before_closer_is_canonicalized() -> None:
     assert "后文 $x$。" in out.split("$$")[-1]
 
 
-def test_standalone_latex_display_fences_become_dollar_fences() -> None:
-    out = normalize_mdx_math("\\[\nE = mc^2\n$$\n后文。")
+def test_latex_delimiters_are_not_rewritten_to_dollar_fences() -> None:
+    # Strict contract: ``\[ \]`` / ``\( \)`` are NEVER auto-converted (that document-wide
+    # rewrite corrupted JSON string literals inside JSX props like ``citations={[...]}``).
+    # A stray delimiter is left intact for ``find_forbidden_latex_delimiters`` to reject.
+    inline = normalize_mdx_math("行内 \\(a+b\\) 公式。")
+    assert inline == "行内 \\(a+b\\) 公式。"
 
-    assert "\\[" not in out
-    assert "$$\nE = mc^2\n$$\n" in out
-    assert "后文。" in out
+    display = normalize_mdx_math("独立 \\[E = mc^2\\] 公式。")
+    assert display == "独立 \\[E = mc^2\\] 公式。"
+
+
+def test_latex_delimiters_inside_jsx_citation_prop_are_left_intact() -> None:
+    # The exact 9.8-Taylor build break: a ``\[ ... \]`` quote inside ``citations={[...]}``
+    # must survive byte-for-byte; the old rewrite injected raw newlines + ``$$`` here and
+    # made acorn fail to parse the JSX expression.
+    import json
+
+    quote = "几何级数 \\[ \\frac{1}{1-x} = 1 + x + \\cdots, \\ -1 < x < 1 \\]"
+    payload = json.dumps([{"ref_id": "p020", "quote": quote}], ensure_ascii=False, indent=2)
+    mdx = f"citations={{{payload}}}"
+    assert normalize_mdx_math(mdx) == mdx
 
 
 def test_valid_math_is_left_untouched() -> None:
