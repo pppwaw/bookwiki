@@ -214,7 +214,7 @@ export function QuizQuestion({ children }: { children: ReactNode }) {
   return (
     <div className="quiz-title">
       <span className="quiz-counter" aria-hidden="true" />
-      <h3>{children}</h3>
+      <h3><MathContent>{children}</MathContent></h3>
     </div>
   );
 }
@@ -315,7 +315,9 @@ export function QuizExplanation({ children }: { children: ReactNode }) {
           </div>
         ) : null}
       </div>
-      <div className="quiz-feedback-body">{children}</div>
+      <div className="quiz-feedback-body">
+        <MathContent>{children}</MathContent>
+      </div>
       {quiz.citations.length > 0 && (
         <ul className="quiz-feedback-citations" aria-label="Sources">
           {quiz.citations.map((cite) => (
