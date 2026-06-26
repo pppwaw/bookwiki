@@ -13,13 +13,14 @@ def normalize_concept_links(mdx: str, alias_map: dict[str, str]) -> str:
 
 
 def normalize_mdx_math(mdx: str) -> str:
-    # ``\[ ... \]`` / ``\( ... \)`` are deliberately NOT auto-converted to ``$$``/``$``.
-    # Every agent prompt mandates ``$``/``$$`` delimiters, so a stray ``\[`` is a contract
-    # violation that ``find_forbidden_latex_delimiters`` flags for repair — not something to
-    # silently rewrite. Auto-rewriting it here used to run document-wide (no JSX-prop guard)
-    # and corrupt JSON string literals inside props like ``citations={[...]}``, injecting raw
-    # newlines that broke the MDX expression parse at build time.
-    normalized = _repair_split_display_math_linebreaks(mdx)
+    # Deterministically convert ``\[ ... \]`` / ``\( ... \)`` to ``$$``/``$`` — but ONLY
+    # outside JSX prop string/array literals and code spans. That exclusion is the whole
+    # point: the old document-wide rewrite (no JSX guard) injected raw newlines into JSON
+    # string literals inside props like ``citations={[...]}`` and broke the MDX expression
+    # parse at build time. Prose delimiters are auto-fixed here (the model occasionally
+    # emits ``\(``/``\[`` despite the prompt contract); JSX props are left intact.
+    normalized = _convert_latex_delimiters_outside_jsx(mdx)
+    normalized = _repair_split_display_math_linebreaks(normalized)
     normalized = _normalize_katex_text_mode_chars(normalized)
     return _canonicalize_display_fences(normalized)
 
@@ -95,13 +96,11 @@ _TRAILING_PUNCT_RE = re.compile(r"[.,;:!?。，；：！？]+$")
 
 
 def _convert_latex_delimiters_to_dollar(text: str) -> str:
-    """Rewrite ``\\[ ... \\]`` / ``\\( ... \\)`` delimiters to ``$$``/``$``.
+    """Rewrite ``\\[ ... \\]`` / ``\\( ... \\)`` delimiters to ``$$``/``$`` in a plain span.
 
-    Used ONLY on citation quotes, which are VERBATIM source text (the textbook itself may
-    use ``\\[ ... \\]``) — unlike model-authored prose, where the same delimiters are a
-    contract violation. The quote output lands in the ``## Sources`` Markdown list, never in
-    a JSX prop / JSON string literal, so the multi-line ``$$`` form is safe here (the reason
-    this was removed from the document-wide ``normalize_mdx_math``).
+    Operates on a single non-JSX, non-code span (callers exclude those). ``\\[ ... \\]``
+    becomes a multi-line ``$$`` block, so the caller must guarantee the span is NOT a JSX
+    prop / JSON string literal (where raw newlines would break the MDX expression parse).
     """
     text = re.sub(r"(?m)^[ \t]*\\\[[ \t]*$", "$$", text)
     text = re.sub(r"(?m)^[ \t]*\\\][ \t]*$", "$$", text)
@@ -113,6 +112,19 @@ def _convert_latex_delimiters_to_dollar(text: str) -> str:
     return re.sub(r"\\\(([\s\S]*?)\\\)", lambda match: f"${match.group(1).strip()}$", text)
 
 
+def _convert_latex_delimiters_outside_jsx(mdx: str) -> str:
+    """Apply ``_convert_latex_delimiters_to_dollar`` to prose only, leaving JSX prop
+    string/array literals (``={"..."}`` / ``={[...]}``) and code spans untouched."""
+    parts = _FENCE_EXCLUDE_RE.split(mdx)
+    return "".join(
+        part
+        if part is None or part.startswith(("`", "={"))
+        else _convert_latex_delimiters_to_dollar(part)
+        for part in parts
+        if part is not None
+    )
+
+
 def normalize_citation_quote_math(quote: str) -> str:
     """Ensure math inside a citation quote carries ``$`` delimiters so it renders as KaTeX.
 
@@ -121,10 +133,10 @@ def normalize_citation_quote_math(quote: str) -> str:
     math in an ambiguous way (e.g. ``\\frac{1}{n} is not unbiased``) is left untouched, and
     quotes that already contain ``$...$`` are returned unchanged (idempotent). This runs
     BEFORE ``_escape_mdx_text_outside_math`` so wrapped regions keep their raw ``{}`` for
-    KaTeX instead of being HTML-escaped. Verbatim source ``\\[ \\]`` / ``\\( \\)`` delimiters
-    are converted (they are source text, not a model contract violation).
+    KaTeX instead of being HTML-escaped. ``\\[ \\]`` / ``\\( \\)`` delimiters are converted by
+    ``normalize_mdx_math`` (a quote is plain text, never a JSX prop, so the conversion applies).
     """
-    text = _convert_latex_delimiters_to_dollar(normalize_mdx_math(str(quote).strip()))
+    text = normalize_mdx_math(str(quote).strip())
     if not text or _DOLLAR_MATH_RE.search(text) or not _LATEX_MATH_SIGNAL_RE.search(text):
         return text
 

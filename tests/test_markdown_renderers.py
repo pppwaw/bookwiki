@@ -61,21 +61,21 @@ def test_display_fence_with_content_before_closer_is_canonicalized() -> None:
     assert "后文 $x$。" in out.split("$$")[-1]
 
 
-def test_latex_delimiters_are_not_rewritten_to_dollar_fences() -> None:
-    # Strict contract: ``\[ \]`` / ``\( \)`` are NEVER auto-converted (that document-wide
-    # rewrite corrupted JSON string literals inside JSX props like ``citations={[...]}``).
-    # A stray delimiter is left intact for ``find_forbidden_latex_delimiters`` to reject.
+def test_latex_delimiters_are_converted_to_dollar_in_prose() -> None:
+    # Prose ``\( \)`` / ``\[ \]`` (occasional model contract slips) are deterministically
+    # rewritten to ``$``/``$$`` so they render as KaTeX instead of literal brackets.
     inline = normalize_mdx_math("行内 \\(a+b\\) 公式。")
-    assert inline == "行内 \\(a+b\\) 公式。"
+    assert inline == "行内 $a+b$ 公式。"
 
     display = normalize_mdx_math("独立 \\[E = mc^2\\] 公式。")
-    assert display == "独立 \\[E = mc^2\\] 公式。"
+    assert "\\[" not in display
+    assert "$$\nE = mc^2\n$$" in display
 
 
 def test_latex_delimiters_inside_jsx_citation_prop_are_left_intact() -> None:
-    # The exact 9.8-Taylor build break: a ``\[ ... \]`` quote inside ``citations={[...]}``
-    # must survive byte-for-byte; the old rewrite injected raw newlines + ``$$`` here and
-    # made acorn fail to parse the JSX expression.
+    # The exact 9.8-Taylor build break: a ``\[ ... \]`` quote inside ``citations={[...]}`` is
+    # a JSON string literal and must survive byte-for-byte — the conversion must EXCLUDE JSX
+    # prop spans, or it injects raw newlines + ``$$`` and acorn fails to parse the expression.
     import json
 
     quote = "几何级数 \\[ \\frac{1}{1-x} = 1 + x + \\cdots, \\ -1 < x < 1 \\]"

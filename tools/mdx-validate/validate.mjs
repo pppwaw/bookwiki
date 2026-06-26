@@ -206,6 +206,7 @@ function findBrokenMath(tree) {
 async function main() {
   const content = await readStdin();
   const errors = [];
+  const warnings = [];
   try {
     await compile(content, { remarkPlugins: [remarkCjkFriendly, remarkMath] });
   } catch (err) {
@@ -216,14 +217,19 @@ async function main() {
   if (errors.length === 0) {
     try {
       const tree = exprProcessor.parse(content);
+      // Real build/prerender breakers stay as errors.
       errors.push(...findBareExpressions(tree));
       errors.push(...findDisallowedJsx(tree));
-      errors.push(...findBrokenMath(tree));
+      // KaTeX parse failures render as raw text on the site (throwOnError is off) — they do
+      // NOT break the build, so report them as warnings. Treating them as hard errors wedged
+      // the repair loop on files that compile and ship fine.
+      warnings.push(...findBrokenMath(tree));
     } catch {
       // A scan failure must not mask an otherwise-clean compile.
     }
   }
-  process.stdout.write(JSON.stringify({ ok: errors.length === 0, errors }));
+  // ``ok``/``errors`` reflect build-breakers only; ``warnings`` is render-quality (KaTeX).
+  process.stdout.write(JSON.stringify({ ok: errors.length === 0, errors, warnings }));
 }
 
 main().catch((err) => {
