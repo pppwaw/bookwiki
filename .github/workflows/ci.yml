@@ -17,6 +17,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The smoke pipeline's check stage refuses to run "blind": it requires the
+      # MDX validator (Node + its installed deps) unless allowMissingMdxValidator
+      # is set. Install the deps here so check runs real MDX compilation. Note we
+      # deliberately do NOT install pnpm, so generation.siteTypeCheck=auto skips
+      # the heavy site typecheck path and keeps the smoke job fast.
+      - name: Install MDX validator deps
+        working-directory: tools/mdx-validate
+        run: npm install --no-audit --no-fund
+
       - name: Install package
         run: python -m pip install -e ".[dev,runtime]"
 
