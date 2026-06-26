@@ -17,6 +17,8 @@ import pytest
 from bookwiki.agents.mdx_edit_repair import (
     ChapterMdxEditRepairAgent,
     ConceptMdxEditRepairAgent,
+    MdxEditRepairAgent,
+    MdxRepairResult,
 )
 from bookwiki.checkers.mdx_validator import mdx_validator_available, validate_mdx
 from bookwiki.generate.validate_artifact import validate_artifact
@@ -229,6 +231,35 @@ async def test_chapter_mdx_edit_repair_agent_offline_keeps_body() -> None:
     assert result.chapter_id == "chapter-1"
     assert result.owner_task_id == "chapter-1:chapter"
     assert result.body_md == "# Chapter 1\n\n当 n<30 时不准确。"
+
+
+@pytest.mark.asyncio
+async def test_mdx_edit_repair_agent_edits_full_mdx_in_place() -> None:
+    # Post-integrate repair edits the rendered .mdx DIRECTLY (not body_md): the str_replace
+    # runs against the full file, so frontmatter/heading survive and error lines align.
+    runtime = RecordingRuntime(
+        [{"status": "fixed", "notes": "wrapped the comparison in math"}],
+        tool_calls=[("str_replace", {"old_str": "n<30", "new_str": "$n < 30$"})],
+    )
+    mdx = "---\ntitle: Chapter 1\n---\n\n# Chapter 1\n\n当 n<30 时不准确。\n"
+
+    result = await MdxEditRepairAgent().run(
+        {
+            "mdx": mdx,
+            "mdx_errors": ["line 7, column 5: Unexpected character `3`"],
+            "language": "zh-CN",
+            "doc_label": "chapter-1:chapter",
+        },
+        model="deepseek-v4-pro",
+        runtime=runtime,
+    )
+
+    assert isinstance(result, MdxRepairResult)
+    assert "$n < 30$" in result.mdx
+    assert "n<30" not in result.mdx
+    # Frontmatter + heading (only present in the rendered .mdx, never in body_md) survive.
+    assert result.mdx.startswith("---\ntitle: Chapter 1\n---")
+    assert "# Chapter 1" in result.mdx
 
 
 # --------------------------------------------------------------------------- #

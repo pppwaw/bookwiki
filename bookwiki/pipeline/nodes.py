@@ -15,13 +15,13 @@ import yaml
 from bookwiki.agents import (
     ApplicationQuizAgent,
     CardAgent,
-    ChapterMdxEditRepairAgent,
     ChapterSplitAgent,
     ConceptAgent,
     ConceptContentRewriteAgent,
     ConceptExtractAgent,
     ConceptMdxEditRepairAgent,
     ConceptReconcileAgent,
+    MdxEditRepairAgent,
     ReviewAgent,
     SectionAgent,
     SkeletonAgent,
@@ -3858,6 +3858,7 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
     mdx_repaired = 0
     review_repaired = 0
     applied = 0
+    mdx_edited: list[str] = []
     for target in targets:
         target_issues = [
             issue for issue in report.get("issues", []) if issue.get("owner_task_id") == target
@@ -3890,15 +3891,10 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
             max_rounds,
         )
         if "MDX_PARSE_ERROR" in codes:
-            if target.startswith("concept-mdx:"):
-                repaired = await _repair_concept_mdx(target, target_issues, state, cfg)
-            else:
-                repaired = await _repair_chapter_mdx(target, target_issues, state, cfg)
-            if repaired is not None:
-                path = write_json(
-                    out_dir / f"{target.replace(':', '-')}.json", _json_model(repaired)
-                )
-                outputs.append(_rel(path, cfg.book_dir))
+            # Edit the rendered ``.mdx`` in place; the route below goes back to ``check`` (not
+            # ``integrate``), so the edit is validated directly without being re-rendered away.
+            if await _repair_mdx_file(target, target_issues, state, cfg):
+                mdx_edited.append(target)
                 mdx_repaired += 1
         else:
             result = await run_with_cache(
@@ -3944,6 +3940,10 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
     )
     return {
         "repairs": outputs,
+        "mdx_edited": mdx_edited,
+        # Review/destructive repairs change source artifacts and need ``integrate`` to
+        # re-render; in-place ``.mdx`` edits only need ``check`` to re-validate.
+        "repair_artifact_changed": bool(outputs or repair_actions),
         "repair_targets": [],
         "_repair_rounds": rounds,
         "repair_exhausted": exhausted,
@@ -3955,93 +3955,53 @@ def _repair_round_limit(codes: set[str], cfg: BookConfig) -> int:
     return int(cfg.generation.get("maxRepairRounds", 1) or 1)
 
 
-async def _repair_chapter_mdx(
-    target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
-) -> Any | None:
-    """Rewrite a chapter's body to fix MDX compilation errors via ``ChapterMdxEditRepairAgent``.
+def _target_mdx_path(target: str, cfg: BookConfig) -> Path | None:
+    """Map a ``check`` ``owner_task_id`` back to the rendered ``.mdx`` file it validated.
 
-    Reads the chapter artifact, feeds its ``body_md`` plus the ``MDX_PARSE_ERROR``
-    diagnostics to the LLM, and writes the repaired ``ChapterResult`` back so the next
-    ``integrate`` re-renders it and ``check`` re-compiles. Returns the repaired result
-    (or ``None`` if the chapter artifact is missing).
+    ``check`` derives ``<stem>:chapter`` from each chapter file and ``concept-mdx:<stem>``
+    from each concept file, so the reverse mapping is by filename stem.
     """
-    ch_id = target.partition(":")[0]
-    chapter_rel = state.get("agent_results", {}).get(ch_id, {}).get("chapter")
-    if not chapter_rel:
-        return None
-    chapter_path = cfg.book_dir / chapter_rel
-    chapter = _agent_result(read_json(chapter_path))
+    if target.startswith("concept-mdx:"):
+        path = cfg.content_dir / "concepts" / f"{target.partition(':')[2]}.mdx"
+        return path if path.exists() else None
+    stem = target.partition(":")[0]
+    matches = sorted((cfg.content_dir / "chapters").rglob(f"{stem}.mdx"))
+    return matches[0] if matches else None
+
+
+async def _repair_mdx_file(
+    target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
+) -> bool:
+    """Fix MDX compile errors by editing the rendered ``.mdx`` file IN PLACE.
+
+    Feeds the actual ``.mdx`` bytes (the ones ``check`` compiled) plus the ``MDX_PARSE_ERROR``
+    diagnostics to ``MdxEditRepairAgent``, then writes the repaired text back. The caller
+    routes to ``check`` (NOT ``integrate``) so the edit is not clobbered by re-rendering;
+    on a later ``integrate`` the file is regenerated from source and re-repaired. Returns
+    whether the file changed.
+    """
+    path = _target_mdx_path(target, cfg)
+    if path is None:
+        return False
+    text = path.read_text(encoding="utf-8")
     mdx_errors = [
         str(issue.get("message"))
         for issue in target_issues
         if str(issue.get("code")) == "MDX_PARSE_ERROR"
     ]
-    repair_input = {
-        **chapter,
-        "mdx_errors": mdx_errors,
-        "language": cfg.language,
-        "book_notes": cfg.book_notes,
-        "allowed_source_refs": sorted(_allowed_source_refs(state, cfg)),
-    }
     result = await run_with_cache(
-        ChapterMdxEditRepairAgent,
-        repair_input,
+        MdxEditRepairAgent,
+        {"mdx": text, "mdx_errors": mdx_errors, "language": cfg.language, "doc_label": target},
         model=cfg.model_for("mdx_repair"),
         cache_dir=_cache_dir(cfg),
         force=True,
         runtime=cfg.llm_runtime,
     )
-    write_json(
-        chapter_path,
-        _agent_result_payload(
-            ChapterMdxEditRepairAgent, cfg.model_for("mdx_repair"), result.result
-        ),
-    )
-    return result.result
-
-
-async def _repair_concept_mdx(
-    target: str, target_issues: list[dict[str, Any]], state: State, cfg: BookConfig
-) -> Any | None:
-    """Rewrite a concept page body to fix MDX compilation errors via ``ConceptMdxEditRepairAgent``.
-
-    The ``concept-mdx:<stem>`` target maps back to the concept artifact whose rendered
-    filename is ``<stem>.mdx``. Feeds the concept ``body_md`` plus the ``MDX_PARSE_ERROR``
-    diagnostics to the LLM and writes the repaired ``ConceptResult`` back (same unwrapped
-    JSON shape ``concept_pages_node`` writes) so the next ``integrate`` re-renders it and
-    ``check`` re-compiles. Returns the repaired result (or ``None`` if no artifact matches).
-    """
-    stem = target.partition(":")[2]
-    concept_rel = next(
-        (rel for rel in state.get("concept_pages", {}).values() if Path(rel).stem == stem),
-        None,
-    )
-    if not concept_rel:
-        return None
-    concept_path = cfg.book_dir / concept_rel
-    concept = read_json(concept_path)
-    mdx_errors = [
-        str(issue.get("message"))
-        for issue in target_issues
-        if str(issue.get("code")) == "MDX_PARSE_ERROR"
-    ]
-    repair_input = {
-        **concept,
-        "mdx_errors": mdx_errors,
-        "language": cfg.language,
-        "book_notes": cfg.book_notes,
-        "allowed_source_refs": sorted(_allowed_source_refs(state, cfg)),
-    }
-    result = await run_with_cache(
-        ConceptMdxEditRepairAgent,
-        repair_input,
-        model=cfg.model_for("mdx_repair"),
-        cache_dir=_cache_dir(cfg),
-        force=True,
-        runtime=cfg.llm_runtime,
-    )
-    write_json(concept_path, _json_model(result.result))
-    return result.result
+    repaired = result.result.mdx
+    if repaired == text:
+        return False
+    path.write_text(repaired, encoding="utf-8")
+    return True
 
 
 def index_node(state: State, cfg: BookConfig) -> State:

@@ -716,7 +716,12 @@ def test_repair_loop_reintegrates_until_check_is_clean(
 
     def fake_repair(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
         calls.append("repair")
-        return {"repairs": ["work/repairs/chapter-1-quiz.json"], "repair_targets": []}
+        # A quiz repair rewrites the source artifact -> re-render via integrate.
+        return {
+            "repairs": ["work/repairs/chapter-1-quiz.json"],
+            "repair_artifact_changed": True,
+            "repair_targets": [],
+        }
 
     monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "check", fake_check)
     monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "repair", fake_repair)
@@ -728,6 +733,44 @@ def test_repair_loop_reintegrates_until_check_is_clean(
     assert calls.count("repair") == 1
     assert calls.count("check") == 2
     assert calls.count("integrate") == 2  # initial + re-integrate after repair
+    assert calls[-1] == "index"
+
+
+def test_repair_loop_revalidates_mdx_edits_without_reintegrating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = default_config(tmp_path / "books" / "mini")
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    check_state = {"count": 0}
+
+    def fake_check(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        calls.append("check")
+        check_state["count"] += 1
+        targets = ["chapter-1:chapter"] if check_state["count"] == 1 else []
+        return {"check_report": "work/logs/check-report.json", "repair_targets": targets}
+
+    def fake_repair(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        calls.append("repair")
+        # An in-place .mdx edit must route to check (re-validate), NOT integrate (which would
+        # regenerate the file from source and clobber the edit).
+        return {
+            "mdx_edited": ["chapter-1:chapter"],
+            "repair_artifact_changed": False,
+            "repair_targets": [],
+        }
+
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "check", fake_check)
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "repair", fake_repair)
+
+    run_pipeline(cfg, resume=False)  # interrupts at the structure-approval gate
+    calls.clear()
+    run_pipeline(cfg, resume=True)
+
+    assert calls.count("repair") == 1
+    assert calls.count("check") == 2  # initial + re-validate after the .mdx edit
+    assert calls.count("integrate") == 1  # NO re-integrate — the edit stays on disk
     assert calls[-1] == "index"
 
 

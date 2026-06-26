@@ -307,10 +307,11 @@ async def repair_body_with_edit_tools(
 
 
 class ChapterMdxEditRepairAgent:
-    """Fix a chapter body's MDX compile errors via surgical edit tools.
+    """Fix a chapter body's MDX compile errors via surgical edit tools (INLINE, pre-integrate).
 
-    Frontmatter metadata (title/concepts/citations/owner) is passed through from
-    the input unchanged; only ``body_md`` is edited.
+    Used during generation where the artifact ``body_md`` is the unit of truth; frontmatter
+    metadata (title/concepts/citations/owner) is passed through unchanged, only ``body_md``
+    is edited. Post-``integrate`` repair uses ``MdxEditRepairAgent`` on the rendered ``.mdx``.
     """
 
     kind: ClassVar[str] = "chapter_mdx_repair_llm_v2"
@@ -343,7 +344,7 @@ class ChapterMdxEditRepairAgent:
 
 
 class ConceptMdxEditRepairAgent:
-    """Fix a concept body's MDX compile errors via surgical edit tools."""
+    """Fix a concept body's MDX compile errors via surgical edit tools (INLINE, pre-integrate)."""
 
     kind: ClassVar[str] = "concept_mdx_repair_llm_v2"
     output_model: ClassVar[type[ConceptResult]] = ConceptResult
@@ -372,3 +373,37 @@ class ConceptMdxEditRepairAgent:
                 "owner_task_id": str(inp.get("owner_task_id") or f"concept:{name}"),
             }
         )
+
+
+class MdxRepairResult(VersionedModel):
+    """The repaired ``.mdx`` text (the file is edited in place — no metadata round-trip)."""
+
+    mdx: str
+
+
+class MdxEditRepairAgent:
+    """Fix a rendered ``.mdx`` file's compile errors via surgical edit tools.
+
+    Edits the ``.mdx`` text DIRECTLY (not the source ``body_md`` artifact), so the error
+    line numbers align with what ``check`` compiled and the agent can reach constructs that
+    only exist after ``integrate`` (frontmatter, injected ``<PreviewLink>``/quiz/figures).
+    The caller writes the returned text back to the ``.mdx`` and routes to ``check``.
+    """
+
+    kind: ClassVar[str] = "mdx_edit_repair_llm_v3"
+    output_model: ClassVar[type[MdxRepairResult]] = MdxRepairResult
+    model_key: ClassVar[str] = "mdx_repair"
+    prompt_name: ClassVar[str] = "mdx_edit_repair"
+    prompt_template: ClassVar[PromptTemplate] = _REPAIR_PROMPT
+
+    async def run(self, inp: dict[str, Any], *, model: str, runtime: LLMRuntime) -> MdxRepairResult:
+        repaired, _remaining = await repair_body_with_edit_tools(
+            body_md=str(inp.get("mdx") or ""),
+            mdx_errors=[str(item) for item in inp.get("mdx_errors", [])],
+            model=model,
+            runtime=runtime,
+            agent_name=self.__class__.__name__,
+            doc_label=str(inp.get("doc_label") or "mdx"),
+            language=inp.get("language"),
+        )
+        return MdxRepairResult(mdx=repaired)

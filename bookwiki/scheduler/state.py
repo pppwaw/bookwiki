@@ -91,6 +91,8 @@ class PipelineState(TypedDict, total=False):
 
     # --- repair ---
     repairs: list[str]
+    mdx_edited: list[str]
+    repair_artifact_changed: bool
     repair_exhausted: list[Any]
     _repair_rounds: dict[str, int]
 

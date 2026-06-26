@@ -76,7 +76,14 @@ def _route_after_check(state: PipelineState) -> str:
 
 
 def _route_after_repair(state: PipelineState) -> str:
-    return "integrate" if state.get("repairs") else "index"
+    # Review/destructive repairs rewrote source artifacts -> re-render via ``integrate``.
+    # In-place ``.mdx`` edits just need ``check`` to re-validate (re-integrating would
+    # regenerate the file from source and clobber the edit). Nothing changed -> ``index``.
+    if state.get("repair_artifact_changed"):
+        return "integrate"
+    if state.get("mdx_edited"):
+        return "check"
+    return "index"
 
 
 def _send_generate_chapters_for(cfg: BookConfig):
@@ -154,7 +161,9 @@ def build_graph_def(cfg: BookConfig) -> StateGraph:
     graph.add_edge("integrate", "check")
     graph.add_conditional_edges("check", _route_after_check, {"repair": "repair", "index": "index"})
     graph.add_conditional_edges(
-        "repair", _route_after_repair, {"integrate": "integrate", "index": "index"}
+        "repair",
+        _route_after_repair,
+        {"integrate": "integrate", "check": "check", "index": "index"},
     )
     graph.add_edge("index", END)
     return graph
