@@ -19,7 +19,10 @@ from bookwiki.convert.mineru_client import (
     normalize_mineru_markdown,
     normalize_mineru_parse_result,
 )
-from bookwiki.convert.source_normalizer import normalize_structured_source
+from bookwiki.convert.source_normalizer import (
+    DecorativeImageThresholds,
+    normalize_structured_source,
+)
 from bookwiki.convert.text_to_md import convert_text_to_md
 from bookwiki.pipeline.nodes import (
     _caption_blocks_by_id,
@@ -155,7 +158,7 @@ class _ZipMineruHandler(BaseHTTPRequestHandler):
                                 {
                                     "type": "image",
                                     "img_path": "images/figure-1.png",
-                                    "bbox": [1, 2, 30, 40],
+                                    "bbox": [1, 2, 401, 402],
                                 },
                             ],
                         },
@@ -271,7 +274,7 @@ class _CloudV4MineruHandler(BaseHTTPRequestHandler):
                                 {
                                     "type": "image",
                                     "img_path": "images/figure-1.png",
-                                    "bbox": [4, 5, 60, 70],
+                                    "bbox": [4, 5, 460, 470],
                                 },
                             ],
                         },
@@ -532,6 +535,116 @@ def test_image_blocks_render_book_figure_with_asset_metadata() -> None:
     assert 'src="/bookwiki-assets/figures/figure-1.png"' in normalized.markdown
     assert 'sourceRef="figures-p001"' in normalized.markdown
     assert 'caption="Sampling distribution diagram."' in normalized.markdown
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), (200, 200, 200)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_decorative_image_dropped_by_pixel_size(tmp_path: Path) -> None:
+    assets = tmp_path / "work" / "assets" / "doc"
+    assets.mkdir(parents=True)
+    (assets / "arrow.png").write_bytes(_png_bytes(101, 112))  # decorative glyph
+    (assets / "figure.png").write_bytes(_png_bytes(748, 534))  # real figure
+
+    normalized = normalize_structured_source(
+        raw_md="",
+        source_id="doc",
+        content_list_v2=[
+            {
+                "page_idx": 0,
+                "items": [
+                    {"type": "text", "content": "by rotation and translation of axes"},
+                    {
+                        "type": "image",
+                        "asset_path": "work/assets/doc/arrow.png",
+                        "bbox": [27, 688, 77, 762],
+                    },
+                    {
+                        "type": "image",
+                        "asset_path": "work/assets/doc/figure.png",
+                        "bbox": [251, 335, 624, 691],
+                    },
+                ],
+            }
+        ],
+        asset_root=tmp_path,
+        decorative=DecorativeImageThresholds(),
+    )
+
+    image_paths = [
+        block["asset_path"]
+        for page in normalized.manifest["pages"]
+        for block in page["blocks"]
+        if block["type"] == "image"
+    ]
+    assert image_paths == ["work/assets/doc/figure.png"]
+    assert "arrow.png" not in normalized.markdown
+    assert "figure.png" in normalized.markdown
+    dropped = normalized.manifest["dropped_decorative_blocks"]
+    assert len(dropped) == 1
+    assert dropped[0]["asset_path"] == "work/assets/doc/arrow.png"
+    assert dropped[0]["reason"] == "pixels=101x112"
+
+
+def test_decorative_filter_falls_back_to_bbox_when_asset_unreadable(tmp_path: Path) -> None:
+    # No asset on disk: pixels are unavailable, so the bbox is the fallback signal.
+    normalized = normalize_structured_source(
+        raw_md="",
+        source_id="doc",
+        content_list_v2=[
+            {
+                "page_idx": 0,
+                "items": [
+                    {
+                        "type": "image",
+                        "asset_path": "work/assets/doc/arrow.png",
+                        "bbox": [27, 688, 77, 762],
+                    },
+                    {
+                        "type": "image",
+                        "asset_path": "work/assets/doc/figure.png",
+                        "bbox": [251, 335, 624, 691],
+                    },
+                ],
+            }
+        ],
+        asset_root=tmp_path,
+        decorative=DecorativeImageThresholds(),
+    )
+
+    dropped = normalized.manifest["dropped_decorative_blocks"]
+    assert [item["asset_path"] for item in dropped] == ["work/assets/doc/arrow.png"]
+    assert dropped[0]["reason"] == "bbox=50x74"
+
+
+def test_decorative_filter_disabled_keeps_all_images(tmp_path: Path) -> None:
+    normalized = normalize_structured_source(
+        raw_md="",
+        source_id="doc",
+        content_list_v2=[
+            {
+                "page_idx": 0,
+                "items": [
+                    {
+                        "type": "image",
+                        "asset_path": "work/assets/doc/arrow.png",
+                        "bbox": [27, 688, 77, 762],
+                    },
+                ],
+            }
+        ],
+        asset_root=tmp_path,
+        decorative=None,
+    )
+
+    blocks = normalized.manifest["pages"][0]["blocks"]
+    assert [block["asset_path"] for block in blocks] == ["work/assets/doc/arrow.png"]
+    assert "dropped_decorative_blocks" not in normalized.manifest
 
 
 def test_legacy_content_list_pages_generate_page_refs() -> None:
@@ -996,7 +1109,7 @@ def test_convert_node_writes_mineru_zip_image_assets_and_manifest(
     image_block = manifest["pages"][0]["blocks"][1]
     assert image_block["type"] == "image"
     assert image_block["asset_path"] == "work/assets/tiny/figure-1.png"
-    assert image_block["bbox"] == [1, 2, 30, 40]
+    assert image_block["bbox"] == [1, 2, 401, 402]
 
 
 def test_convert_node_uses_mineru_cloud_v4_backend(
@@ -1141,7 +1254,7 @@ def test_caption_node_adds_vision_caption_to_image_blocks(
                         {
                             "type": "image",
                             "asset_path": "work/assets/paper/figure.png",
-                            "bbox": [0, 0, 10, 10],
+                            "bbox": [0, 0, 400, 400],
                         },
                     ],
                 }
@@ -1220,7 +1333,7 @@ def test_caption_node_uses_nested_mineru_image_source_paths(
                             "content": {
                                 "image_source": {"path": "images/figure-1.png"},
                             },
-                            "bbox": [0, 0, 10, 10],
+                            "bbox": [0, 0, 400, 400],
                         },
                     ],
                 }
@@ -1295,7 +1408,7 @@ def test_caption_node_passes_heading_section_context_to_vision_agent(
                         {
                             "type": "image",
                             "asset_path": "work/assets/paper/figure.png",
-                            "bbox": [0, 0, 10, 10],
+                            "bbox": [0, 0, 400, 400],
                         },
                     ],
                 }
@@ -1580,9 +1693,7 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
         encoding="utf-8",
     )
 
-    async def fake_run_vision_caption_group(
-        jobs: list[dict[str, object]], cfg_arg
-    ) -> CacheResult:
+    async def fake_run_vision_caption_group(jobs: list[dict[str, object]], cfg_arg) -> CacheResult:
         block_id = str(jobs[0]["candidate"]["block_id"])
         if block_id.endswith("002-b001"):
             raise RuntimeError("caption service unavailable")
@@ -1659,7 +1770,7 @@ def test_caption_node_refines_existing_non_vision_caption_once(
                             "type": "chart",
                             "asset_path": "work/assets/paper/figure.png",
                             "caption": "One hundred 95% Cls.",
-                            "bbox": [0, 0, 10, 10],
+                            "bbox": [0, 0, 400, 400],
                         },
                     ],
                 }
@@ -1719,7 +1830,7 @@ def test_caption_node_preserves_latex_backslashes_when_rewriting_book_figure(
                         {
                             "type": "image",
                             "asset_path": "work/assets/paper/figure.png",
-                            "bbox": [0, 0, 10, 10],
+                            "bbox": [0, 0, 400, 400],
                         },
                     ],
                 }

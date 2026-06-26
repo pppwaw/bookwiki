@@ -19,6 +19,7 @@ runtime = [
   "tiktoken>=0.8",
   "matplotlib>=3.9",
   "numpy>=2.0",
+  "pillow>=10.0",
 ]
 mineru = [
   "mineru[pipeline,core]",

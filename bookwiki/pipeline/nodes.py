@@ -41,6 +41,7 @@ from bookwiki.convert.common import (
 )
 from bookwiki.convert.mineru_client import convert_document_to_source
 from bookwiki.convert.source_normalizer import (
+    DecorativeImageThresholds,
     NormalizedSource,
     SourceBlock,
     _render_figure,
@@ -1364,6 +1365,7 @@ async def _normalize_with_layout_repair(
     parsed: dict[str, Any], source_id: str, cfg: BookConfig
 ) -> NormalizedSource:
     settings = _source_layout_repair_settings(cfg)
+    decorative = _decorative_image_thresholds(cfg)
     normalized = normalize_structured_source(
         raw_md=str(parsed.get("markdown") or ""),
         source_id=source_id,
@@ -1371,6 +1373,8 @@ async def _normalize_with_layout_repair(
         content_list=parsed.get("content_list"),
         min_confidence=settings["min_confidence"],
         max_candidates=settings["max_candidates"],
+        asset_root=cfg.book_dir,
+        decorative=decorative,
     )
     if settings["mode"] == "off" or not normalized.repair_candidates:
         return normalized
@@ -1401,6 +1405,8 @@ async def _normalize_with_layout_repair(
         repair_patches=patches,
         min_confidence=settings["min_confidence"],
         max_candidates=settings["max_candidates"],
+        asset_root=cfg.book_dir,
+        decorative=decorative,
     )
     return repaired
 
@@ -1537,15 +1543,11 @@ def _caption_same_page_groups(jobs: list[dict[str, Any]]) -> list[dict[str, Any]
             "source_ref": source_ref,
             "jobs": group_jobs,
         }
-        for source_ref, group_jobs in sorted(
-            buckets.items(), key=lambda item: first_index[item[0]]
-        )
+        for source_ref, group_jobs in sorted(buckets.items(), key=lambda item: first_index[item[0]])
     ]
 
 
-async def _run_vision_caption_group(
-    jobs: list[dict[str, Any]], cfg: BookConfig
-) -> CacheResult:
+async def _run_vision_caption_group(jobs: list[dict[str, Any]], cfg: BookConfig) -> CacheResult:
     agent_input = _vision_caption_group_agent_input(jobs, cfg)
     return await run_with_cache(
         VisionCaptionAgent,
@@ -1777,6 +1779,25 @@ def _source_layout_repair_settings(cfg: BookConfig) -> dict[str, Any]:
         "min_confidence": _float_setting(settings.get("minConfidence"), 0.85),
         "max_candidates": _int_setting(settings.get("maxCandidatesPerSource"), 20),
     }
+
+
+def _decorative_image_thresholds(cfg: BookConfig) -> DecorativeImageThresholds | None:
+    """Build the decorative-image size floors from config, or ``None`` to disable.
+
+    Set ``generation.decorativeImageFilter.mode = "off"`` to keep every extracted image
+    block. The size keys override individual defaults of ``DecorativeImageThresholds``.
+    """
+    raw = cfg.generation.get("decorativeImageFilter")
+    settings = raw if isinstance(raw, dict) else {}
+    if str(settings.get("mode", "auto")).lower() == "off":
+        return None
+    defaults = DecorativeImageThresholds()
+    return DecorativeImageThresholds(
+        min_pixel_side=_int_setting(settings.get("minPixelSide"), defaults.min_pixel_side),
+        min_pixel_area=_int_setting(settings.get("minPixelArea"), defaults.min_pixel_area),
+        min_bbox_side=_float_setting(settings.get("minBboxSide"), defaults.min_bbox_side),
+        min_bbox_area=_float_setting(settings.get("minBboxArea"), defaults.min_bbox_area),
+    )
 
 
 def _float_setting(value: Any, default: float) -> float:

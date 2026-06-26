@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from bookwiki.convert.common import SOURCE_REF_RE, clean_markdown
+
+_LOG = logging.getLogger(__name__)
 
 NOISE_TYPES = {"header", "footer", "page_number"}
 TABLE_TYPES = {"table", "chart"}
@@ -122,10 +126,14 @@ def normalize_structured_source(
     block_overrides: dict[str, dict[str, Any]] | None = None,
     min_confidence: float = 0.85,
     max_candidates: int = 20,
+    asset_root: Path | None = None,
+    decorative: DecorativeImageThresholds | None = None,
 ) -> NormalizedSource:
-    pages = _pages_from_content_list_v2(source_id, content_list_v2, block_overrides)
+    dropped: list[dict[str, Any]] = []
+    ctx = _FilterContext(asset_root=asset_root, decorative=decorative, dropped=dropped)
+    pages = _pages_from_content_list_v2(source_id, content_list_v2, block_overrides, ctx)
     if not pages:
-        pages = _pages_from_content_list(source_id, content_list, block_overrides)
+        pages = _pages_from_content_list(source_id, content_list, block_overrides, ctx)
     if not pages:
         pages = _fallback_pages(source_id, raw_md)
 
@@ -140,6 +148,15 @@ def normalize_structured_source(
             warnings=warnings,
         )
 
+    if dropped:
+        _LOG.info(
+            "normalize: source_id=%s dropped %d decorative image/chart block(s): %s",
+            source_id,
+            len(dropped),
+            ", ".join(f"{item['block_id']}({item['reason']})" for item in dropped[:5])
+            + (f", +{len(dropped) - 5} more" if len(dropped) > 5 else ""),
+        )
+
     manifest = {
         "source_id": source_id,
         "ref_granularity": "page",
@@ -149,6 +166,8 @@ def normalize_structured_source(
         "repair_warnings": warnings,
         "repair_min_confidence": min_confidence,
     }
+    if dropped:
+        manifest["dropped_decorative_blocks"] = dropped
     return NormalizedSource(
         markdown=_render_markdown(source_id, pages, logical_tables),
         manifest=manifest,
@@ -157,7 +176,10 @@ def normalize_structured_source(
 
 
 def _pages_from_content_list_v2(
-    source_id: str, value: Any, block_overrides: dict[str, dict[str, Any]] | None = None
+    source_id: str,
+    value: Any,
+    block_overrides: dict[str, dict[str, Any]] | None = None,
+    ctx: _FilterContext | None = None,
 ) -> list[SourcePage]:
     if not isinstance(value, list):
         return []
@@ -175,11 +197,14 @@ def _pages_from_content_list_v2(
         elif "page_idx" in item:
             grouped.setdefault(_page_idx(item, 0), []).append(item)
 
-    return _pages_from_grouped_blocks(source_id, grouped, block_overrides)
+    return _pages_from_grouped_blocks(source_id, grouped, block_overrides, ctx)
 
 
 def _pages_from_content_list(
-    source_id: str, value: Any, block_overrides: dict[str, dict[str, Any]] | None = None
+    source_id: str,
+    value: Any,
+    block_overrides: dict[str, dict[str, Any]] | None = None,
+    ctx: _FilterContext | None = None,
 ) -> list[SourcePage]:
     if not isinstance(value, list):
         return []
@@ -188,7 +213,7 @@ def _pages_from_content_list(
         if not isinstance(item, dict):
             continue
         grouped.setdefault(_page_idx(item, 0), []).append(item)
-    return _pages_from_grouped_blocks(source_id, grouped, block_overrides)
+    return _pages_from_grouped_blocks(source_id, grouped, block_overrides, ctx)
 
 
 def _looks_like_page_container(item: dict[str, Any]) -> bool:
@@ -212,6 +237,7 @@ def _pages_from_grouped_blocks(
     source_id: str,
     grouped: dict[int, list[dict[str, Any]]],
     block_overrides: dict[str, dict[str, Any]] | None = None,
+    ctx: _FilterContext | None = None,
 ) -> list[SourcePage]:
     pages: list[SourcePage] = []
     for page_idx in sorted(grouped):
@@ -224,8 +250,32 @@ def _pages_from_grouped_blocks(
             overrides = block_overrides.get(block_id, {}) if block_overrides else {}
             asset_path = _string_override(overrides, "asset_path") or _asset_path(raw)
             caption = _string_override(overrides, "caption") or _caption(raw)
+            bbox = _bbox(raw)
             if not text and block_type not in {"image", "table", "chart"}:
                 continue
+            if (
+                ctx
+                and ctx.decorative is not None
+                and block_type in {"image", "chart"}
+                and asset_path
+            ):
+                reason = _decorative_image_reason(
+                    asset_path=asset_path,
+                    bbox=bbox,
+                    asset_root=ctx.asset_root,
+                    thresholds=ctx.decorative,
+                )
+                if reason is not None:
+                    ctx.dropped.append(
+                        {
+                            "block_id": block_id,
+                            "page_ref": source_ref,
+                            "type": block_type,
+                            "asset_path": asset_path,
+                            "reason": reason,
+                        }
+                    )
+                    continue
             blocks.append(
                 SourceBlock(
                     block_id=block_id,
@@ -234,7 +284,7 @@ def _pages_from_grouped_blocks(
                     block_index=block_index,
                     type=block_type,
                     text=text,
-                    bbox=_bbox(raw),
+                    bbox=bbox,
                     asset_path=asset_path,
                     caption=caption,
                 )
@@ -291,9 +341,7 @@ def _fallback_pages(source_id: str, raw_md: str) -> list[SourcePage]:
     return pages
 
 
-def _repair_candidates(
-    pages: list[SourcePage], *, max_candidates: int
-) -> list[dict[str, Any]]:
+def _repair_candidates(pages: list[SourcePage], *, max_candidates: int) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for left, right in zip(pages, pages[1:], strict=False):
         left_block = _last_meaningful_block(left)
@@ -636,6 +684,79 @@ def _bbox(raw: dict[str, Any]) -> list[float | int] | None:
     if not all(isinstance(item, int | float) for item in value):
         return None
     return value
+
+
+@dataclass(frozen=True)
+class DecorativeImageThresholds:
+    """Size floors below which an extracted ``image``/``chart`` block is treated as a
+    decorative glyph (arrow, icon, rule, logo) rather than a real figure and dropped.
+
+    The pixel dimensions of the extracted asset are the primary signal; the source
+    ``bbox`` is a fallback for when the asset file cannot be opened (e.g. Pillow missing
+    or the asset is not on disk yet).
+    """
+
+    min_pixel_side: int = 180
+    min_pixel_area: int = 30_000
+    min_bbox_side: float = 120.0
+    min_bbox_area: float = 20_000.0
+
+
+@dataclass
+class _FilterContext:
+    """Carries decorative-image filtering inputs/outputs through the page builders."""
+
+    asset_root: Path | None = None
+    decorative: DecorativeImageThresholds | None = None
+    dropped: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _image_pixel_size(asset_path: str | None, asset_root: Path | None) -> tuple[int, int] | None:
+    if not asset_path:
+        return None
+    path = Path(asset_path)
+    if not path.is_absolute() and asset_root is not None:
+        path = asset_root / path
+    try:
+        from PIL import Image  # lazy: Pillow ships with the runtime extras (via matplotlib)
+    except ImportError:
+        return None
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+    except (OSError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _decorative_image_reason(
+    *,
+    asset_path: str | None,
+    bbox: list[float | int] | None,
+    asset_root: Path | None,
+    thresholds: DecorativeImageThresholds,
+) -> str | None:
+    """Return a human-readable reason when an image/chart block is too small to be a
+    real figure, else ``None``. Pixel dimensions win; bbox is the fallback. When no size
+    signal is available the block is kept rather than dropped blindly."""
+    pixels = _image_pixel_size(asset_path, asset_root)
+    if pixels is not None:
+        width, height = pixels
+        if (
+            min(width, height) < thresholds.min_pixel_side
+            or width * height < thresholds.min_pixel_area
+        ):
+            return f"pixels={width}x{height}"
+        return None
+    if bbox is not None and len(bbox) == 4:
+        bw = abs(bbox[2] - bbox[0])
+        bh = abs(bbox[3] - bbox[1])
+        if min(bw, bh) < thresholds.min_bbox_side or bw * bh < thresholds.min_bbox_area:
+            return f"bbox={bw:.0f}x{bh:.0f}"
+        return None
+    return None
 
 
 def _page_idx(raw: dict[str, Any], default: int) -> int:
