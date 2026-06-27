@@ -1827,7 +1827,6 @@ def _int_setting(value: Any, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
-
 def _merge_source_chunk_summaries(
     source_id: str, chunks: list[SourceSummaryResult]
 ) -> SourceSummaryResult:
@@ -1906,6 +1905,7 @@ def _concept_candidates_by_ref(
                 if payload not in bucket:
                     bucket.append(payload)
     return by_ref
+
 
 async def structure_node(state: State, cfg: BookConfig) -> State:
     source_paths = [cfg.book_dir / rel for rel in state.get("sources_md", [])]
@@ -2350,9 +2350,7 @@ def _skeleton_payload(skeleton: dict[str, Any] | None, ch_id: str) -> dict[str, 
 
     # Slice the alias map to only the concepts this chapter owns or uses.
     slice_canonicals = {
-        str(item.get("canonical"))
-        for item in (*owns, *uses)
-        if item.get("canonical")
+        str(item.get("canonical")) for item in (*owns, *uses) if item.get("canonical")
     }
     alias_map_slice = {
         variant: canonical
@@ -2554,9 +2552,14 @@ async def generate_chapter_fanout_node(state: State, cfg: BookConfig) -> State:
         _LOG.info("generate: chapter start ch_id=%s", ch_id)
         try:
             generated = await _run_generate_chapter_unit(state, cfg, ch_id, rel_source)
-        except Exception as exc:  # noqa: BLE001 - propagated by the collect node with context.
-            _LOG.error("generate failed for chapter %s: %s", ch_id, exc)
-            return {"_generate_parts": {ch_id: {"chapter_id": ch_id, "error": str(exc)}}}
+        except Exception:
+            # Let the failure propagate. LangGraph records the *successful* siblings'
+            # writes as pending writes against the pre-fanout checkpoint and leaves the
+            # super-step uncommitted, so a later ``--resume`` re-runs only this chapter —
+            # swallowing the error into a part would advance the checkpoint past the
+            # fanout and pin ``--resume`` on the stale error forever.
+            _LOG.exception("generate failed for chapter %s", ch_id)
+            raise
     _LOG.info(
         "generate: chapter done ch_id=%s cache_hit=%s issues=%d figures=%d",
         ch_id,
@@ -2748,18 +2751,18 @@ def collect_generate_fanout_node(state: State, cfg: BookConfig) -> State:
         for ch_id, figures in state.get("generated_figures", {}).items()
         if not targets or str(ch_id) not in targets
     }
-    failures: list[tuple[str, str]] = []
-
+    # A failed chapter worker raises rather than returning a part, so the collect node
+    # only ever runs once *every* fanned-out chapter produced a result (LangGraph aborts
+    # the super-step otherwise). A missing part therefore signals a real invariant break,
+    # not a generation failure — surface it loudly.
+    missing: list[str] = []
     chapter_ids = [
         ch_id for ch_id in state.get("chapter_sources", {}) if not targets or ch_id in targets
     ]
     for ch_id in chapter_ids:
         part = parts.get(ch_id)
         if not part:
-            failures.append((ch_id, "missing fanout result"))
-            continue
-        if part.get("error"):
-            failures.append((ch_id, str(part["error"])))
+            missing.append(ch_id)
             continue
         chapter_results[ch_id] = dict(part["agent_results"])
         chapter_cache_hits.append(bool(part.get("cache_hit", False)))
@@ -2768,20 +2771,12 @@ def collect_generate_fanout_node(state: State, cfg: BookConfig) -> State:
         if figures:
             generated_figures[ch_id] = dict(figures)
 
-    if failures:
-        failed_ids = [ch_id for ch_id, _error in failures]
-        for ch_id, error in failures:
-            _LOG.error("generate failed for chapter %s: %s", ch_id, error)
-        msg = (
-            f"generate failed for chapters: {failed_ids}; "
-            f"{len(chapter_results)} chapter(s) completed and were written"
-        )
-        raise RuntimeError(msg)
+    if missing:
+        raise RuntimeError(f"generate produced no fanout result for chapters: {missing}")
 
     _LOG.info(
-        "collect_generate: ok=%d failed=%d issues=%d figures=%d cache_hit=%s",
+        "collect_generate: ok=%d issues=%d figures=%d cache_hit=%s",
         len(chapter_results),
-        len(failures),
         len(generation_issues),
         len(generated_figures),
         bool(chapter_cache_hits) and all(chapter_cache_hits),
@@ -3102,11 +3097,11 @@ async def concept_page_fanout_node(state: State, cfg: BookConfig) -> State:
         _LOG.info("concept_page: start name=%s order=%d", name, order)
         try:
             part = await _run_concept_page_unit(state, cfg, item, order)
-        except Exception as exc:  # noqa: BLE001 - propagated by the collect node with context.
-            _LOG.error("concept page failed for %s: %s", name, exc)
-            return {
-                "_concept_page_parts": {name: {"name": name, "order": order, "error": str(exc)}}
-            }
+        except Exception:
+            # Propagate so LangGraph re-runs only this concept on ``--resume`` (see the
+            # generate worker for the full rationale).
+            _LOG.exception("concept page failed for %s", name)
+            raise
     _LOG.info(
         "concept_page: done name=%s cache_hit=%s issue=%s",
         name,
@@ -3170,32 +3165,19 @@ def collect_concept_pages_fanout_node(state: State, cfg: BookConfig) -> State:
         if not targets or _issue_concept_name(issue) not in targets
     ]
     cache_hits: list[bool] = []
-    failures: list[tuple[str, str]] = []
 
+    # A failed concept worker raises (aborting the super-step) instead of returning an
+    # error part, so every part reaching collect is a success. See the generate collect.
     ordered = sorted(parts.values(), key=lambda part: int(part.get("order", 0)))
     for part in ordered:
         name = str(part.get("name") or "concept")
-        if part.get("error"):
-            failures.append((name, str(part["error"])))
-            continue
         outputs[name] = str(part["path"])
         concept_generation_issues.extend(part.get("concept_generation_issues", []))
         cache_hits.append(bool(part.get("cache_hit", False)))
 
-    if failures:
-        failed_names = [name for name, _error in failures]
-        for name, error in failures:
-            _LOG.error("concept page failed for %s: %s", name, error)
-        msg = (
-            f"concept_pages failed for concepts: {failed_names}; "
-            f"{len(outputs)} concept page(s) completed and were written"
-        )
-        raise RuntimeError(msg)
-
     _LOG.info(
-        "collect_concept_pages: ok=%d failed=%d issues=%d cache_hit=%s",
+        "collect_concept_pages: ok=%d issues=%d cache_hit=%s",
         len(outputs),
-        len(failures),
         len(concept_generation_issues),
         bool(cache_hits) and all(cache_hits),
     )

@@ -581,6 +581,76 @@ def test_generate_langgraph_fanout_can_target_one_chapter(
     assert set(state["agent_results"]) == {"chapter-1", "chapter-2"}
 
 
+def test_resume_after_generate_fanout_failure_retries_only_failed_chapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed generate worker raises, so LangGraph leaves the fanout super-step
+    uncommitted and records the healthy siblings as pending writes. A bare ``--resume``
+    must then re-run *only* the failed chapter and reuse the rest — never re-raise on a
+    stale part, never regenerate the chapters that already succeeded."""
+    cfg = default_config(tmp_path / "books" / "mini")
+
+    for name, output in _NODE_OUTPUTS.items():
+        if name == "generate":
+            continue
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+                if node_name == "split":
+                    return {
+                        **payload,
+                        "chapter_sources": {
+                            "chapter-1": "work/chapter_sources/chapter-1/source.md",
+                            "chapter-2": "work/chapter_sources/chapter-2/source.md",
+                        },
+                        "cache_hit": False,
+                    }
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+    generated_ids: list[str] = []
+    attempt = {"n": 0}
+
+    async def fake_generate_chapter(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        ch_id = str(state["_fanout_chapter_id"])
+        generated_ids.append(ch_id)
+        # chapter-2 raises on the first pass and recovers once resumed.
+        if ch_id == "chapter-2" and attempt["n"] == 0:
+            raise RuntimeError("boom ch-2")
+        return {
+            "_generate_parts": {
+                ch_id: {
+                    "chapter_id": ch_id,
+                    "agent_results": {"chapter": f"work/agent_results/{ch_id}.chapter.json"},
+                    "generation_issues": [],
+                    "generated_figures": {},
+                    "cache_hit": False,
+                }
+            }
+        }
+
+    monkeypatch.setattr(nodes_module, "generate_chapter_fanout_node", fake_generate_chapter)
+
+    run_pipeline(cfg, resume=False)  # pause before split (structure gate)
+    with pytest.raises(RuntimeError, match="boom ch-2"):
+        run_pipeline(cfg, stop_after="generate", resume=True)
+    assert _manifest(cfg)["status"] == "failed"
+    # The checkpoint stays pinned at the fanout worker, not the collect node.
+    assert _manifest(cfg)["next_node"] == "generate_chapter"
+
+    generated_ids.clear()
+    attempt["n"] = 1
+
+    state = run_pipeline(cfg, stop_after="generate", resume=True)
+
+    # Only the failed chapter re-runs; chapter-1 is reused from its pending write.
+    assert generated_ids == ["chapter-2"]
+    assert set(state["agent_results"]) == {"chapter-1", "chapter-2"}
+
+
 def test_concept_pages_run_as_langgraph_fanout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -658,6 +728,87 @@ def test_concept_pages_run_as_langgraph_fanout(
         "动态规划": "work/agent_results/concepts/动态规划.json",
     }
     assert probe["max"] > 1
+
+
+def test_resume_after_concept_fanout_failure_retries_only_failed_concept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Symmetric to the generate case: a failed ``concept_page`` worker raises, pinning
+    the checkpoint at the fanout worker; a bare ``--resume`` retries only that concept."""
+    cfg = default_config(tmp_path / "books" / "mini")
+
+    for name, output in _NODE_OUTPUTS.items():
+        if name == "concept_pages":
+            continue
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+                if node_name == "reconcile_concepts":
+                    concepts_path = cfg_arg.work_dir / "concepts" / "reconciled.json"
+                    concepts_path.parent.mkdir(parents=True, exist_ok=True)
+                    concepts_path.write_text(
+                        json.dumps(
+                            {
+                                "concepts": [
+                                    {"canonical": "递归", "aliases": [], "source_chapter_ids": []},
+                                    {
+                                        "canonical": "动态规划",
+                                        "aliases": [],
+                                        "source_chapter_ids": [],
+                                    },
+                                ]
+                            },
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+                    return {
+                        "reconciled_concepts": "work/concepts/reconciled.json",
+                        "alias_map": "work/concepts/alias_map.json",
+                        "cache_hit": False,
+                    }
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+    generated: list[str] = []
+    attempt = {"n": 0}
+
+    async def fake_concept_page(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        item = dict(state["_fanout_concept_item"])
+        name = str(item["canonical"])
+        order = int(state["_fanout_concept_order"])
+        stem = str(state["_fanout_concept_stem"])
+        generated.append(name)
+        if name == "动态规划" and attempt["n"] == 0:
+            raise RuntimeError("boom concept")
+        return {
+            "_concept_page_parts": {
+                name: {
+                    "name": name,
+                    "order": order,
+                    "path": f"work/agent_results/concepts/{stem}.json",
+                    "concept_generation_issues": [],
+                    "cache_hit": False,
+                }
+            }
+        }
+
+    monkeypatch.setattr(nodes_module, "concept_page_fanout_node", fake_concept_page)
+
+    run_pipeline(cfg, resume=False)
+    with pytest.raises(RuntimeError, match="boom concept"):
+        run_pipeline(cfg, stop_after="concept_pages", resume=True)
+    assert _manifest(cfg)["next_node"] == "concept_page"
+
+    generated.clear()
+    attempt["n"] = 1
+    state = run_pipeline(cfg, stop_after="concept_pages", resume=True)
+
+    assert generated == ["动态规划"]
+    assert set(state["concept_pages"]) == {"递归", "动态规划"}
 
 
 def test_concurrent_fanout_attributes_usage_per_stage(
