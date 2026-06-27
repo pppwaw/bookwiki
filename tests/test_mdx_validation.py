@@ -221,6 +221,54 @@ async def test_check_node_flags_uncompilable_chapter_mdx(tmp_path: Path) -> None
     assert "chapter-1:chapter" in result["repair_targets"]
 
 
+@needs_node
+@pytest.mark.asyncio
+async def test_check_node_exempts_exam_page_from_pedagogical_section_checks(tmp_path: Path) -> None:
+    # ``exam.mdx`` is a structural page: the teaching body lives in the sibling ``index.mdx``,
+    # the exam page legitimately carries no QuizBlock/Anki/Sources. check_node must NOT flag it.
+    book_dir = tmp_path / "book"
+    docs = book_dir / "content" / "docs"
+    _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
+    _write(
+        docs / "chapters" / "chapter-1" / "exam.mdx",
+        "---\ntitle: Chapter 1 · 测验\n---\n\n# 测验\n\n干净的题面，没有教学区块。\n",
+    )
+    cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+
+    result = await check_node({"agent_results": {}, "concept_pages": {}}, cfg)
+
+    report = json.loads((book_dir / result["check_report"]).read_text(encoding="utf-8"))
+    pedagogical = {"MISSING_QUIZ", "MISSING_ANKI", "MISSING_SOURCES"}
+    assert [i for i in report["issues"] if i["code"] in pedagogical] == []
+    assert result["repair_targets"] == []
+
+
+@needs_node
+@pytest.mark.asyncio
+async def test_check_node_reports_missing_quiz_as_warning_not_repair_target(tmp_path: Path) -> None:
+    # A teaching chapter may legitimately ship without a quiz (the section agent is allowed to
+    # skip questions when content is thin). MISSING_QUIZ has no deterministic repair, so it is a
+    # ``warning`` that gets recorded but never enters repair_targets (no futile repair rounds).
+    book_dir = tmp_path / "book"
+    docs = book_dir / "content" / "docs"
+    _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
+    _write(
+        docs / "chapters" / "chapter-1.mdx",
+        "---\ntitle: Chapter 1\n---\n\n# Chapter 1\n\n干净的正文，没有任何教学区块。\n",
+    )
+    cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+
+    result = await check_node({"agent_results": {}, "concept_pages": {}}, cfg)
+
+    report = json.loads((book_dir / result["check_report"]).read_text(encoding="utf-8"))
+    missing_quiz = [i for i in report["issues"] if i["code"] == "MISSING_QUIZ"]
+    assert missing_quiz
+    assert missing_quiz[0]["severity"] == "warning"
+    assert missing_quiz[0]["owner_task_id"] == "chapter-1:quiz"
+    # warnings never trigger repair — the target must stay out of repair_targets.
+    assert "chapter-1:quiz" not in result["repair_targets"]
+
+
 # --------------------------------------------------------------------------- #
 # ChapterMdxEditRepairAgent - surgical str_replace edits driven by diagnostics
 # --------------------------------------------------------------------------- #

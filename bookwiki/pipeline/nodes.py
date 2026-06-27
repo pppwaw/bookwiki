@@ -691,6 +691,60 @@ def _inline_quiz_answer_issues(text: str, stem: str) -> list[Issue]:
     return issues
 
 
+# A code fence whose body holds an MDX component (e.g. ```quiz around <QuizBlock>): valid
+# Markdown, so it passes MDX compilation, and the wrapped ``<QuizBlock`` keeps the page from
+# tripping MISSING_QUIZ — yet the site's syntax highlighter throws on the unknown language at
+# render time. We catch it deterministically and unwrap it. ``mermaid`` is the one legitimate
+# component-free fence and is exempt.
+_COMPONENT_FENCE_RE = re.compile(
+    r"^```[ \t]*([A-Za-z0-9_-]+)?[^\n]*\n(.*?)^```[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
+# Require the component tag to start its own line: a real wrapped component sits on its own line,
+# whereas a string like ``print("<QuizBlock>")`` inside a legit code sample must not trip this.
+_MDX_COMPONENT_RE = re.compile(
+    r"^[ \t]*<(?:Quiz[A-Za-z]*|BookFigure|PreviewLink)\b", re.MULTILINE
+)
+_ALLOWED_FENCE_LANGS = {"mermaid"}
+# Codes whose repair edits the rendered ``.mdx`` in place (then re-``check``), rather than
+# re-running a source agent via ``integrate``.
+_MDX_ROUTE_CODES = {"MDX_PARSE_ERROR", "ILLEGAL_CODE_FENCE"}
+
+
+def _illegal_component_fence_issues(text: str, owner_task_id: str) -> list[Issue]:
+    """Flag code fences that wrap MDX components (e.g. ```quiz around ``<QuizBlock>``)."""
+    issues: list[Issue] = []
+    for match in _COMPONENT_FENCE_RE.finditer(text):
+        lang = (match.group(1) or "").lower()
+        if lang in _ALLOWED_FENCE_LANGS:
+            continue
+        if _MDX_COMPONENT_RE.search(match.group(2)):
+            issues.append(
+                Issue(
+                    severity="error",
+                    code="ILLEGAL_CODE_FENCE",
+                    message=(
+                        f"code fence ```{lang or '(no lang)'} wraps an MDX component; "
+                        "remove the fence so the component renders"
+                    ),
+                    owner_task_id=owner_task_id,
+                )
+            )
+    return issues
+
+
+def _strip_illegal_component_fences(text: str) -> str:
+    """Remove component-wrapping code fences, keeping the component body (deterministic repair)."""
+
+    def _unwrap(match: re.Match[str]) -> str:
+        lang = (match.group(1) or "").lower()
+        if lang not in _ALLOWED_FENCE_LANGS and _MDX_COMPONENT_RE.search(match.group(2)):
+            return match.group(2)
+        return match.group(0)
+
+    return _COMPONENT_FENCE_RE.sub(_unwrap, text)
+
+
 def _normalize_concept_links(
     markdown: str,
     alias_map: dict[str, str],
@@ -3516,6 +3570,12 @@ def _emit_concept_graph(state: State, cfg: BookConfig) -> Path | None:
     return out_path
 
 
+# Filename of a chapter's exam page. Exam pages are *structural* (a folder's ``index.mdx`` holds the
+# teaching body, ``exam.mdx`` holds the exam) and legitimately carry no QuizBlock/Anki/Sources, so
+# ``check_node`` keys off this name to exempt them from those pedagogical-section checks.
+_EXAM_PAGE_FILENAME = "exam.mdx"
+
+
 def _write_exam_page(cfg: BookConfig, chapter_dir: Path, exam_rel: str, display_title: str) -> None:
     """Render a chapter's exam artifact to ``<chapter>/exam.mdx`` and write the folder meta.
 
@@ -3527,7 +3587,7 @@ def _write_exam_page(cfg: BookConfig, chapter_dir: Path, exam_rel: str, display_
     mode = "walkthrough" if exam.owner_task_id.endswith(":explain") else "exam"
     page_title = f"{display_title} · {'讲解' if mode == 'walkthrough' else '测验'}"
     write_text(
-        chapter_dir / "exam.mdx",
+        chapter_dir / _EXAM_PAGE_FILENAME,
         _frontmatter({"title": page_title, "type": "chapter"}) + render_exam_mdx(exam, mode=mode),
     )
     write_json(chapter_dir / "meta.json", {"title": display_title, "pages": ["index", "exam"]})
@@ -4038,6 +4098,10 @@ async def check_node(state: State, cfg: BookConfig) -> State:
     )
     for path in chapter_mdx_files:
         text = chapter_texts[path]
+        # owner_task_id carries the chapter-relative path (e.g. ``Chapter-19-X/index``) rather
+        # than the bare stem: 30 chapters all share ``index.mdx``/``exam.mdx``, so a stem-based id
+        # collapses them onto one target and ``_target_mdx_path`` would only ever repair the first.
+        rel_id = path.relative_to(cfg.content_dir / "chapters").with_suffix("").as_posix()
         mdx_errors = chapter_mdx.get(str(path), [])
         for error in mdx_errors:
             issues.append(
@@ -4045,54 +4109,62 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                     severity="error",
                     code="MDX_PARSE_ERROR",
                     message=f"{path.name} fails MDX compilation: {error}",
-                    owner_task_id=f"{path.stem}:chapter",
+                    owner_task_id=f"{rel_id}:chapter",
                 )
             )
+        issues.extend(_illegal_component_fence_issues(text, f"{rel_id}:chapter"))
         if not text.startswith("---\n"):
             issues.append(
                 Issue(
                     severity="error",
                     code="MISSING_FRONTMATTER",
                     message=f"{path.name} has no YAML frontmatter",
-                    owner_task_id=f"{path.stem}:chapter",
+                    owner_task_id=f"{rel_id}:chapter",
                 )
             )
-        if "<QuizBlock" not in text:
-            issues.append(
-                Issue(
-                    severity="error",
-                    code="MISSING_QUIZ",
-                    message=f"{path.name} has no QuizBlock",
-                    owner_task_id=f"{path.stem}:quiz",
+        # QuizBlock / Anki Cards / Sources are pedagogical sections that only teaching-chapter
+        # pages carry. Exam pages (``exam.mdx``) are structural and legitimately omit them, so we
+        # skip these checks there (otherwise every exam page is a permanent false positive).
+        # The three are also reported as ``warning`` rather than ``error``: none has a deterministic
+        # repair path (ReviewAgent only emits advice, nothing re-fills the missing section), so an
+        # ``error`` would only burn futile repair rounds. We record them instead of trying to fix.
+        if path.name != _EXAM_PAGE_FILENAME:
+            if "<QuizBlock" not in text:
+                issues.append(
+                    Issue(
+                        severity="warning",
+                        code="MISSING_QUIZ",
+                        message=f"{path.name} has no QuizBlock",
+                        owner_task_id=f"{rel_id}:quiz",
+                    )
                 )
-            )
-        elif not mdx_errors:
-            issues.extend(_inline_quiz_answer_issues(text, path.stem))
-        if "## Anki Cards" not in text:
-            issues.append(
-                Issue(
-                    severity="error",
-                    code="MISSING_ANKI",
-                    message=f"{path.name} has no Anki Cards section",
-                    owner_task_id=f"{path.stem}:card",
+            elif not mdx_errors:
+                issues.extend(_inline_quiz_answer_issues(text, rel_id))
+            if "## Anki Cards" not in text:
+                issues.append(
+                    Issue(
+                        severity="warning",
+                        code="MISSING_ANKI",
+                        message=f"{path.name} has no Anki Cards section",
+                        owner_task_id=f"{rel_id}:card",
+                    )
                 )
-            )
-        if "## Sources" not in text:
-            issues.append(
-                Issue(
-                    severity="error",
-                    code="MISSING_SOURCES",
-                    message=f"{path.name} has no Sources section",
-                    owner_task_id=f"{path.stem}:chapter",
+            if "## Sources" not in text:
+                issues.append(
+                    Issue(
+                        severity="warning",
+                        code="MISSING_SOURCES",
+                        message=f"{path.name} has no Sources section",
+                        owner_task_id=f"{rel_id}:chapter",
+                    )
                 )
-            )
         for phrase in _suspicious_phrases(text):
             issues.append(
                 Issue(
                     severity="warning",
                     code="SUSPICIOUS_INSTRUCTION",
                     message=f"{path.name} contains suspicious instruction text: {phrase}",
-                    owner_task_id=f"{path.stem}:chapter",
+                    owner_task_id=f"{rel_id}:chapter",
                 )
             )
         for target in re.findall(r"\]\((?!https?://|mailto:|#)([^)]+)\)", text):
@@ -4102,7 +4174,7 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                         severity="error",
                         code="BROKEN_LINK",
                         message=f"{path.name} links to missing target {target}",
-                        owner_task_id=f"{path.stem}:chapter",
+                        owner_task_id=f"{rel_id}:chapter",
                     )
                 )
 
@@ -4120,6 +4192,9 @@ async def check_node(state: State, cfg: BookConfig) -> State:
                     owner_task_id=f"concept-mdx:{path.stem}",
                 )
             )
+        issues.extend(
+            _illegal_component_fence_issues(concept_texts[path], f"concept-mdx:{path.stem}")
+        )
 
     allowed_refs = _allowed_source_refs(state, cfg)
     _LOG.info(
@@ -4245,7 +4320,7 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
             )
             continue
         rounds[target] = int(rounds.get(target, 0)) + 1
-        route = "mdx" if "MDX_PARSE_ERROR" in codes else "review"
+        route = "mdx" if codes & _MDX_ROUTE_CODES else "review"
         _LOG.info(
             "repair: target=%s route=%s codes=%s round=%d/%d",
             target,
@@ -4254,7 +4329,7 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
             rounds[target],
             max_rounds,
         )
-        if "MDX_PARSE_ERROR" in codes:
+        if codes & _MDX_ROUTE_CODES:
             # Edit the rendered ``.mdx`` in place; the route below goes back to ``check`` (not
             # ``integrate``), so the edit is validated directly without being re-rendered away.
             if await _repair_mdx_file(target, target_issues, state, cfg):
@@ -4322,15 +4397,17 @@ def _repair_round_limit(codes: set[str], cfg: BookConfig) -> int:
 def _target_mdx_path(target: str, cfg: BookConfig) -> Path | None:
     """Map a ``check`` ``owner_task_id`` back to the rendered ``.mdx`` file it validated.
 
-    ``check`` derives ``<stem>:chapter`` from each chapter file and ``concept-mdx:<stem>``
-    from each concept file, so the reverse mapping is by filename stem.
+    ``check`` derives ``<chapter-rel-path>:<kind>`` from each chapter file (e.g.
+    ``Chapter-19-X/index:chapter``) and ``concept-mdx:<stem>`` from each concept file, so the
+    reverse mapping joins that relative path under ``chapters/``. The relative path is unique per
+    file, which is what makes per-file repair possible (a bare stem would alias all ``index.mdx``).
     """
     if target.startswith("concept-mdx:"):
         path = cfg.content_dir / "concepts" / f"{target.partition(':')[2]}.mdx"
         return path if path.exists() else None
-    stem = target.partition(":")[0]
-    matches = sorted((cfg.content_dir / "chapters").rglob(f"{stem}.mdx"))
-    return matches[0] if matches else None
+    rel_id = target.rsplit(":", 1)[0]
+    path = cfg.content_dir / "chapters" / f"{rel_id}.mdx"
+    return path if path.exists() else None
 
 
 async def _repair_mdx_file(
@@ -4348,23 +4425,36 @@ async def _repair_mdx_file(
     if path is None:
         return False
     text = path.read_text(encoding="utf-8")
+    codes = {str(issue.get("code")) for issue in target_issues}
+    changed = False
+    # Deterministically unwrap component-wrapping code fences (e.g. ```quiz around <QuizBlock>)
+    # before handing anything to the LLM — this needs no model and never touches the component.
+    if "ILLEGAL_CODE_FENCE" in codes:
+        unwrapped = _strip_illegal_component_fences(text)
+        if unwrapped != text:
+            text = unwrapped
+            changed = True
     mdx_errors = [
         str(issue.get("message"))
         for issue in target_issues
         if str(issue.get("code")) == "MDX_PARSE_ERROR"
     ]
-    result = await run_with_cache(
-        MdxEditRepairAgent,
-        {"mdx": text, "mdx_errors": mdx_errors, "language": cfg.language, "doc_label": target},
-        model=cfg.model_for("mdx_repair"),
-        cache_dir=_cache_dir(cfg),
-        force=True,
-        runtime=cfg.llm_runtime,
-    )
-    repaired = result.result.mdx
-    if repaired == text:
+    if mdx_errors:
+        result = await run_with_cache(
+            MdxEditRepairAgent,
+            {"mdx": text, "mdx_errors": mdx_errors, "language": cfg.language, "doc_label": target},
+            model=cfg.model_for("mdx_repair"),
+            cache_dir=_cache_dir(cfg),
+            force=True,
+            runtime=cfg.llm_runtime,
+        )
+        repaired = result.result.mdx
+        if repaired != text:
+            text = repaired
+            changed = True
+    if not changed:
         return False
-    path.write_text(repaired, encoding="utf-8")
+    path.write_text(text, encoding="utf-8")
     return True
 
 
