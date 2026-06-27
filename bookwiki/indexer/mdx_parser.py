@@ -37,6 +37,7 @@ def parse_mdx_file(path: str | Path, root: str | Path | None = None) -> MdxPage:
     page_id = slug or "index"
     quiz_items = _component_items(body, "QuizBlock", "items")
     quiz_items.extend(_worked_child_items(body))
+    quiz_items.extend(_exam_child_items(body))
     card_items = _component_items(body, "AnkiDeck", "cards")
     refs = _source_refs(frontmatter, body, quiz_items, card_items)
     page_type = str(frontmatter.get("type") or _infer_type(relative_path))
@@ -163,6 +164,64 @@ def _worked_child_items(body: str) -> list[dict[str, Any]]:
             }
         )
     return items
+
+
+def _exam_child_items(body: str) -> list[dict[str, Any]]:
+    """Parse ``<ExamBlock>`` / ``<ExamItem>`` (chapter exam + paper walkthrough) into quiz items.
+
+    The exam grammar is a parallel surface to ``<QuizBlock>``: ``type`` distinguishes
+    single/multiple_choice, fill_blank, and worked. Choice answers are stored as choice ids in
+    the MDX and mapped back to option text here; fill_blank / worked carry their grading data in
+    ``grading_json`` so the site can judge them the same way it judges legacy quizzes.
+    """
+
+    items: list[dict[str, Any]] = []
+    for block in _component_blocks(body, "ExamBlock"):
+        for item_block in _component_blocks(block["body"], "ExamItem"):
+            attrs = item_block["attrs"]
+            inner = item_block["body"]
+            kind = _prop_value(attrs, "type") or "single_choice"
+            item: dict[str, Any] = {
+                "id": _prop_value(attrs, "id") or "",
+                "type": kind,
+                "question": _first_child_text(inner, "ExamQuestion"),
+                "explanation": _first_child_text(inner, "ExamExplanation"),
+                "concept_recap_md": _first_child_text(inner, "ExamConceptRecap"),
+                "from_exam": re.search(r"\bfromExam\b", attrs) is not None,
+                "source_refs": [],
+            }
+            if kind in {"single_choice", "multiple_choice"}:
+                _fill_exam_choice(item, attrs, inner)
+            elif kind == "fill_blank":
+                accepted = _prop_json(attrs, "acceptedAnswers", default=[])
+                item["answer"] = ""
+                item["grading_json"] = {"accepted_answers": accepted}
+            elif kind == "worked":
+                reference = _prop_value(attrs, "referenceAnswer") or ""
+                rubric = _prop_json(attrs, "rubric", default=[])
+                item["answer"] = reference
+                item["reference_answer"] = reference
+                item["rubric"] = rubric
+                item["grading_json"] = {"reference_answer": reference, "rubric": rubric}
+            items.append(item)
+    return items
+
+
+def _fill_exam_choice(item: dict[str, Any], attrs: str, inner: str) -> None:
+    answer_ids = _prop_json(attrs, "answer", default=[])
+    if not isinstance(answer_ids, list):
+        answer_ids = []
+    choices: list[str] = []
+    answers: list[str] = []
+    for choice_block in _component_blocks(inner, "ExamChoice"):
+        choice_id = _prop_value(choice_block["attrs"], "id") or ""
+        choice_text = _clean_child_text(choice_block["body"])
+        choices.append(choice_text)
+        if choice_id in answer_ids:
+            answers.append(choice_text)
+    item["choices"] = choices
+    item["answer"] = answers[0] if len(answers) == 1 else ", ".join(answers)
+    item["answer_list"] = answers
 
 
 def _anki_child_items(body: str) -> list[dict[str, Any]]:
