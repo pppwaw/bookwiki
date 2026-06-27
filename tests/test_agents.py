@@ -50,6 +50,7 @@ class LitellmMockRuntime:
         context: dict[str, Any] | None = None,
         image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
+        max_tokens: int | None = None,
     ) -> BaseModel:
         self.calls.append(
             {

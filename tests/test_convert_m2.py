@@ -1851,3 +1851,19 @@ def test_caption_node_preserves_latex_backslashes_when_rewriting_book_figure(
 
     injected = _inject_book_figure_captions(source_md, _caption_blocks_by_id(cfg))
     assert r"A density curve with $\lambda=2$." in injected
+
+
+def test_caption_max_tokens_scales_with_batch_and_clamps() -> None:
+    from bookwiki.agents.vision_caption_agent import (
+        _CAPTION_MAX_TOKENS_CEILING,
+        _CAPTION_MAX_TOKENS_FLOOR,
+        _caption_max_tokens,
+    )
+
+    # A single image still gets the floor; the budget grows per image; a pathological
+    # group is clamped to the ceiling so a runaway can never request the full 65k output.
+    assert _caption_max_tokens(0) == _CAPTION_MAX_TOKENS_FLOOR
+    assert _caption_max_tokens(1) == _CAPTION_MAX_TOKENS_FLOOR
+    assert _caption_max_tokens(5) == 2512
+    assert _caption_max_tokens(5) > _caption_max_tokens(2)
+    assert _caption_max_tokens(10_000) == _CAPTION_MAX_TOKENS_CEILING

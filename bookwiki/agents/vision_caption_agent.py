@@ -64,8 +64,25 @@ class VisionCaptionAgent:
             inp=_batch_prompt_input(inp),
             draft=draft,
             image_paths=image_paths,
+            max_tokens=_caption_max_tokens(len(image_paths)),
         )
         return VisionCaptionBatchResult.model_validate(result)
+
+
+# Each caption is one short line (20–60 chars) plus its JSON envelope (long block_id +
+# source_ref), so ~400 tokens/image with margin covers even LaTeX-dense captions. The cap
+# is a cheap backstop: if a figure still triggers a repetition loop, generation fails fast
+# at the ceiling instead of burning the model's full 65k output budget. The ceiling stays
+# far above any realistic same-page group (a page rarely has more than a handful of figures).
+_CAPTION_BASE_TOKENS = 512
+_CAPTION_TOKENS_PER_IMAGE = 400
+_CAPTION_MAX_TOKENS_FLOOR = 1024
+_CAPTION_MAX_TOKENS_CEILING = 16_384
+
+
+def _caption_max_tokens(image_count: int) -> int:
+    scaled = _CAPTION_BASE_TOKENS + max(0, image_count) * _CAPTION_TOKENS_PER_IMAGE
+    return max(_CAPTION_MAX_TOKENS_FLOOR, min(_CAPTION_MAX_TOKENS_CEILING, scaled))
 
 
 def _caption_images(inp: dict[str, Any]) -> list[dict[str, Any]]:

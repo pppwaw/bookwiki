@@ -222,6 +222,7 @@ class LLMRuntime(Protocol):
         context: dict[str, Any] | None = None,
         image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
+        max_tokens: int | None = None,
     ) -> BaseModel:
         """Return a validated structured result from a real or explicitly injected LLM."""
 
@@ -399,6 +400,7 @@ class LiteLLMRuntime:
         context: dict[str, Any] | None = None,
         image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
+        max_tokens: int | None = None,
     ) -> BaseModel:
         _ensure_api_key(model)
         client = await self._ensure_client()
@@ -408,7 +410,7 @@ class LiteLLMRuntime:
                 response_model=output_model,
                 messages=_messages(system=system, user=user, image_paths=image_paths),
                 max_retries=max_retries,
-                **_completion_params_for_model(model),
+                **_completion_params_for_model(model, max_tokens=max_tokens),
             )
         )
         if isinstance(result, output_model):
@@ -524,6 +526,7 @@ class TestLLMRuntime:
         context: dict[str, Any] | None = None,
         image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
+        max_tokens: int | None = None,
     ) -> BaseModel:
         draft = _extract_draft_payload(user)
         if draft is None:
@@ -710,8 +713,22 @@ def _temperature_for_model(model: str) -> int:
     return 1 if _api_key_env(model) == "MOONSHOT_API_KEY" else 0
 
 
-def _completion_params_for_model(model: str) -> dict[str, Any]:
+def _is_openrouter_qwen(model: str) -> bool:
+    return model.lower() == "openrouter-qwen3.6-35b-a3b"
+
+
+def _completion_params_for_model(model: str, *, max_tokens: int | None = None) -> dict[str, Any]:
     params: dict[str, Any] = {"temperature": _temperature_for_model(model)}
+    if _is_openrouter_qwen(model):
+        # Greedy decoding (temperature=0) makes this Qwen model fall into a deterministic
+        # repetition loop on math-heavy figures — e.g. it emits ``$\boldsymbol{\text{ }``
+        # endlessly until it exhausts the output budget, so ``finish_reason='length'`` and
+        # instructor raises ``IncompleteOutputException``. The Qwen model card recommends a
+        # presence penalty to break such loops; retries alone never help because greedy
+        # decoding reproduces the identical loop every attempt.
+        params["presence_penalty"] = 1.5
+    if max_tokens is not None:
+        params["max_tokens"] = max_tokens
     extra_body = _extra_body_for_model(model)
     if extra_body:
         params["extra_body"] = extra_body
@@ -719,8 +736,7 @@ def _completion_params_for_model(model: str) -> dict[str, Any]:
 
 
 def _extra_body_for_model(model: str) -> dict[str, Any]:
-    normalized = model.lower()
-    if normalized == "openrouter-qwen3.6-35b-a3b":
+    if _is_openrouter_qwen(model):
         return {"reasoning": {"effort": "none", "exclude": True}}
     return {}
 

@@ -27,6 +27,7 @@ async def generate_with_llm(
     allowed_citation_refs: Iterable[str] | None = None,
     image_paths: Sequence[str | Path] | None = None,
     max_attempts: int = 2,
+    max_tokens: int | None = None,
 ) -> BaseModel:
     prompt = render_prompt(
         prompt_name=prompt_name,
@@ -38,6 +39,11 @@ async def generate_with_llm(
     )
     allowed_refs = set(allowed_citation_refs or [])
     context = {"allowed_citation_refs": allowed_refs} if allowed_refs else None
+    # Only thread ``max_tokens`` through when a caller sets it, so explicit fake runtimes
+    # that don't accept the keyword stay compatible.
+    extra: dict[str, Any] = {}
+    if max_tokens is not None:
+        extra["max_tokens"] = max_tokens
     return await runtime.generate(
         model=model,
         output_model=output_model,
@@ -46,6 +52,7 @@ async def generate_with_llm(
         context=context,
         image_paths=image_paths,
         max_retries=max_attempts,
+        **extra,
     )
 
 
@@ -160,8 +167,7 @@ def _compact(value: Any, *, model: str, max_tokens: int) -> Any:
         return _truncate_to_tokens(value, model=model, max_tokens=max_tokens)
     if isinstance(value, dict):
         return {
-            key: _compact(item, model=model, max_tokens=max_tokens)
-            for key, item in value.items()
+            key: _compact(item, model=model, max_tokens=max_tokens) for key, item in value.items()
         }
     if isinstance(value, list):
         return [_compact(item, model=model, max_tokens=max_tokens) for item in value]

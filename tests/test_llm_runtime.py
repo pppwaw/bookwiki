@@ -125,9 +125,7 @@ def test_model_list_uses_configured_provider_api_base_urls(
     assert models["deepseek-v4-flash"]["litellm_params"]["api_base"] == (
         "https://deepseek.example/v1"
     )
-    assert models["kimi-k2.6"]["litellm_params"]["api_base"] == (
-        "https://moonshot.example/v1"
-    )
+    assert models["kimi-k2.6"]["litellm_params"]["api_base"] == ("https://moonshot.example/v1")
 
 
 def test_model_list_uses_short_api_base_env_alias(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -372,13 +370,43 @@ async def test_openrouter_qwen_disables_reasoning_for_structured_calls(
         output_model=VisionCaptionItem,
         system="system",
         user="describe the figure",
+        max_tokens=4096,
     )
 
     assert result.caption_md == "A source figure."
     assert client.calls[0]["temperature"] == 0
-    assert client.calls[0]["extra_body"] == {
-        "reasoning": {"effort": "none", "exclude": True}
+    assert client.calls[0]["extra_body"] == {"reasoning": {"effort": "none", "exclude": True}}
+    # Greedy decoding loops on math figures; a presence penalty breaks the repetition,
+    # and the caller-scaled max_tokens caps a runaway so it fails fast and cheap.
+    assert client.calls[0]["presence_penalty"] == 1.5
+    assert client.calls[0]["max_tokens"] == 4096
+
+
+@pytest.mark.asyncio
+async def test_non_qwen_model_has_no_presence_penalty_or_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    payload = {
+        "chapter_id": "chapter-1",
+        "title": "Intro",
+        "body_md": "# Intro\n\nBody",
+        "owner_task_id": "chapter-1:chapter",
     }
+    client = _InstructorClient(payload)
+    monkeypatch.setattr("instructor.from_litellm", lambda completion, **_: client)
+    runtime = LiteLLMRuntime(router=_Router("{}"))
+
+    await runtime.generate(
+        model="deepseek-v4-pro",
+        output_model=ChapterResult,
+        system="system",
+        user="write the chapter",
+    )
+
+    assert "presence_penalty" not in client.calls[0]
+    assert "max_tokens" not in client.calls[0]
+    assert "extra_body" not in client.calls[0]
 
 
 @pytest.mark.asyncio

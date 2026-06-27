@@ -32,6 +32,7 @@ class RecordingRuntime:
         context: dict[str, Any] | None = None,
         image_paths: Sequence[str | Path] | None = None,
         max_retries: int = 2,
+        max_tokens: int | None = None,
     ) -> BaseModel:
         last_error: ValidationError | None = None
         for _attempt in range(max_retries):
@@ -44,6 +45,7 @@ class RecordingRuntime:
                     "context": context,
                     "image_paths": [str(path) for path in image_paths or []],
                     "max_retries": max_retries,
+                    "max_tokens": max_tokens,
                 }
             )
             response = self.responses.pop(0)
