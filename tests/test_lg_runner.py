@@ -721,6 +721,69 @@ def test_resume_heals_legacy_checkpoint_pinned_at_generate_collect(
     assert set(state["agent_results"]) == {"chapter-1", "chapter-2"}
 
 
+def test_collect_generate_drops_stale_state_on_full_run(tmp_path: Path) -> None:
+    """A full (no-target) generate collect must trust only this run's fanout parts and
+    drop any stale ``agent_results`` left in the channel — otherwise a structure change
+    resurrects pages whose files ``prepare_generate`` already cleared (the circuits
+    ``integrate`` ``KeyError`` / missing-concept crash)."""
+    cfg = default_config(tmp_path / "books" / "mini")  # no target_chapters -> full run
+    state = {
+        "chapter_sources": {"chapter-1": "work/chapter_sources/chapter-1/source.md"},
+        "agent_results": {"stale-chapter": {"chapter": "work/agent_results/gone.chapter.json"}},
+        "_generate_parts": {
+            "chapter-1": {
+                "chapter_id": "chapter-1",
+                "agent_results": {"chapter": "work/agent_results/chapter-1.chapter.json"},
+                "generation_issues": [],
+                "generated_figures": {},
+                "cache_hit": False,
+            }
+        },
+    }
+    out = nodes_module.collect_generate_fanout_node(state, cfg)
+    assert set(out["agent_results"]) == {"chapter-1"}
+
+
+def test_collect_generate_keeps_nontarget_state_on_targeted_run(tmp_path: Path) -> None:
+    """A targeted generate collect preserves the chapters it isn't regenerating."""
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.target_chapters = ["chapter-2"]
+    state = {
+        "chapter_sources": {"chapter-1": "c1", "chapter-2": "c2"},
+        "agent_results": {"chapter-1": {"chapter": "work/agent_results/chapter-1.chapter.json"}},
+        "_generate_parts": {
+            "chapter-2": {
+                "chapter_id": "chapter-2",
+                "agent_results": {"chapter": "work/agent_results/chapter-2.chapter.json"},
+                "generation_issues": [],
+                "generated_figures": {},
+                "cache_hit": False,
+            }
+        },
+    }
+    out = nodes_module.collect_generate_fanout_node(state, cfg)
+    assert set(out["agent_results"]) == {"chapter-1", "chapter-2"}
+
+
+def test_collect_concept_drops_stale_state_on_full_run(tmp_path: Path) -> None:
+    """Symmetric to the generate collect: a full concept run keeps only fresh parts."""
+    cfg = default_config(tmp_path / "books" / "mini")  # no target_concepts -> full run
+    state = {
+        "concept_pages": {"Stale Concept": "work/agent_results/concepts/Stale.json"},
+        "_concept_page_parts": {
+            "Fresh Concept": {
+                "name": "Fresh Concept",
+                "order": 0,
+                "path": "work/agent_results/concepts/Fresh-Concept.json",
+                "concept_generation_issues": [],
+                "cache_hit": False,
+            }
+        },
+    }
+    out = nodes_module.collect_concept_pages_fanout_node(state, cfg)
+    assert set(out["concept_pages"]) == {"Fresh Concept"}
+
+
 def test_concept_pages_run_as_langgraph_fanout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -2735,21 +2735,26 @@ async def _generate_chapter_exam(
 def collect_generate_fanout_node(state: State, cfg: BookConfig) -> State:
     parts = state.get("_generate_parts") or {}
     targets = cfg.target_chapter_ids
+    # Carry forward prior results ONLY for chapters this run isn't regenerating — i.e.
+    # only on a *targeted* run. A full run (no targets) fans out every chapter, so the
+    # fresh parts below are authoritative; seeding from ``state`` here would resurrect
+    # stale entries left in the channel by a structure change or an earlier run, whose
+    # files ``prepare_generate`` may have already cleared.
     chapter_results: dict[str, dict[str, str]] = {
         str(ch_id): dict(paths)
         for ch_id, paths in state.get("agent_results", {}).items()
-        if not targets or str(ch_id) not in targets
+        if targets and str(ch_id) not in targets
     }
     chapter_cache_hits: list[bool] = []
     generation_issues: list[dict[str, Any]] = [
         dict(issue)
         for issue in state.get("generation_issues", [])
-        if not targets or _issue_chapter_id(issue) not in targets
+        if targets and _issue_chapter_id(issue) not in targets
     ]
     generated_figures: dict[str, dict[str, str]] = {
         str(ch_id): dict(figures)
         for ch_id, figures in state.get("generated_figures", {}).items()
-        if not targets or str(ch_id) not in targets
+        if targets and str(ch_id) not in targets
     }
     # A failed chapter worker raises rather than returning a part, so the collect node
     # only ever runs once *every* fanned-out chapter produced a result (LangGraph aborts
@@ -3154,15 +3159,18 @@ async def _run_concept_page_unit(
 def collect_concept_pages_fanout_node(state: State, cfg: BookConfig) -> State:
     parts = state.get("_concept_page_parts") or {}
     targets = cfg.target_concept_names
+    # Carry prior pages only on a targeted run (see the generate collect). A full run
+    # regenerates every reconciled concept, so seeding from ``state`` would resurrect
+    # stale entries whose files ``prepare_concept_pages`` already cleared.
     outputs: dict[str, str] = {
         str(name): str(path)
         for name, path in state.get("concept_pages", {}).items()
-        if not targets or str(name) not in targets
+        if targets and str(name) not in targets
     }
     concept_generation_issues: list[dict[str, Any]] = [
         dict(issue)
         for issue in state.get("concept_generation_issues", [])
-        if not targets or _issue_concept_name(issue) not in targets
+        if targets and _issue_concept_name(issue) not in targets
     ]
     cache_hits: list[bool] = []
 
