@@ -129,6 +129,33 @@ def sync_site_env(site_dir: Path) -> Path | None:
     return env_path
 
 
+def sync_public_book_id(site_dir: Path, book_id: str) -> Path:
+    """Inject ``NEXT_PUBLIC_BOOK_ID`` into the site ``.env.local``.
+
+    The book id namespaces all client-side localStorage keys (highlights, chat
+    history) so two books served on the same ``localhost:<port>`` origin never
+    share state. Idempotent: an existing line is replaced, not duplicated.
+    """
+    env_path = site_dir / ".env.local"
+    line = f"NEXT_PUBLIC_BOOK_ID={book_id}"
+    if env_path.exists():
+        out: list[str] = []
+        replaced = False
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            if raw_line.strip().removeprefix("export ").lstrip().startswith("NEXT_PUBLIC_BOOK_ID="):
+                out.append(line)
+                replaced = True
+            else:
+                out.append(raw_line)
+        if not replaced:
+            out.append(line)
+        env_path.write_text("\n".join(item for item in out if item) + "\n", encoding="utf-8")
+    else:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text(line + "\n", encoding="utf-8")
+    return env_path
+
+
 def _remove_path(path: Path) -> None:
     if path.is_symlink():
         path.unlink()
@@ -211,6 +238,7 @@ def main() -> None:
     cfg = load_site_config(args.book_dir)
     site_dir = materialize_site(cfg)
     sync_site_env(site_dir)
+    sync_public_book_id(site_dir, cfg.book_id)
     env = os.environ.copy()
     env["BOOKWIKI_SITE_LANGUAGE"] = cfg.language
     env.setdefault("NODE_OPTIONS", "--max-old-space-size=4096")

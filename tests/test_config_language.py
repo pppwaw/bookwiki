@@ -342,6 +342,25 @@ def test_materialize_site_preserves_local_env_file(tmp_path) -> None:
     assert env_path.read_text(encoding="utf-8") == "BOOKWIKI_CHAT_API_KEY=book-local\n"
 
 
+def test_sync_public_book_id_writes_and_is_idempotent(tmp_path) -> None:
+    site_dir = tmp_path / "site"
+    site_dir.mkdir()
+    env_path = site_dir / ".env.local"
+    env_path.write_text("BOOKWIKI_CHAT_API_KEY=book-local\n", encoding="utf-8")
+
+    site.sync_public_book_id(site_dir, "calculus")
+    first = env_path.read_text(encoding="utf-8")
+    assert "BOOKWIKI_CHAT_API_KEY=book-local" in first
+    assert "NEXT_PUBLIC_BOOK_ID=calculus" in first
+
+    # Re-running with a new id replaces, never duplicates, the line.
+    site.sync_public_book_id(site_dir, "circuits")
+    second = env_path.read_text(encoding="utf-8")
+    assert second.count("NEXT_PUBLIC_BOOK_ID=") == 1
+    assert "NEXT_PUBLIC_BOOK_ID=circuits" in second
+    assert "BOOKWIKI_CHAT_API_KEY=book-local" in second
+
+
 def test_materialize_site_removes_content_derived_caches(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)

@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { UIMessage } from 'ai';
+import { bookKey } from './book-meta';
 
-export const DefaultChatStorageKey = 'bookwiki:chat:v1';
-export const FeynmanChatStorageKey = 'bookwiki:feynman-chat:v1';
+// Namespaced per book so chats never leak across books sharing one localhost origin.
+export const DefaultChatStorageKey = bookKey('chat:v1');
+export const FeynmanChatStorageKey = bookKey('feynman-chat:v1');
 const MaxConversations = 100;
 const TitleMaxLength = 48;
 
