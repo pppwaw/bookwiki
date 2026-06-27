@@ -698,41 +698,41 @@ def _normalize_concept_links(
     chapter_previews: dict[str, dict[str, str]] | None = None,
     *,
     auto_link: bool = True,
+    suppress: set[str] | None = None,
 ) -> str:
     markdown, fence_stash = _stash_code_fences(markdown)
     markdown, quiz_stash = _stash_quiz_blocks(markdown)
-    linked_canonicals: set[str] = set()
+    # ``suppress`` seeds the "already linked" set so those canonicals are never auto-linked. Concept
+    # pages pass their own name here so a page never self-links its own term throughout its body.
+    linked_canonicals: set[str] = set(suppress or ())
     chapters = chapter_previews or {}
 
     def replace(match: re.Match[str]) -> str:
         label = match.group(1).strip()
-        canonical = alias_map.get(label) or alias_map.get(_concept_key(label)) or label
-        preview = concept_previews.get(canonical)
-        if preview:
-            linked_canonicals.add(canonical)
-            # A concept always wins a name it shares with a chapter; record the collision so the
-            # author can disambiguate (e.g. give the chapter a more specific title).
-            if label in chapters or _concept_key(label) in chapters:
-                _LOG.warning(
-                    "AMBIGUOUS_WIKILINK label=%r resolves to both a concept and a chapter; "
-                    "concept wins",
-                    label,
-                )
-            return _preview_link_mdx(
-                preview["href"], preview["title"], preview["summary"], canonical
-            )
-        # No concept matched: fall back to a chapter-to-chapter link by (exact or normalized) title.
+        # ``[[...]]`` is the explicit cross-reference syntax. Per the authoring contract
+        # (see COMMON_SYSTEM_PROMPT) bare prose terms auto-link to concepts, so an author only
+        # reaches for ``[[name]]`` when they mean a *chapter*. Resolve chapters first; a name that
+        # is both a concept and a chapter therefore links to the chapter (the author's intent).
         chapter = chapters.get(label) or chapters.get(_concept_key(label))
         if chapter:
             return _preview_link_mdx(
                 chapter["href"], chapter["title"], chapter["summary"], chapter["title"]
             )
+        # No chapter matched: fall back to a concept link by (alias-resolved) canonical name. This
+        # is the only way concept pages (auto_link=False) link to other concepts.
+        canonical = alias_map.get(label) or alias_map.get(_concept_key(label)) or label
+        preview = concept_previews.get(canonical)
+        if preview:
+            linked_canonicals.add(canonical)
+            return _preview_link_mdx(
+                preview["href"], preview["title"], preview["summary"], canonical
+            )
         return f"[[{canonical}]]"
 
     normalized = re.sub(r"\[\[([^\]]+)\]\]", replace, markdown)
-    # ``auto_link`` turns bare prose terms into concept links (chapter bodies). Concept pages pass
-    # ``auto_link=False`` so they only resolve explicit ``[[...]]`` wikilinks — auto-linking a
-    # concept page's own name throughout its body would be noise.
+    # ``auto_link`` turns bare prose terms into concept links. Both chapter bodies and concept
+    # pages use it so the contract is uniform (bare prose -> concept, ``[[ ]]`` -> chapter). A
+    # concept page suppresses its own name (see ``suppress``) so it links *other* concepts only.
     if auto_link:
         normalized = _auto_link_concept_terms(
             normalized, _concept_link_terms(alias_map, concept_previews), linked_canonicals
@@ -3730,7 +3730,10 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                         alias_map,
                         concept_previews,
                         chapter_previews,
-                        auto_link=False,
+                        auto_link=True,
+                        # Suppress self-linking: a concept page auto-links *other* concepts but
+                        # never its own name (id + canonical) throughout its body.
+                        suppress={str(name), str(concept["name"])},
                     )
                 )
             )

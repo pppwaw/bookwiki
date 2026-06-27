@@ -490,8 +490,9 @@ def test_normalize_concept_links_preserves_multiline_display_math() -> None:
 
 
 def test_normalize_concept_links_resolves_chapter_wikilinks() -> None:
-    """A ``[[chapter title]]`` with no matching concept resolves to a chapter PreviewLink;
-    a name shared by a concept and a chapter resolves to the concept (concept wins)."""
+    """A ``[[chapter title]]`` resolves to a chapter PreviewLink; a name shared by a concept and a
+    chapter resolves to the chapter (``[[ ]]`` is the explicit chapter-reference syntax — concepts
+    are reached via bare prose, so chapter wins the collision)."""
     from bookwiki.pipeline.nodes import _normalize_concept_links
 
     alias_map = {"点估计": "点估计"}
@@ -503,15 +504,15 @@ def test_normalize_concept_links_resolves_chapter_wikilinks() -> None:
         "点估计": {"href": "/docs/chapters/dian-gu-ji", "title": "点估计", "summary": "ch"},
     }
 
-    body = "参见 [[向量函数]] 一章，以及概念 [[点估计]]。"
+    body = "参见 [[向量函数]] 一章，以及 [[点估计]] 一章。"
     out = _normalize_concept_links(body, alias_map, concept_previews, chapter_previews)
 
     # Chapter-only label resolves to the chapter page.
     assert '<PreviewLink href={"/docs/chapters/向量函数"}' in out
     assert ">向量函数</PreviewLink>" in out
-    # A label shared by concept + chapter resolves to the concept (concept wins).
-    assert '<PreviewLink href={"/docs/concepts/点估计"}' in out
-    assert '/docs/chapters/dian-gu-ji' not in out
+    # A label shared by concept + chapter resolves to the chapter (chapter wins the collision).
+    assert '<PreviewLink href={"/docs/chapters/dian-gu-ji"}' in out
+    assert "/docs/concepts/点估计" not in out
 
 
 def test_normalize_concept_links_leaves_unknown_chapter_wikilink_bare() -> None:
@@ -523,9 +524,31 @@ def test_normalize_concept_links_leaves_unknown_chapter_wikilink_bare() -> None:
     assert "<PreviewLink" not in out
 
 
+def test_normalize_concept_links_suppress_excludes_self_keeps_others() -> None:
+    """Concept pages pass auto_link=True with ``suppress`` set to their own name: the page's own
+    term is never self-linked, but bare mentions of *other* concepts still auto-link."""
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    alias_map = {"点估计": "点估计", "方差": "方差"}
+    concept_previews = {
+        "点估计": {"href": "/docs/concepts/点估计", "title": "点估计", "summary": "s"},
+        "方差": {"href": "/docs/concepts/方差", "title": "方差", "summary": "v"},
+    }
+
+    body = "点估计是一种方法，常用来估计方差。"
+    out = _normalize_concept_links(
+        body, alias_map, concept_previews, {}, auto_link=True, suppress={"点估计"}
+    )
+
+    # The page's own term (点估计) is NOT self-linked.
+    assert "/docs/concepts/点估计" not in out
+    # A bare mention of another concept (方差) IS auto-linked.
+    assert '<PreviewLink href={"/docs/concepts/方差"}' in out
+
+
 def test_normalize_concept_links_auto_link_false_only_resolves_explicit_wikilinks() -> None:
-    """Concept pages pass auto_link=False: an explicit [[chapter title]] still resolves to the
-    chapter page, but a bare prose mention of a concept term is NOT auto-linked (no self-noise)."""
+    """With auto_link=False an explicit [[chapter title]] still resolves to the chapter page, but a
+    bare prose mention of a concept term is NOT auto-linked."""
     from bookwiki.pipeline.nodes import _normalize_concept_links
 
     alias_map = {"点估计": "点估计"}
