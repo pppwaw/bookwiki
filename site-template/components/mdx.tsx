@@ -5,6 +5,15 @@ import { ChapterSummary } from './ChapterSummary';
 import { ChatBox } from './ChatBox';
 import { BookFigure } from './BookFigure';
 import { ConceptLink } from './ConceptLink';
+import {
+  ExamBlock,
+  ExamChoice,
+  ExamChoices,
+  ExamConceptRecap,
+  ExamExplanation,
+  ExamItem,
+  ExamQuestion,
+} from './ExamBlock';
 import { Mermaid } from './Mermaid';
 import { PreviewLink } from './PreviewLink';
 import {
@@ -41,6 +50,13 @@ export function getMDXComponents(components?: MDXComponents) {
     BookFigure,
     Mermaid,
     WorkedProblem,
+    ExamBlock,
+    ExamItem,
+    ExamQuestion,
+    ExamChoices,
+    ExamChoice,
+    ExamConceptRecap,
+    ExamExplanation,
     ...components,
   } satisfies MDXComponents;
 }
