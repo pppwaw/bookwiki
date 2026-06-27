@@ -501,8 +501,8 @@ git commit -m "test(site): 适配单一来源后的 e2e 与物化语义"
 
 ## 待决（动手前需用户确认）
 
-1. **build 是否进 check loop（Task 6 可选扩展）:** 只跑 `types:check`（快、抓不到 Shiki 类运行时错误），还是追加 `pnpm build`（慢一轮、能抓运行时渲染错误）？倾向：Task B 的白名单检测先兜已知围栏问题；完整 build 作为可配置开关（`generation.siteBuildCheck`）默认 off、需要时 on。
-2. **A/B 与 site 重构的先后:** Task A/B 与 site 重构正交，建议先合 A/B（直接缓解 exhausted 与渲染报错），再做 site 重构大改。
+1. **build 进 check loop（已定 2026-06-27）:** 直接上完整 `pnpm build`（含 Shiki 渲染）进 check，捕获 types:check 抓不到的运行时渲染错误，产出 `SITE_BUILD_ERROR` issue 进入 repair loop。Task 6 据此实现（不再做可配置开关默认 off 的折中）；Task B 的围栏白名单作为更便宜的前置兜底仍保留。
+2. **A/B 与 site 重构的先后（已定 2026-06-27）:** 先做 A/B —— 已完成并提交（commit 4f8f80b）。site 重构（Task 1–8）待后续执行。
 
 ---
 
