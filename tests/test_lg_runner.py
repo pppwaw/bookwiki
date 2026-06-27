@@ -651,6 +651,76 @@ def test_resume_after_generate_fanout_failure_retries_only_failed_chapter(
     assert set(state["agent_results"]) == {"chapter-1", "chapter-2"}
 
 
+def test_resume_heals_legacy_checkpoint_pinned_at_generate_collect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Checkpoints written before workers raised carry swallowed ``error`` parts and sit
+    pinned at the ``generate`` collect node. A bare ``--resume`` must heal them: re-run
+    the whole fanout stage (cache covers the finished chapters) rather than ``KeyError``
+    on the legacy error part."""
+    cfg = default_config(tmp_path / "books" / "mini")
+
+    for name, output in _NODE_OUTPUTS.items():
+        if name == "generate":
+            continue
+
+        def make(node_name: str, payload: dict[str, Any]):
+            def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+                if node_name == "split":
+                    return {
+                        **payload,
+                        "chapter_sources": {
+                            "chapter-1": "work/chapter_sources/chapter-1/source.md",
+                            "chapter-2": "work/chapter_sources/chapter-2/source.md",
+                        },
+                        "cache_hit": False,
+                    }
+                return {**payload, "cache_hit": False}
+
+            return node
+
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, make(name, output))
+
+    generated_ids: list[str] = []
+    attempt = {"n": 0}
+
+    async def fake_generate_chapter(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        ch_id = str(state["_fanout_chapter_id"])
+        generated_ids.append(ch_id)
+        # First pass mimics the *legacy* worker: swallow chapter-2's failure into an
+        # error part (rather than raising), advancing the checkpoint to the collect node.
+        if ch_id == "chapter-2" and attempt["n"] == 0:
+            return {"_generate_parts": {ch_id: {"chapter_id": ch_id, "error": "legacy boom"}}}
+        return {
+            "_generate_parts": {
+                ch_id: {
+                    "chapter_id": ch_id,
+                    "agent_results": {"chapter": f"work/agent_results/{ch_id}.chapter.json"},
+                    "generation_issues": [],
+                    "generated_figures": {},
+                    "cache_hit": False,
+                }
+            }
+        }
+
+    monkeypatch.setattr(nodes_module, "generate_chapter_fanout_node", fake_generate_chapter)
+
+    run_pipeline(cfg, resume=False)  # pause before split (structure gate)
+    # Collect treats the error part as a missing result and raises, pinning at ``generate``.
+    with pytest.raises(RuntimeError, match="no fanout result"):
+        run_pipeline(cfg, stop_after="generate", resume=True)
+    assert _manifest(cfg)["next_node"] == "generate"
+
+    generated_ids.clear()
+    attempt["n"] = 1
+
+    state = run_pipeline(cfg, stop_after="generate", resume=True)
+
+    # The whole fanout re-runs (no targets); both chapters are produced and collect passes.
+    assert set(generated_ids) == {"chapter-1", "chapter-2"}
+    assert set(state["agent_results"]) == {"chapter-1", "chapter-2"}
+
+
 def test_concept_pages_run_as_langgraph_fanout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

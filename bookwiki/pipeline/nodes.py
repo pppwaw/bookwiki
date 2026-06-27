@@ -2761,7 +2761,7 @@ def collect_generate_fanout_node(state: State, cfg: BookConfig) -> State:
     ]
     for ch_id in chapter_ids:
         part = parts.get(ch_id)
-        if not part:
+        if not part or "agent_results" not in part:
             missing.append(ch_id)
             continue
         chapter_results[ch_id] = dict(part["agent_results"])
@@ -3171,6 +3171,8 @@ def collect_concept_pages_fanout_node(state: State, cfg: BookConfig) -> State:
     ordered = sorted(parts.values(), key=lambda part: int(part.get("order", 0)))
     for part in ordered:
         name = str(part.get("name") or "concept")
+        if "path" not in part:  # a legacy swallowed-error part — heal via resume rewind
+            raise RuntimeError(f"concept_pages produced no fanout result for: {name}")
         outputs[name] = str(part["path"])
         concept_generation_issues.extend(part.get("concept_generation_issues", []))
         cache_hits.append(bool(part.get("cache_hit", False)))

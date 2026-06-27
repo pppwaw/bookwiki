@@ -474,6 +474,27 @@ async def _write_failure_manifest(
     )
 
 
+def _legacy_fanout_collect_pin(prior_next: str | None, prior_values: dict[str, Any]) -> str | None:
+    """Detect a checkpoint pinned at a fanout-collect node by a *swallowed* failure.
+
+    Workers used to record an ``{"error": ...}`` part instead of raising, so the fanout
+    super-step completed and the checkpoint advanced to the collect node (``generate`` /
+    ``concept_pages``). Such a checkpoint can't resume under the current code — collect
+    has no error branch and would ``KeyError`` on the part. Returns the stage so ``_run``
+    can rewind and re-run the whole fanout (cache makes the finished units cheap and the
+    re-run happens under the new raise semantics, healing the checkpoint). Current code
+    raises instead, pinning at the *worker* node, so this never fires for fresh runs."""
+    parts_key = {"generate": "_generate_parts", "concept_pages": "_concept_page_parts"}.get(
+        prior_next or ""
+    )
+    if parts_key is None:
+        return None
+    parts = prior_values.get(parts_key) or {}
+    if any(isinstance(part, dict) and part.get("error") for part in parts.values()):
+        return prior_next
+    return None
+
+
 async def _run(
     cfg: BookConfig,
     *,
@@ -503,6 +524,19 @@ async def _run(
 
     prior_values, prior_meta, prior_next = await _peek(db_path, cfg)
     config_matches = prior_meta.get("config_hash") == cfg_hash
+
+    # Heal a legacy checkpoint stuck at a fanout-collect node with swallowed ``error``
+    # parts: rewind and re-run the whole fanout stage (no targets, no cache wipe — the
+    # finished chapters/concepts hit the task cache; only the failures actually rerun).
+    if resume and prior_values and config_matches and not cfg.force_from:
+        legacy_stage = _legacy_fanout_collect_pin(prior_next, prior_values)
+        if legacy_stage is not None:
+            cfg.force_from = legacy_stage
+            cfg.force_clear_cache = False
+            print(
+                f"resume: legacy checkpoint pinned at {legacy_stage} with failed fanout "
+                f"parts; re-running the {legacy_stage} stage (finished units are cached)"
+            )
 
     seed_state: dict[str, Any] | None = None
     seed_index: int | None = None
