@@ -139,7 +139,13 @@ def test_manifest_records_llm_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPa
                     "prompt_tokens": 120,
                     "completion_tokens": 34,
                     "total_tokens": 154,
-                }
+                },
+                "sum": {
+                    "cost_cny": 1.234568,
+                    "prompt_tokens": 120,
+                    "completion_tokens": 34,
+                    "total_tokens": 154,
+                },
             }
         ],
     }
@@ -171,7 +177,13 @@ def test_manifest_records_stage_llm_usage(tmp_path: Path, monkeypatch: pytest.Mo
                 "prompt_tokens": 100,
                 "completion_tokens": 20,
                 "total_tokens": 120,
-            }
+            },
+            "sum": {
+                "cost_cny": 0.25,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+            },
         }
     ]
 
@@ -201,24 +213,21 @@ def test_manifest_accumulates_llm_usage_across_runs(
     assert usage["completion_tokens"] == 40
     assert usage["total_tokens"] == 240
     # Each run is its own object keyed by stage name; runs stay grouped, not merged.
-    assert usage["runs"] == [
-        {
-            "convert": {
-                "cost_cny": 0.25,
-                "prompt_tokens": 100,
-                "completion_tokens": 20,
-                "total_tokens": 120,
-            }
+    one_run = {
+        "convert": {
+            "cost_cny": 0.25,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
         },
-        {
-            "convert": {
-                "cost_cny": 0.25,
-                "prompt_tokens": 100,
-                "completion_tokens": 20,
-                "total_tokens": 120,
-            }
+        "sum": {
+            "cost_cny": 0.25,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
         },
-    ]
+    }
+    assert usage["runs"] == [one_run, one_run]
 
 
 def test_manifest_is_written_when_run_is_cancelled(
@@ -257,9 +266,124 @@ def test_manifest_is_written_when_run_is_cancelled(
                     "completion_tokens": 20,
                     "total_tokens": 120,
                     "status": "interrupted",
-                }
+                },
+                "sum": {
+                    "cost_cny": 0.25,
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                },
             }
         ],
+    }
+
+
+def test_manifest_is_written_when_node_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A node crashing mid-pipeline (e.g. ``generate`` after writing most chapters)
+    must still flush the manifest with status ``failed`` and the run's spend, instead
+    of letting the RuntimeError take the whole manifest down with it."""
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = SimpleNamespace(
+        total_cost_cny=0.0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+    )
+
+    def fake_convert(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+        _spend(cfg_arg.llm_runtime, cost=0.3, prompt=80, completion=10)
+        raise RuntimeError("generate failed for chapters: ['ch-2']; 1 chapter(s) written")
+
+    monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, "convert", fake_convert)
+
+    with pytest.raises(RuntimeError, match="generate failed"):
+        run_pipeline(cfg, stop_after="convert", resume=False)
+
+    manifest = _manifest(cfg)
+    assert manifest["status"] == "failed"
+    # The in-flight node never returned, so its spend is recovered via the
+    # unfinished-stage diff and recorded against the active node.
+    usage = manifest["llm_usage"]
+    assert usage["total_cost_cny"] == 0.3
+    assert usage["prompt_tokens"] == 80
+    assert usage["completion_tokens"] == 10
+    assert usage["runs"] == [
+        {
+            "convert": {
+                "cost_cny": 0.3,
+                "prompt_tokens": 80,
+                "completion_tokens": 10,
+                "total_tokens": 90,
+                "status": "interrupted",
+            },
+            "sum": {
+                "cost_cny": 0.3,
+                "prompt_tokens": 80,
+                "completion_tokens": 10,
+                "total_tokens": 90,
+            },
+        }
+    ]
+
+
+def test_manifest_flushes_each_node_without_double_counting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Continuous per-node flushing must not append the current run's usage on every
+    flush — a multi-node run still records exactly one run object with summed spend."""
+    cfg = default_config(tmp_path / "books" / "mini")
+    cfg.llm_runtime = SimpleNamespace(
+        total_cost_cny=0.0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+    )
+    calls: list[str] = []
+    _register_fakes(monkeypatch, calls)
+
+    def spending(node_name: str, payload: dict[str, Any]):
+        def node(state: dict[str, Any], cfg_arg: Any) -> dict[str, Any]:
+            calls.append(node_name)
+            _spend(cfg_arg.llm_runtime, cost=0.1, prompt=10, completion=5)
+            return {**payload, "cache_hit": False}
+
+        return node
+
+    for name in ("convert", "caption", "structure"):
+        monkeypatch.setitem(nodes_module.NODE_FUNCTIONS, name, spending(name, _NODE_OUTPUTS[name]))
+
+    # Fresh run halts before ``split`` after three spending nodes.
+    run_pipeline(cfg, resume=False)
+
+    usage = _manifest(cfg)["llm_usage"]
+    assert usage["total_cost_cny"] == 0.3
+    assert usage["total_tokens"] == 45
+    assert len(usage["runs"]) == 1
+    assert usage["runs"][0] == {
+        "convert": {
+            "cost_cny": 0.1,
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+        },
+        "caption": {
+            "cost_cny": 0.1,
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+        },
+        "structure": {
+            "cost_cny": 0.1,
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+        },
+        "sum": {
+            "cost_cny": 0.3,
+            "prompt_tokens": 30,
+            "completion_tokens": 15,
+            "total_tokens": 45,
+        },
     }
 
 

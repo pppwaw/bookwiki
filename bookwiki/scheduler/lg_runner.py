@@ -220,7 +220,6 @@ def _write_manifest(
     include_unfinished_usage: bool = False,
 ) -> None:
     manifest_path = cfg.work_dir / "logs" / "run-manifest.json"
-    prior = read_json(manifest_path, default={})
     write_json(
         manifest_path,
         {
@@ -230,13 +229,21 @@ def _write_manifest(
             "config_hash": config_hash,
             "nodes": nodes_log,
             "llm_usage": _accumulated_llm_usage(
-                prior,
                 _llm_usage_snapshot(cfg, include_unfinished=include_unfinished_usage),
                 cfg,
             ),
             "outputs": {"content": str(cfg.content_dir), "sqlite": state.get("sqlite")},
         },
     )
+
+
+def _prior_runs_from_manifest(cfg: BookConfig) -> list[dict[str, Any]]:
+    """Read the runs already committed to disk by earlier ``_run`` invocations."""
+    manifest_path = cfg.work_dir / "logs" / "run-manifest.json"
+    prior = read_json(manifest_path, default={})
+    prior_usage = prior.get("llm_usage", {}) if isinstance(prior, dict) else {}
+    prior_runs = prior_usage.get("runs", []) if isinstance(prior_usage, dict) else []
+    return list(prior_runs) if isinstance(prior_runs, list) else []
 
 
 def _llm_usage_snapshot(cfg: BookConfig, *, include_unfinished: bool = False) -> dict[str, Any]:
@@ -274,17 +281,18 @@ def _run_usage_object(stages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
             existing["total_tokens"] += payload["total_tokens"]
         if stage.get("status"):
             run[name]["status"] = stage["status"]
+    # Roll the run's own stages into a ``sum`` entry so a reader doesn't have to add
+    # up the per-node rows by hand. ``sum`` is not a node name, so it never collides;
+    # ``_sum_run_objects`` skips it to avoid double-counting.
+    if run:
+        run["sum"] = _sum_stage_usage(list(run.values()))
     return run
 
 
-def _accumulated_llm_usage(
-    prior_manifest: Any, current: dict[str, Any], cfg: BookConfig
-) -> dict[str, Any]:
-    prior_usage = prior_manifest.get("llm_usage", {}) if isinstance(prior_manifest, dict) else {}
-    prior_runs = prior_usage.get("runs", []) if isinstance(prior_usage, dict) else []
-    if not isinstance(prior_runs, list):
-        prior_runs = []
-    runs = list(prior_runs)
+def _accumulated_llm_usage(current: dict[str, Any], cfg: BookConfig) -> dict[str, Any]:
+    # ``_llm_prior_runs`` is captured once at ``_run`` start, so this is idempotent
+    # across the many flushes a single run now performs (per node + on failure).
+    runs = list(getattr(cfg, "_llm_prior_runs", []))
     if current["run"]:  # skip a run that issued no node calls at all
         runs.append(current["run"])
     totals = _sum_run_objects(runs)
@@ -304,7 +312,9 @@ def _sum_run_objects(runs: list[dict[str, Any]]) -> dict[str, Any]:
     completion_tokens = 0
     cost = 0.0
     for run in runs:
-        for usage in run.values():
+        for name, usage in run.items():
+            if name == "sum":  # the run's own roll-up; counting it would double the totals
+                continue
             cost += float(usage.get("cost_cny", 0.0) or 0.0)
             prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
             completion_tokens += int(usage.get("completion_tokens", 0) or 0)
@@ -404,18 +414,64 @@ async def _drive(
     input_state: dict[str, Any] | None,
     thread: dict[str, Any],
     nodes_log: list[dict[str, Any]],
+    cfg: BookConfig,
+    config_hash: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], str, str | None]:
     async for chunk in graph.astream(input_state, thread, stream_mode="updates"):
+        progressed = False
         for node_name, delta in chunk.items():
             if node_name not in NODE_ORDER:
                 continue
             cache_hit = bool((delta or {}).get("cache_hit", False))
             nodes_log.append({"name": node_name, "status": "completed", "cache_hit": cache_hit})
+            progressed = True
+        if progressed:
+            # Flush after every node so a later crash (or hard kill) can't take the
+            # whole run's manifest down with it — each completed node is durable.
+            snapshot = await graph.aget_state(thread)
+            _write_manifest(
+                cfg,
+                dict(snapshot.values) if snapshot.values else {},
+                nodes_log,
+                status="running",
+                next_node=snapshot.next[0] if snapshot.next else None,
+                config_hash=config_hash,
+            )
 
     snapshot = await graph.aget_state(thread)
     next_node = snapshot.next[0] if snapshot.next else None
     status = "paused" if snapshot.next else "completed"
     return dict(snapshot.values), nodes_log, status, next_node
+
+
+async def _write_failure_manifest(
+    cfg: BookConfig,
+    graph: Any,
+    thread: dict[str, Any],
+    nodes_log: list[dict[str, Any]],
+    config_hash: str,
+    *,
+    status: str,
+) -> None:
+    """Flush the manifest after an interruption or a node crash, capturing the
+    in-flight node's spend (``include_unfinished_usage``) so cost isn't lost."""
+    values: dict[str, Any] = {}
+    next_node: str | None = None
+    try:
+        snapshot = await graph.aget_state(thread)
+        values = dict(snapshot.values) if snapshot.values else {}
+        next_node = snapshot.next[0] if snapshot.next else None
+    except Exception:
+        LOGGER.exception("failed to read checkpoint while writing %s manifest", status)
+    _write_manifest(
+        cfg,
+        values,
+        nodes_log,
+        status=status,
+        next_node=next_node,
+        config_hash=config_hash,
+        include_unfinished_usage=True,
+    )
 
 
 async def _run(
@@ -438,6 +494,12 @@ async def _run(
         cfg.llm_runtime = build_runtime(max_cost_cny=cfg.budget.get("maxCostCny"))
     cfg._llm_stage_usage = []
     cfg._llm_run_usage_start = _llm_usage_totals(cfg)
+    # Snapshot the prior runs' usage *once* here, not on every manifest write. The
+    # manifest is now flushed continuously (per node, and on failure), so re-reading
+    # it and appending the current run each time would duplicate this run's usage on
+    # every flush. Capturing the baseline up front makes ``_accumulated_llm_usage``
+    # idempotent: each write rebuilds ``prior_runs + [current_run]``.
+    cfg._llm_prior_runs = _prior_runs_from_manifest(cfg)
 
     prior_values, prior_meta, prior_next = await _peek(db_path, cfg)
     config_matches = prior_meta.get("config_hash") == cfg_hash
@@ -498,30 +560,22 @@ async def _run(
         nodes_log: list[dict[str, Any]] = []
         try:
             values, nodes_log, status, next_node = await _drive(
-                graph, input_state, thread, nodes_log
+                graph, input_state, thread, nodes_log, cfg, cfg_hash
             )
         except (asyncio.CancelledError, KeyboardInterrupt):
             current_task = asyncio.current_task()
             if current_task is not None:
                 while current_task.cancelling():
                     current_task.uncancel()
-            values: dict[str, Any] = {}
-            next_node: str | None = None
-            try:
-                snapshot = await graph.aget_state(thread)
-                values = dict(snapshot.values) if snapshot.values else {}
-                next_node = snapshot.next[0] if snapshot.next else None
-            except Exception:
-                LOGGER.exception("failed to read checkpoint while handling interruption")
-            _write_manifest(
-                cfg,
-                values,
-                nodes_log,
-                status="interrupted",
-                next_node=next_node,
-                config_hash=cfg_hash,
-                include_unfinished_usage=True,
+            await _write_failure_manifest(
+                cfg, graph, thread, nodes_log, cfg_hash, status="interrupted"
             )
+            raise
+        except Exception:
+            # A node blew up mid-pipeline (e.g. ``generate`` raising after writing
+            # most chapters). Persist what completed plus this run's spend so the
+            # cost/progress isn't silently lost, then re-raise for the caller.
+            await _write_failure_manifest(cfg, graph, thread, nodes_log, cfg_hash, status="failed")
             raise
         else:
             _write_manifest(
