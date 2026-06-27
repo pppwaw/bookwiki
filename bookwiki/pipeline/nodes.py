@@ -21,6 +21,8 @@ from bookwiki.agents import (
     ConceptExtractAgent,
     ConceptMdxEditRepairAgent,
     ConceptReconcileAgent,
+    ExamAgent,
+    ExamExplainAgent,
     MdxEditRepairAgent,
     ReviewAgent,
     SectionAgent,
@@ -55,9 +57,11 @@ from bookwiki.convert.source_normalizer import (
     normalize_structured_source,
 )
 from bookwiki.convert.text_to_md import convert_text_to_md
+from bookwiki.generate.exam_pool import build_exam_pools
 from bookwiki.generate.sections import _body_too_short, generate_chapter_sections
 from bookwiki.generate.validate_artifact import ArtifactIssue, validate_artifact
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
+from bookwiki.integrator.exam_renderer import render_exam_mdx
 from bookwiki.integrator.markdown_renderers import (
     convert_html_style_attrs,
     normalize_citation_quote_math,
@@ -73,8 +77,9 @@ from bookwiki.scheduler.cache import CacheResult, run_with_cache
 from bookwiki.scheduler.config import BookConfig
 from bookwiki.schemas import SCHEMA_VERSION
 from bookwiki.schemas.concept import ConceptReconciledItem, ConceptReconcileResult, ConceptResult
+from bookwiki.schemas.quiz import ExamResult
 from bookwiki.schemas.report import CheckReport, Issue
-from bookwiki.schemas.source import SourceSummaryResult
+from bookwiki.schemas.source import DetectedExamQuestion, SourceSummaryResult
 from bookwiki.skeleton.fold import Registry
 from bookwiki.split.chapter_splitter import compute_slug_remap, parse_approved_structure
 from bookwiki.utils.files import ensure_dir, read_json, write_json, write_text
@@ -1839,6 +1844,8 @@ def _merge_source_chunk_summaries(
     summary_parts: list[str] = []
     detected_chapters = []
     concept_candidates = []
+    exam_questions = []
+    is_exam = False
     detected_chapter_id: str | None = None
     detected_title: str | None = None
 
@@ -1854,6 +1861,8 @@ def _merge_source_chunk_summaries(
             detected_title = chunk.detected_title
         detected_chapters.extend(chunk.detected_chapters)
         concept_candidates.extend(chunk.concept_candidates)
+        is_exam = is_exam or chunk.is_exam
+        exam_questions.extend(chunk.exam_questions)
 
     if len(detected_chapters) == 1:
         detected_chapters = [
@@ -1870,6 +1879,8 @@ def _merge_source_chunk_summaries(
         key_terms=key_terms,
         detected_chapters=detected_chapters,
         concept_candidates=concept_candidates,
+        is_exam=is_exam,
+        exam_questions=exam_questions,
     )
 
 
@@ -1974,6 +1985,7 @@ async def structure_node(state: State, cfg: BookConfig) -> State:
 
     out_dir = ensure_dir(cfg.work_dir / "structure")
     write_json(out_dir / "concept-candidates.json", _concept_candidates_by_ref(merged_summaries))
+    write_json(out_dir / "exam-pool.json", _collect_exam_questions(merged_summaries))
     proposed_path = write_text(
         out_dir / "proposed-structure.yaml", structure.result.proposed_structure_yaml
     )
@@ -2596,6 +2608,11 @@ async def _run_generate_chapter_unit(
             _agent_result_payload(CardAgent, card_model, generated.card),
         ),
     }
+    exam_path = await _generate_chapter_exam(
+        state, cfg, ch_id, title, source_md, generated.chapter.body_md, result_dir
+    )
+    if exam_path is not None:
+        paths["exam"] = exam_path
     return {
         "chapter_id": ch_id,
         "agent_results": {name: _rel(path, cfg.book_dir) for name, path in paths.items()},
@@ -2603,6 +2620,113 @@ async def _run_generate_chapter_unit(
         "generated_figures": dict(generated.generated_figures),
         "cache_hit": generated.cache_hit,
     }
+
+
+_EXAM_CHAPTER_RE = re.compile(
+    r"试卷|期中|期末|考试|真题|测验|exam|midterm|mid-term|final", re.IGNORECASE
+)
+
+
+def _exam_chapter_ids(state: State) -> set[str]:
+    """Heuristic, soft detection of past-exam chapters by title / source name.
+
+    Detection only decides which agent runs (walkthrough vs generated exam) and what feeds the
+    exam pool; a miss simply means a chapter gets a normal generated exam, so a wrong guess is
+    never fatal (see design §3.1).
+    """
+
+    titles = state.get("chapter_titles", {})
+    sources = state.get("chapter_sources", {})
+    ids: set[str] = set()
+    for ch_id in sources:
+        haystack = f"{ch_id} {titles.get(ch_id, '')} {sources.get(ch_id, '')}"
+        if _EXAM_CHAPTER_RE.search(haystack):
+            ids.add(str(ch_id))
+    return ids
+
+
+def _collect_exam_questions(summaries: list[SourceSummaryResult]) -> dict[str, Any]:
+    """Flatten the questions of every ``is_exam`` summary for later per-chapter distribution."""
+    questions = [
+        question.model_dump(mode="json")
+        for summary in summaries
+        if summary.is_exam
+        for question in summary.exam_questions
+    ]
+    return {"questions": questions}
+
+
+def _chapter_exam_pool(state: State, cfg: BookConfig, ch_id: str) -> list[dict[str, Any]]:
+    """This chapter's slice of the past-exam pool, mapped by concept overlap.
+
+    Structure persisted every detected past-exam question to ``work/structure/exam-pool.json``;
+    here ``build_exam_pools`` assigns each question to the single best-matching chapter (by the
+    chapter's approved topics), and we hand this chapter its slice as ExamAgent 套路 reference.
+    """
+
+    path = cfg.work_dir / "structure" / "exam-pool.json"
+    if not path.exists():
+        return []
+    raw = read_json(path).get("questions") or []
+    if not raw:
+        return []
+    summary = SourceSummaryResult(
+        source_id="_exam_pool",
+        summary_md="",
+        is_exam=True,
+        exam_questions=[DetectedExamQuestion.model_validate(item) for item in raw],
+    )
+    chapter_topics = {cid: list(topics) for cid, topics in state.get("chapter_topics", {}).items()}
+    pools = build_exam_pools([summary], chapter_topics)
+    return [question.model_dump(mode="json") for question in pools.get(ch_id, [])]
+
+
+async def _generate_chapter_exam(
+    state: State,
+    cfg: BookConfig,
+    ch_id: str,
+    title: str,
+    source_md: str,
+    chapter_body_md: str,
+    result_dir: Path,
+) -> Path | None:
+    """Generate the chapter's exam artifact: a walkthrough for past-paper chapters, otherwise a
+    fresh chapter-end exam that borrows from any detected past papers. Returns the written path
+    (added to the chapter's ``agent_results`` as ``exam``) or ``None`` on failure."""
+
+    exam_ids = _exam_chapter_ids(state)
+    allowed_refs = sorted(set(SOURCE_REF_RE.findall(source_md)))
+    payload: dict[str, Any] = {
+        "chapter_id": ch_id,
+        "title": title,
+        "source_md": source_md,
+        "language": cfg.language,
+        "book_notes": cfg.book_notes,
+        "chapter_body_md": chapter_body_md,
+        "allowed_source_refs": allowed_refs,
+    }
+    if ch_id in exam_ids:
+        agent_cls: type[Any] = ExamExplainAgent
+        model = cfg.models.get("exam_explain") or cfg.model_for("application_quiz")
+    else:
+        agent_cls = ExamAgent
+        model = cfg.models.get("exam") or cfg.model_for("application_quiz")
+        payload["exam_pool"] = _chapter_exam_pool(state, cfg, ch_id)
+    try:
+        result = await run_with_cache(
+            agent_cls,
+            payload,
+            model=model,
+            cache_dir=cfg.cache_dir / "tasks",
+            runtime=cfg.llm_runtime,
+        )
+    except Exception as exc:  # noqa: BLE001 - exam is additive; never wedge chapter generation.
+        _LOG.warning("exam generation failed ch_id=%s: %s", ch_id, exc)
+        return None
+    return write_json(
+        result_dir / f"{ch_id}.exam.json",
+        _agent_result_payload(agent_cls, model, result.result),
+    )
 
 
 def collect_generate_fanout_node(state: State, cfg: BookConfig) -> State:
@@ -3400,6 +3524,23 @@ def _emit_concept_graph(state: State, cfg: BookConfig) -> Path | None:
     return out_path
 
 
+def _write_exam_page(cfg: BookConfig, chapter_dir: Path, exam_rel: str, display_title: str) -> None:
+    """Render a chapter's exam artifact to ``<chapter>/exam.mdx`` and write the folder meta.
+
+    ``mode`` is read off the owner task id (``:explain`` → past-paper walkthrough, else a
+    generated chapter exam), so the same renderer drives both surfaces.
+    """
+
+    exam = ExamResult.model_validate(_agent_result(read_json(cfg.book_dir / exam_rel)))
+    mode = "walkthrough" if exam.owner_task_id.endswith(":explain") else "exam"
+    page_title = f"{display_title} · {'讲解' if mode == 'walkthrough' else '测验'}"
+    write_text(
+        chapter_dir / "exam.mdx",
+        _frontmatter({"title": page_title, "type": "chapter"}) + render_exam_mdx(exam, mode=mode),
+    )
+    write_json(chapter_dir / "meta.json", {"title": display_title, "pages": ["index", "exam"]})
+
+
 def integrate_node(state: State, cfg: BookConfig) -> State:
     content_dir = ensure_dir(cfg.content_dir)
     chapters_dir = content_dir / "chapters"
@@ -3521,7 +3662,13 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         resolved_body = _resolve_chapter_figures(
             rendered_body, _chapter_figure_index(state, cfg, ch_id)
         )
-        chapter_path = chapters_dir / f"{doc_slug}.mdx"
+        # A chapter that has an exam becomes a folder (`<slug>/index.mdx` + `<slug>/exam.mdx`)
+        # so the exam is its own page within the chapter; otherwise it stays a flat `<slug>.mdx`.
+        exam_rel = paths.get("exam")
+        if exam_rel:
+            chapter_path = ensure_dir(chapters_dir / doc_slug) / "index.mdx"
+        else:
+            chapter_path = chapters_dir / f"{doc_slug}.mdx"
         ensure_dir(chapter_path.parent)
         resolved_body = _normalize_public_asset_markdown_images(resolved_body)
         resolved_body = _drop_missing_local_markdown_links(
@@ -3553,6 +3700,8 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
                 + f"## Anki Cards\n\n{card_mdx}\n"
             ),
         )
+        if exam_rel:
+            _write_exam_page(cfg, chapter_path.parent, exam_rel, display_title)
         if group_id:
             if group_id not in seen_groups:
                 seen_groups.add(group_id)
