@@ -151,18 +151,80 @@ export function locateAnchor(haystack: string, anchor: TextAnchor): Span | null 
   return findFuzzy(haystack, anchor);
 }
 
-/** Build a TextAnchor from a live DOM selection range scoped to `root`. */
-export function anchorFromRange(root: Node, range: Range): TextAnchor | null {
-  const quote = range.toString();
-  if (!quote.trim()) return null;
+function isInHiddenMath(node: Node): boolean {
+  let el: Element | null = node.nodeType === 1 ? (node as Element) : node.parentElement;
+  while (el) {
+    if (el.classList?.contains('katex-mathml')) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
 
+/**
+ * Text nodes under `root`, skipping only KaTeX's hidden MathML mirror
+ * (`.katex-mathml`). The visible math (`.katex-html`) is kept, so highlights can
+ * span formulas and the formula still renders normally (the DOM is untouched).
+ */
+function filteredTextNodes(root: Node): Text[] {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => (isInHiddenMath(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const nodes: Text[] = [];
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    nodes.push(node as Text);
+  }
+  return nodes;
+}
+
+/**
+ * The root's text in the coordinate space every anchor uses. KaTeX renders each
+ * formula twice (hidden MathML + visible HTML); we drop the hidden mirror so a
+ * quote contains the formula once instead of a duplicated garble.
+ */
+export function getLogicalText(root: Node): string {
+  let text = '';
+  for (const node of filteredTextNodes(root)) text += node.data;
+  return text;
+}
+
+/** Logical (formula-excluded) offset of a DOM point within `root`. */
+export function logicalOffsetOfPoint(root: Node, container: Node, offset: number): number {
   const pre = document.createRange();
   pre.selectNodeContents(root);
-  pre.setEnd(range.startContainer, range.startOffset);
-  const start = pre.toString().length;
-  const end = start + quote.length;
+  try {
+    pre.setEnd(container, offset);
+  } catch {
+    return 0;
+  }
+  let total = 0;
+  for (const node of filteredTextNodes(root)) {
+    let startCmp: number;
+    try {
+      startCmp = pre.comparePoint(node, 0);
+    } catch {
+      continue;
+    }
+    if (startCmp > 0) break; // node begins after the point (document order)
+    const len = node.data.length;
+    let endCmp: number;
+    try {
+      endCmp = pre.comparePoint(node, len);
+    } catch {
+      endCmp = 1;
+    }
+    total += endCmp <= 0 ? len : node === container ? offset : len;
+  }
+  return total;
+}
 
-  const text = root.textContent ?? '';
+/** Build a TextAnchor from a live selection range, excluding any formula text. */
+export function anchorFromRange(root: Node, range: Range): TextAnchor | null {
+  const text = getLogicalText(root);
+  const start = logicalOffsetOfPoint(root, range.startContainer, range.startOffset);
+  const end = logicalOffsetOfPoint(root, range.endContainer, range.endOffset);
+  if (end <= start) return null;
+  const quote = text.slice(start, end);
+  if (!quote.trim()) return null;
   return {
     quote,
     prefix: text.slice(Math.max(0, start - CONTEXT), start),
@@ -172,35 +234,91 @@ export function anchorFromRange(root: Node, range: Range): TextAnchor | null {
   };
 }
 
-function rangeFromOffsets(root: Node, start: number, end: number): Range | null {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const range = document.createRange();
-  let acc = 0;
-  let startSet = false;
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-    const len = node.textContent?.length ?? 0;
-    if (!startSet && acc + len >= start) {
-      range.setStart(node, start - acc);
-      startSet = true;
+/**
+ * Build a display string for the selection with formulas as `$tex$` / `$$tex$$`
+ * (read from KaTeX's stored LaTeX annotation), so the review page can re-render
+ * the math with <MathText>. Plain prose is kept verbatim. Falls back to the
+ * visible text when a formula's annotation is unavailable (e.g. partial select).
+ */
+export function richQuoteFromRange(range: Range): string {
+  const fragment = range.cloneContents();
+  let out = '';
+  const walk = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      out += (node as Text).data;
+      return;
     }
-    if (startSet && acc + len >= end) {
-      range.setEnd(node, end - acc);
-      return range;
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as Element;
+    // Body math: KatexClient renders `.math.katex-src` and preserves the source
+    // TeX in `data-tex` (see KatexClient.renderPendingKatex).
+    const dataTex = el.getAttribute?.('data-tex');
+    if (dataTex != null) {
+      const tex = dataTex.trim();
+      out += tex
+        ? el.classList.contains('math-display')
+          ? `$$${tex}$$`
+          : `$${tex}$`
+        : (el.textContent ?? '');
+      return; // never descend into a formula
+    }
+    // Fallback: math rendered with a MathML annotation (e.g. <MathText>).
+    if (el.classList?.contains('katex')) {
+      const annotation = el.querySelector('annotation[encoding="application/x-tex"]');
+      const tex = (annotation?.textContent ?? '').trim();
+      out += tex
+        ? el.closest?.('.katex-display')
+          ? `$$${tex}$$`
+          : `$${tex}$`
+        : (el.textContent ?? '');
+      return;
+    }
+    for (const child of el.childNodes) walk(child);
+  };
+  for (const child of fragment.childNodes) walk(child);
+  return out.trim();
+}
+
+/**
+ * Resolve a logical span to a single contiguous DOM Range. Spanning a formula
+ * is intentional — the highlight paints over the rendered math too, and because
+ * the API never mutates the DOM, the formula keeps rendering normally.
+ */
+function rangeFromLogicalSpan(root: Node, start: number, end: number): Range | null {
+  let acc = 0;
+  let startNode: Text | undefined;
+  let startOffset = 0;
+  let endNode: Text | undefined;
+  let endOffset = 0;
+  for (const node of filteredTextNodes(root)) {
+    const len = node.data.length;
+    if (startNode === undefined && acc + len >= start) {
+      startNode = node;
+      startOffset = start - acc;
+    }
+    if (startNode !== undefined && acc + len >= end) {
+      endNode = node;
+      endOffset = end - acc;
+      break;
     }
     acc += len;
   }
-  return null;
+  if (!startNode || !endNode) return null;
+  const range = document.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
+  return range;
 }
 
-/** Re-resolve an anchor to a live DOM Range within `root`, or null if orphaned. */
-export function rangeFromAnchor(root: Node, anchor: TextAnchor): Range | null {
-  const text = root.textContent ?? '';
-  const span = locateAnchor(text, anchor);
-  if (!span) return null;
-  return rangeFromOffsets(root, span.start, span.end);
+/** Re-resolve an anchor to live DOM ranges within `root` (empty if orphaned). */
+export function rangesFromAnchor(root: Node, anchor: TextAnchor): Range[] {
+  const span = locateAnchor(getLogicalText(root), anchor);
+  if (!span) return [];
+  const range = rangeFromLogicalSpan(root, span.start, span.end);
+  return range ? [range] : [];
 }
 
-/** True when a click offset falls inside an anchor's resolved span. */
+/** True when a logical offset falls inside an anchor's resolved span. */
 export function anchorContainsOffset(haystack: string, anchor: TextAnchor, offset: number): boolean {
   const span = locateAnchor(haystack, anchor);
   return span !== null && offset >= span.start && offset < span.end;

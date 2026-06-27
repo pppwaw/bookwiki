@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { HighlightColors, useHighlights } from '@/lib/highlights';
-import { rangeFromAnchor } from '@/lib/highlight-anchor';
+import { rangesFromAnchor } from '@/lib/highlight-anchor';
 import { deleteHighlight, setHighlight, supportsHighlights } from '@/lib/css-highlights';
 
 export const DOC_ROOT_ID = 'bookwiki-doc-root';
@@ -40,11 +40,11 @@ export function HighlightLayer() {
       if (cancelled) return;
       const byColor = new Map<string, Range[]>();
       for (const highlight of pageHighlights) {
-        const range = rangeFromAnchor(root, highlight);
-        if (!range) continue;
-        const ranges = byColor.get(highlight.color) ?? [];
-        ranges.push(range);
-        byColor.set(highlight.color, ranges);
+        const ranges = rangesFromAnchor(root, highlight);
+        if (ranges.length === 0) continue;
+        const list = byColor.get(highlight.color) ?? [];
+        list.push(...ranges);
+        byColor.set(highlight.color, list);
       }
       for (const color of HighlightColors) {
         setHighlight(highlightName(color), byColor.get(color) ?? []);
@@ -79,12 +79,12 @@ export function HighlightLayer() {
     let attempts = 0;
     let raf = 0;
     const tryFocus = () => {
-      const range = rangeFromAnchor(root, target);
-      if (range) {
-        const rect = range.getBoundingClientRect();
+      const ranges = rangesFromAnchor(root, target);
+      if (ranges.length > 0) {
+        const rect = ranges[0].getBoundingClientRect();
         window.scrollTo({ top: window.scrollY + rect.top - window.innerHeight / 3, behavior: 'smooth' });
         const flash = highlightName('flash');
-        setHighlight(flash, [range]);
+        setHighlight(flash, ranges);
         window.setTimeout(() => deleteHighlight(flash), 1600);
         // Drop the query param so a refresh doesn't re-trigger the flash.
         window.history.replaceState(null, '', pathname);

@@ -10,7 +10,9 @@ export default function Layout({ children }: LayoutProps<'/docs'>) {
   return (
     <DocsLayout tree={source.getPageTree()} {...baseOptions()}>
       <KatexClient />
-      <div id={DOC_ROOT_ID}>{children}</div>
+      <div id={DOC_ROOT_ID} style={{ display: 'contents' }}>
+        {children}
+      </div>
       <Suspense fallback={null}>
         <HighlightLayer />
       </Suspense>

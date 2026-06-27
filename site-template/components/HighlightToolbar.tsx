@@ -11,7 +11,14 @@ import {
   type HighlightColor,
   type NewHighlight,
 } from '@/lib/highlights';
-import { anchorContainsOffset, anchorFromRange, type TextAnchor } from '@/lib/highlight-anchor';
+import {
+  anchorContainsOffset,
+  anchorFromRange,
+  getLogicalText,
+  logicalOffsetOfPoint,
+  richQuoteFromRange,
+  type TextAnchor,
+} from '@/lib/highlight-anchor';
 import { DOC_ROOT_ID } from './HighlightLayer';
 
 const COLOR_TITLES: Record<HighlightColor, string> = {
@@ -24,7 +31,7 @@ const COLOR_TITLES: Record<HighlightColor, string> = {
 type Pos = { top: number; left: number };
 
 type Popover =
-  | { kind: 'create'; pos: Pos; anchor: TextAnchor }
+  | { kind: 'create'; pos: Pos; anchor: TextAnchor; rich: string }
   | { kind: 'edit'; pos: Pos; id: string }
   | null;
 
@@ -49,10 +56,7 @@ function caretOffset(root: HTMLElement, x: number, y: number): number | null {
     return null;
   }
   if (!node || !root.contains(node)) return null;
-  const pre = document.createRange();
-  pre.selectNodeContents(root);
-  pre.setEnd(node, offset);
-  return pre.toString().length;
+  return logicalOffsetOfPoint(root, node, offset);
 }
 
 function clampPos(top: number, left: number): Pos {
@@ -102,7 +106,12 @@ export function HighlightToolbar() {
         }
         const rect = range.getBoundingClientRect();
         setNote('');
-        setPopover({ kind: 'create', anchor, pos: clampPos(rect.top - 52, rect.left) });
+        setPopover({
+          kind: 'create',
+          anchor,
+          rich: richQuoteFromRange(range),
+          pos: clampPos(rect.top - 52, rect.left),
+        });
         return;
       }
 
@@ -112,7 +121,7 @@ export function HighlightToolbar() {
         close();
         return;
       }
-      const haystack = root.textContent ?? '';
+      const haystack = getLogicalText(root);
       const hit = getHighlights().find(
         (highlight) =>
           highlight.pagePath === pathname && anchorContainsOffset(haystack, highlight, offset),
@@ -137,6 +146,7 @@ export function HighlightToolbar() {
     if (popover?.kind !== 'create') return;
     const { pagePath, pageTitle } = pageContext();
     const input: NewHighlight = { ...popover.anchor, pagePath, pageTitle, color };
+    if (popover.rich && popover.rich !== popover.anchor.quote) input.quoteRich = popover.rich;
     if (note.trim()) input.note = note.trim();
     addHighlight(input);
     window.getSelection()?.removeAllRanges();

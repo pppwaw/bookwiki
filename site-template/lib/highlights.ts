@@ -20,6 +20,8 @@ export type Highlight = TextAnchor & {
   /** Human label for the page, for grouping on the review page. */
   pageTitle: string;
   color: HighlightColor;
+  /** Display text with formulas as `$tex$`, for re-rendering math on the review page. */
+  quoteRich?: string;
   note?: string;
   createdAt: number;
   updatedAt: number;
@@ -103,6 +105,7 @@ export type NewHighlight = TextAnchor & {
   pagePath: string;
   pageTitle: string;
   color: HighlightColor;
+  quoteRich?: string;
   note?: string;
 };
 

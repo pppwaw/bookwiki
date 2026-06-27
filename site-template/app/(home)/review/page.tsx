@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { MathText } from '@/components/MathText';
 import {
   HighlightColors,
   removeHighlight,
@@ -58,7 +59,7 @@ export default function ReviewPage() {
   return (
     <main className="bookwiki-review">
       <header className="bookwiki-review-head">
-        <h1>考前复习</h1>
+        <h1>我的标记</h1>
         <p className="bookwiki-review-sub">
           {hydrated ? `共 ${highlights.length} 处标记` : '加载中…'}
         </p>
@@ -93,7 +94,7 @@ export default function ReviewPage() {
             {group.items.map((item) => (
               <li key={item.id} className={`bookwiki-review-item bookwiki-hl-border-${item.color}`}>
                 <Link href={`${item.pagePath}?hl=${item.id}`} className="bookwiki-review-quote">
-                  {item.quote}
+                  <MathText text={item.quoteRich ?? item.quote} />
                 </Link>
                 {item.note ? <p className="bookwiki-review-note">{item.note}</p> : null}
                 <button

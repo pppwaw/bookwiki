@@ -9,7 +9,7 @@ export function baseOptions(): BaseLayoutProps {
     },
     links: [
       {
-        text: '考前复习',
+        text: '我的标记',
         url: '/review',
       },
     ],

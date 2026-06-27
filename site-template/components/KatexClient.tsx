@@ -28,6 +28,9 @@ export function renderPendingKatex(root: ParentNode = document) {
     const tex = el.textContent ?? '';
     try {
       el.innerHTML = renderKatexToString(tex, display);
+      // Preserve the source TeX (rendering overwrites it) so highlights can
+      // reconstruct `$tex$` for the review page.
+      el.dataset.tex = tex;
     } catch {
       // Leave the raw TeX in place if KaTeX cannot parse it.
     }
