@@ -8,6 +8,8 @@ from bookwiki.agents.concept_agent import ConceptAgent
 from bookwiki.agents.concept_content_rewrite_agent import ConceptContentRewriteAgent
 from bookwiki.agents.concept_extract import ConceptExtractAgent
 from bookwiki.agents.concept_reconcile import ConceptReconcileAgent
+from bookwiki.agents.exam_agent import ExamAgent
+from bookwiki.agents.exam_explain_agent import ExamExplainAgent
 from bookwiki.agents.mdx_edit_repair import (
     ChapterMdxEditRepairAgent,
     ConceptMdxEditRepairAgent,
@@ -40,6 +42,8 @@ __all__ = [
     "MdxEditRepairAgent",
     "ConceptExtractAgent",
     "ConceptReconcileAgent",
+    "ExamAgent",
+    "ExamExplainAgent",
     "QualityCheckAgent",
     "RepairSectionAgent",
     "ReviewAgent",
