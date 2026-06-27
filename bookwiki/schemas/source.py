@@ -41,6 +41,19 @@ class DetectedChapter(VersionedModel):
     summary_md: str = ""
 
 
+class DetectedExamQuestion(VersionedModel):
+    """One question spotted inside a past-exam source, kept whole for later reuse.
+
+    Carries the question text plus the ``concepts`` it tests and the ``source_refs`` it came
+    from. Chapters do not exist yet at the structure stage, so per-chapter ownership is resolved
+    later (see ``build_exam_pools``) by matching ``concepts`` against each chapter's concepts.
+    """
+
+    question: str
+    concepts: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+
+
 class SourceSummaryResult(VersionedModel):
     source_id: str
     summary_md: str
@@ -54,6 +67,11 @@ class SourceSummaryResult(VersionedModel):
     # (and existing tests) keep working unchanged.
     detected_chapters: list[DetectedChapter] = Field(default_factory=list)
     concept_candidates: list[ConceptCandidate] = Field(default_factory=list)
+    # Soft signal: True when this source looks like a past-exam paper. When set, its
+    # ``exam_questions`` are broken out for distribution into per-chapter exam pools. Both
+    # default to the non-exam case so existing sources are unaffected.
+    is_exam: bool = False
+    exam_questions: list[DetectedExamQuestion] = Field(default_factory=list)
 
 
 class ChapterProposal(VersionedModel):

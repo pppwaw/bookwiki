@@ -287,6 +287,8 @@ SCHEMA_SNAPSHOTS: list[tuple[type[BaseModel], dict, dict]] = [
             "key_terms": ["state space"],
             "detected_chapters": [],
             "concept_candidates": [],
+            "is_exam": False,
+            "exam_questions": [],
         },
     ),
     (
