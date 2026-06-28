@@ -1,7 +1,14 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { convertToModelMessages, stepCountIs, streamText, tool, type UIMessage } from 'ai';
 import { z } from 'zod';
-import { currentArticleFromPath, searchChunks, type CurrentArticle, type SearchChunk } from '@/lib/rag';
+import {
+  currentArticleFromPath,
+  pageBySlug,
+  searchChunks,
+  type CurrentArticle,
+  type SearchChunk,
+} from '@/lib/rag';
+import { citationGroupRegex, tokensFromMatch } from '@/lib/citations';
 import {
   articleTokenBudget,
   modelContextTokens,
@@ -20,6 +27,8 @@ type ChatSource = {
   ref_id: string;
   page?: string;
   heading?: string | null;
+  /** Set for page citations: an in-app link to the cited BookWiki page. */
+  url?: string;
 };
 
 type ChatRequest = {
@@ -132,7 +141,6 @@ export async function POST(request: Request) {
             return {
               query,
               chunks: chunks.map((chunk) => ({
-                chunkId: chunk.chunkId,
                 page: chunk.slug,
                 heading: chunk.headingPath,
                 sourceRefs: chunk.sourceRefs,
@@ -165,10 +173,10 @@ export async function POST(request: Request) {
 function chatFormatInstructions() {
   return [
     'Format answers as concise GitHub-flavored Markdown.',
-    'Cite evidence with source_ref footnote markers, for example [^Week-10-p008].',
-    'Only cite source_ref IDs that appear in the current article context or tool results.',
-    'Do not invent source_ref IDs.',
-    'Do not add footnote definition blocks; the BookWiki UI renders source_ref markers directly.',
+    'Cite evidence with footnote markers like [^Week-10-p008].',
+    'Use the source_ref id when the evidence has one; otherwise cite the page by its slug exactly as it appears in the tool result "page" field or the current article slug, e.g. [^concepts/Self-Inductance].',
+    'Only cite source_ref ids or page slugs that appear in the current article context or tool results. Do not invent them.',
+    'Do not add footnote definition blocks; the BookWiki UI renders these markers directly.',
   ].join(' ');
 }
 
@@ -281,27 +289,45 @@ function addArticleSources(sources: Map<string, ChatSource>, article: CurrentArt
 }
 
 function citedSourcesFromText(text: string, sources: Map<string, ChatSource>) {
-  const citedRefs = citedSourceRefs(text);
+  const { sourceRefs, pageSlugs } = parseCitedRefs(text);
   const seenRefs = new Set<string>();
   const citedSources: ChatSource[] = [];
 
   for (const source of sources.values()) {
-    if (!citedRefs.has(source.ref_id) || seenRefs.has(source.ref_id)) continue;
+    if (!sourceRefs.has(source.ref_id) || seenRefs.has(source.ref_id)) continue;
     citedSources.push(source);
     seenRefs.add(source.ref_id);
+  }
+
+  // Resolve page citations into entries that link back to the cited page. Slugs
+  // are looked up so titles can be shown and unknown slugs are dropped instead
+  // of producing dead links.
+  for (const slug of pageSlugs) {
+    const page = pageBySlug(slug);
+    if (!page) continue;
+    citedSources.push({
+      ref_id: `page:${slug}`,
+      page: slug,
+      heading: page.title,
+      url: `/docs/${slug}`,
+    });
   }
 
   return citedSources;
 }
 
-function citedSourceRefs(text: string) {
-  const refs = new Set<string>();
-  const pattern = /\[\^([A-Za-z0-9_.:-]+)\](?!:)|\[([A-Za-z0-9_.:-]+-p\d+[A-Za-z0-9_.:-]*)\](?!\()/g;
+function parseCitedRefs(text: string) {
+  const sourceRefs = new Set<string>();
+  const pageSlugs = new Set<string>();
 
-  for (const match of text.matchAll(pattern)) {
-    const refId = match[1] ?? match[2];
-    if (refId) refs.add(refId);
+  for (const match of text.matchAll(citationGroupRegex())) {
+    const tokens = tokensFromMatch(match);
+    if (!tokens) continue;
+    for (const token of tokens) {
+      if (token.kind === 'page') pageSlugs.add(token.slug);
+      else sourceRefs.add(token.ref);
+    }
   }
 
-  return refs;
+  return { sourceRefs, pageSlugs };
 }

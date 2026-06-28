@@ -20,6 +20,18 @@
 .source-ref:focus-visible {
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-fd-primary) 45%, transparent);
 }
+/* Page citation variant: clickable link to the cited BookWiki page. */
+.source-ref-link {
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.source-ref-link:hover {
+  background: color-mix(in oklab, var(--color-fd-primary) 16%, transparent);
+  border-color: color-mix(in oklab, var(--color-fd-primary) 55%, transparent);
+}
 /* The ref id inside the pill (e.g. p001) — keep numerals even and the run tight. */
 .source-ref-id {
   font-variant-numeric: tabular-nums;

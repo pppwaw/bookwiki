@@ -34,6 +34,27 @@ type PageSourceRow = {
   source_refs_json: string;
 };
 
+type PageTitleRow = {
+  slug: string;
+  title: string;
+};
+
+/**
+ * Resolve a page slug (e.g. `concepts/Self-Inductance`) to its title for page
+ * citations. Returns null when the slug is unknown so callers can avoid
+ * surfacing dead references.
+ */
+export function pageBySlug(slug: string) {
+  const normalized = slug.trim();
+  if (!normalized) return null;
+
+  const rows = queryAll<PageTitleRow>(
+    'SELECT slug, title FROM pages WHERE slug = ? LIMIT 1',
+    [normalized],
+  );
+  return rows[0] ?? null;
+}
+
 export function searchChunks(query: string, limit = 8, chapterId?: string) {
   const normalized = query.trim();
 

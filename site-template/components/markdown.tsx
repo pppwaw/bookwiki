@@ -20,6 +20,7 @@ import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { visit } from 'unist-util-visit';
 import type { Element, ElementContent, Root, RootContent } from 'hast';
 import { SourceRef } from './SourceRef';
+import { citationGroupRegex, tokensFromMatch } from '@/lib/citations';
 import { renderKatexToString } from '@/lib/katex';
 
 export interface Processor {
@@ -57,35 +58,44 @@ export function rehypeWrapWords() {
   };
 }
 
-const sourceRefCitationPattern =
-  /\[\^([A-Za-z0-9_.:-]+)\](?!:)|\[([A-Za-z0-9_.:-]+-p\d+[A-Za-z0-9_.:-]*)\](?!\()/g;
-
 export function rehypeSourceRefs() {
   return (tree: Root) => {
     visit(tree, 'text', (node, index, parent) => {
-      if (!parent || index === undefined || !sourceRefCitationPattern.test(node.value)) {
-        sourceRefCitationPattern.lastIndex = 0;
-        return;
-      }
+      if (parent === undefined || index === undefined) return;
 
-      sourceRefCitationPattern.lastIndex = 0;
+      const pattern = citationGroupRegex();
+      if (!pattern.test(node.value)) return;
+      pattern.lastIndex = 0;
+
       const nodes: ElementContent[] = [];
       let lastIndex = 0;
 
-      for (const match of node.value.matchAll(sourceRefCitationPattern)) {
-        const start = match.index ?? 0;
-        const refId = match[1] ?? match[2];
-        if (!refId) continue;
+      for (const match of node.value.matchAll(citationGroupRegex())) {
+        const tokens = tokensFromMatch(match);
+        if (!tokens) continue; // ambiguous bracket — leave it as literal text
 
+        const start = match.index ?? 0;
         if (start > lastIndex) {
           nodes.push({ type: 'text', value: node.value.slice(lastIndex, start) });
         }
 
-        nodes.push({
-          type: 'element',
-          tagName: 'SourceRef',
-          properties: { id: refId },
-          children: [],
+        tokens.forEach((token, tokenIndex) => {
+          if (tokenIndex > 0) nodes.push({ type: 'text', value: ' ' });
+          nodes.push(
+            token.kind === 'page'
+              ? {
+                  type: 'element',
+                  tagName: 'SourceRef',
+                  properties: { id: pageLabel(token.slug), href: `/docs/${token.slug}` },
+                  children: [],
+                }
+              : {
+                  type: 'element',
+                  tagName: 'SourceRef',
+                  properties: { id: token.ref },
+                  children: [],
+                },
+          );
         });
         lastIndex = start + match[0].length;
       }
@@ -98,6 +108,14 @@ export function rehypeSourceRefs() {
       return index + nodes.length;
     });
   };
+}
+
+// Label a page citation pill with the last slug segment (e.g.
+// `concepts/Self-Inductance` → `Self-Inductance`), keeping the pill compact
+// while the href carries the full slug.
+function pageLabel(slug: string): string {
+  const segment = slug.split('/').filter(Boolean).at(-1) ?? slug;
+  return segment.replace(/-/g, ' ');
 }
 
 function shouldSkipWrap(node: Extract<RootContent, { type: 'element' }>): boolean {

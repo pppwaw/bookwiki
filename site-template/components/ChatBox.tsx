@@ -5,6 +5,7 @@ import './ChatBox.css';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type ChatStatus, type UIMessage } from 'ai';
 import { Send } from 'lucide-react';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { Markdown } from './markdown';
@@ -13,6 +14,7 @@ type ChatSource = {
   ref_id: string;
   page?: string;
   heading?: string | null;
+  url?: string;
 };
 
 type ChatMetadata = {
@@ -106,8 +108,14 @@ function ChatMessage({
         <ul>
           {sources.map((source) => (
             <li key={`${source.ref_id}-${source.page ?? ''}-${source.heading ?? ''}`}>
-              <code>{source.ref_id}</code>
-              {source.heading ? ` ${source.heading}` : null}
+              {source.url ? (
+                <Link href={source.url}>{source.heading ?? source.ref_id}</Link>
+              ) : (
+                <>
+                  <code>{source.ref_id}</code>
+                  {source.heading ? ` ${source.heading}` : null}
+                </>
+              )}
             </li>
           ))}
         </ul>

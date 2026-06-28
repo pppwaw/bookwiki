@@ -29,6 +29,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Presence } from '@radix-ui/react-presence';
 import { Markdown } from '../markdown';
@@ -44,6 +45,7 @@ type ChatSource = {
   ref_id: string;
   page?: string;
   heading?: string | null;
+  url?: string;
 };
 
 type ChatMetadata = {
@@ -619,7 +621,13 @@ function SourceList({ sources }: { sources: ChatSource[] }) {
             className="rounded-md border bg-fd-background px-1.5 py-0.5"
             title={source.heading ?? source.page ?? undefined}
           >
-            <code className="text-[0.7rem]">{source.ref_id}</code>
+            {source.url ? (
+              <Link href={source.url} className="text-[0.7rem] text-fd-primary hover:underline">
+                {source.heading ?? source.ref_id}
+              </Link>
+            ) : (
+              <code className="text-[0.7rem]">{source.ref_id}</code>
+            )}
           </li>
         ))}
       </ul>
