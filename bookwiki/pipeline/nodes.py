@@ -4038,6 +4038,46 @@ def _site_typecheck_issues(cfg: BookConfig) -> list[Issue]:
                 owner_task_id="site:typecheck",
             )
         ]
+    if proc.returncode != 0:
+        output = _redact_site_typecheck_output(
+            "\n".join(part for part in [proc.stdout.strip(), proc.stderr.strip()] if part)
+        )
+        if len(output) > 4000:
+            output = output[:4000] + "..."
+        return [
+            Issue(
+                severity="error",
+                code="SITE_TYPECHECK_ERROR",
+                message=f"site type check failed (exit {proc.returncode}): {output}",
+                owner_task_id="site:typecheck",
+            )
+        ]
+    # types:check passed → run a real build to surface runtime render errors (e.g. ShikiError on an
+    # unknown code-fence language, component render failures) that a type-only check cannot see.
+    return _site_build_issues(site_dir, env, pnpm)
+
+
+def _site_build_issues(site_dir: Path, env: dict[str, str], pnpm: str) -> list[Issue]:
+    """Run ``pnpm run build`` and report a SITE_BUILD_ERROR if the production build fails."""
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed argv, project-local package script
+            [pnpm, "run", "build"],
+            cwd=site_dir,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return [
+            Issue(
+                severity="error",
+                code="SITE_BUILD_ERROR",
+                message=f"site build failed to run: {exc}",
+                owner_task_id="site:build",
+            )
+        ]
     if proc.returncode == 0:
         return []
     output = _redact_site_typecheck_output(
@@ -4048,9 +4088,9 @@ def _site_typecheck_issues(cfg: BookConfig) -> list[Issue]:
     return [
         Issue(
             severity="error",
-            code="SITE_TYPECHECK_ERROR",
-            message=f"site type check failed (exit {proc.returncode}): {output}",
-            owner_task_id="site:typecheck",
+            code="SITE_BUILD_ERROR",
+            message=f"site build failed (exit {proc.returncode}): {output}",
+            owner_task_id="site:build",
         )
     ]
 

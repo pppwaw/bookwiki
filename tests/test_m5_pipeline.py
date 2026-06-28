@@ -1000,8 +1000,46 @@ async def test_check_node_reuses_symlinked_site_node_modules_and_skips_install(
     result = await check_node({}, cfg)
 
     assert result["repair_targets"] == []
-    assert calls == [["/usr/bin/pnpm", "run", "types:check"]]  # install skipped, deps present
+    # install skipped (deps present); types:check then a real build run on the in-place site.
+    assert calls == [["/usr/bin/pnpm", "run", "types:check"], ["/usr/bin/pnpm", "run", "build"]]
     assert (cfg.site_dir / "node_modules").is_symlink()  # symlink preserved, not severed
+
+
+@pytest.mark.asyncio
+async def test_check_node_reports_site_build_failure(tmp_path, monkeypatch) -> None:
+    # build runs after types:check passes, to surface runtime render errors (e.g. ShikiError on an
+    # unknown code-fence language) that a type-only check cannot see.
+    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
+    fake_template = tmp_path / "site-template"
+    _write_minimal_site_template(fake_template)
+    monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
+    book_dir = tmp_path / "book"
+    content_dir = book_dir / "site" / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    (cfg_site := book_dir / "site" / "node_modules").mkdir(parents=True)
+    cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book", llm_runtime=TestLLMRuntime())
+    assert cfg_site.exists()  # deps present → install skipped
+
+    def fake_run(cmd, *args, **kwargs):  # noqa: ANN001
+        # types:check passes, build fails.
+        ok = cmd[-1] == "types:check"
+        return SimpleNamespace(
+            returncode=0 if ok else 1,
+            stdout="" if ok else "ShikiError: Language quiz not found",
+            stderr="",
+        )
+
+    monkeypatch.setattr("bookwiki.pipeline.nodes.subprocess.run", fake_run)
+
+    result = await check_node({}, cfg)
+
+    assert result["repair_targets"] == ["site:build"]
+    report = json.loads((book_dir / "work" / "logs" / "check-report.json").read_text())
+    assert report["issues"][-1]["code"] == "SITE_BUILD_ERROR"
+    assert "ShikiError" in report["issues"][-1]["message"]
 
 
 @pytest.mark.asyncio
