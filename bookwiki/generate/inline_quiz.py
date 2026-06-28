@@ -33,7 +33,11 @@ MAX_ITEMS_PER_BLOCK = 6
 MAX_ITEMS_PER_SECTION = 8
 MAX_TOPIC_CHARS = 200
 
-_STRAY_SLOT_RE = re.compile(r"<QuizItemSlot\b[^>]*/>")
+# Match a whole ``<QuizItemSlot ... />`` tag. A naive ``[^>]*/>`` breaks the moment an
+# attribute value contains a literal ``>`` (e.g. ``topic="... for t>0"`` / ``给定一个仅在 t>0``),
+# stopping mid-tag so the slot is never canonicalized/stripped and leaks to the build. Skip
+# over quoted attribute values so a ``>`` inside ``"..."``/``'...'`` can't end the tag early.
+_STRAY_SLOT_RE = re.compile(r"""<QuizItemSlot\b(?:"[^"]*"|'[^']*'|[^>])*?/>""")
 
 
 @dataclass

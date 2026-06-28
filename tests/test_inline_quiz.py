@@ -183,6 +183,21 @@ def test_sanitize_fallback_drops_ungrounded_slot_from_unparseable_body() -> None
     assert any("invalid quiz slot" in w for w in res.warnings)
 
 
+def test_sanitize_fallback_rescues_slot_with_gt_in_topic() -> None:
+    # Regression: a literal ``>`` in the slot topic (``t>0`` is everywhere in circuits/math) must
+    # not break the regex-fallback slot match. ``[^>]*`` used to stop at the ``>`` mid-tag, so the
+    # slot was never canonicalized and leaked ``id="auto"`` to the build (undefined component).
+    body = (
+        "当 n<30 时退化。\n\n"  # n<30 forces the non-MDX-parseable regex fallback path
+        '<QuizItemSlot id="auto" topic="determine i(t) for t>0" sourceRefs={["p1"]} />'
+    )
+    res = sanitize_inline_quizzes(body, allowed_refs={"p1"}, chapter_id="ch", section_index=0)
+    assert len(res.slot_specs) == 1
+    assert res.slot_specs[0].topic == "determine i(t) for t>0"
+    assert 'id="ch:s0:slot-000"' in res.body_md
+    assert 'id="auto"' not in res.body_md
+
+
 def test_strip_removes_blocks_and_slots_keeps_prose() -> None:
     body = "正文。\n\n" + KNOWLEDGE_BLOCK + "\n更多。"
     stripped = strip_inline_quizzes_and_control_slots(body)
@@ -216,6 +231,50 @@ def test_resolve_item_slots_fills_and_removes_unfilled_block() -> None:
     assert "<QuizItem " in out
     assert "slot-999" not in out
     assert out.count("<QuizBlock>") == 1
+
+
+def test_resolve_item_slots_handles_gt_in_topic() -> None:
+    # Regression for the prerender crash: ``[^>]*/>`` failed to match a slot whose topic contains
+    # ``>`` (``i(t) for t>0`` / ``给定 t>0``), so the raw <QuizItemSlot> was neither filled nor
+    # dropped and leaked to the build (Expected component QuizItemSlot to be defined).
+    body = (
+        "## 应用\n\n<QuizBlock>\n"
+        '<QuizItemSlot id="ch:s0:slot-000" topic="i(t) for t>0" sourceRefs={["p1"]} />\n'
+        "</QuizBlock>\n\n<QuizBlock>\n"
+        '<QuizItemSlot id="auto" topic="给定 t>0 的信号" sourceRefs={["p1"]} />\n'
+        "</QuizBlock>"
+    )
+    quiz = {
+        "items": [
+            {
+                "slot_id": "ch:s0:slot-000",
+                "question": "Q",
+                "choices": ["a", "b"],
+                "answer": "a",
+                "explanation": "e",
+                "citations": [],
+            }
+        ]
+    }
+    out = _resolve_item_slots(body, quiz)
+    assert "<QuizItem " in out  # the >-containing slot got filled
+    assert "<QuizItemSlot" not in out  # the unfilled id="auto" slot got dropped
+    assert out.count("<QuizBlock>") == 1
+
+
+def test_resolve_item_slots_drops_stray_slot_outside_block() -> None:
+    # Regression (Fourier case): a <QuizItemSlot> OUTSIDE any <QuizBlock> is invisible to a
+    # block-only scan, so it leaked to the build. The AST surfaces stray slots; an unfilled one is
+    # dropped (its component is unregistered and would crash prerender), prose is preserved.
+    body = (
+        "结论成立。\n\n"
+        '<QuizItemSlot id="auto" topic="给定 t>0 的信号" sourceRefs={["p1"]} />\n\n'
+        "## Sources"
+    )
+    out = _resolve_item_slots(body, {"items": []})
+    assert "<QuizItemSlot" not in out
+    assert "结论成立。" in out
+    assert "## Sources" in out
 
 
 def test_resolve_item_slots_expression_string_props_remain_extractable() -> None:

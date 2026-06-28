@@ -3,7 +3,12 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from bookwiki.indexer.mdx_parser import parse_mdx_file
+from bookwiki.indexer.mdx_parser import (
+    _component_blocks,
+    _component_items,
+    _source_ref_ids,
+    parse_mdx_file,
+)
 from bookwiki.indexer.rag_chunker import chunk_page
 from bookwiki.indexer.sqlite_builder import build_sqlite_index
 
@@ -247,3 +252,16 @@ def test_build_sqlite_index_dedupes_colliding_page_item_ids(tmp_path: Path) -> N
         ("chapters/ch01:quiz-001", "Default id?"),
         ("chapters/ch01:quiz-001-002", "Explicit colliding id?"),
     ]
+
+
+def test_extractors_tolerate_gt_in_attribute_values() -> None:
+    # Regression: a literal `>` in a free-text attribute (``t>0`` / ``n>30`` — ubiquitous in
+    # circuits/math prose) used to truncate the `[^>]*` tag match, silently dropping the item from
+    # the index. The quote-aware pattern consumes a `>` that sits inside a quoted value.
+    blocks = _component_blocks('<QuizItem answer="a" topic="i(t) for t>0">B</QuizItem>', "QuizItem")
+    assert blocks == [{"attrs": ' answer="a" topic="i(t) for t>0"', "body": "B"}]
+
+    items = _component_items('<QuizBlock items={[{"topic": "n>30"}]}>', "QuizBlock", "items")
+    assert items == [{"topic": "n>30"}]
+
+    assert _source_ref_ids('<SourceRef quote="t>0" id="ref-1" />') == ["ref-1"]

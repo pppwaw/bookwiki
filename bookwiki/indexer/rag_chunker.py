@@ -103,10 +103,16 @@ def _heading_sections(body: str) -> list[tuple[str | None, str | None, str]]:
     return sections
 
 
+# A tag's attribute span, skipping over quoted values so a literal `>` inside an attribute (e.g.
+# ``quote="... t>0"``) cannot end the tag early — a plain ``[^>]*`` truncates there, leaving the
+# component markup un-stripped in the plain-text chunk. Non-greedy + quote-first (see mdx_parser).
+_TAG_ATTRS = r"""(?:"[^"]*"|'[^']*'|[^>])*?"""
+
+
 def _plain_text(text: str) -> str:
     text = re.sub(r"<(QuizBlock|AnkiDeck)\b[\s\S]*?</\1>", "", text)
-    text = re.sub(r"<(QuizBlock|AnkiDeck)\b[^>]*/>\s*", "", text, flags=re.DOTALL)
-    text = re.sub(r"<SourceRef\b[^>]*>\s*", "", text)
+    text = re.sub(rf"<(QuizBlock|AnkiDeck)\b{_TAG_ATTRS}/>\s*", "", text, flags=re.DOTALL)
+    text = re.sub(rf"<SourceRef\b{_TAG_ATTRS}>\s*", "", text)
     text = re.sub(r"<!--\s*source_ref:\s*[^>]+-->", "", text)
     text = re.sub(r"^\s*---\s*$", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{3,}", "\n\n", text)

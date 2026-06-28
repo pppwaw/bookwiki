@@ -39,7 +39,11 @@ from bookwiki.checkers.mdx_validator import (
     mdx_validator_available,
     validate_mdx_many,
 )
-from bookwiki.checkers.quiz_extractor import QuizExtractError, extract_inline_quizzes
+from bookwiki.checkers.quiz_extractor import (
+    QuizExtractError,
+    extract_inline_quizzes,
+    extract_quiz_layout,
+)
 from bookwiki.chunking import chunk_by_heading
 from bookwiki.concepts import brief_for as _brief_for
 from bookwiki.concepts import concept_key as _concept_key
@@ -534,7 +538,11 @@ def _load_alias_map(state: State, cfg: BookConfig) -> dict[str, str]:
 
 
 _QUIZ_BLOCK_RE = re.compile(r"<QuizBlock>[\s\S]*?</QuizBlock>")
-_QUIZ_ITEM_SLOT_RE = re.compile(r"<QuizItemSlot\b[^>]*/>")
+# A naive ``[^>]*/>`` stops at the first ``>`` inside an attribute value (e.g.
+# ``topic="determine i(t) for t>0"`` / ``给定一个仅在 t>0``), so the slot never matches and is
+# neither filled nor dropped — it leaks the raw <QuizItemSlot> to the build (undefined component,
+# prerender crash). Skip over quoted values so a ``>`` inside ``"..."``/``'...'`` can't end early.
+_QUIZ_ITEM_SLOT_RE = re.compile(r"""<QuizItemSlot\b(?:"[^"]*"|'[^']*'|[^>])*?/>""")
 _EMPTY_QUIZ_BLOCK_RE = re.compile(r"<QuizBlock>\s*</QuizBlock>\n*")
 
 
@@ -582,15 +590,16 @@ def _unstash_code_fences(markdown: str, stash: list[str]) -> str:
     return markdown
 
 
-def _resolve_item_slots(body_md: str, quiz: dict[str, Any]) -> str:
-    """Replace each inline ``<QuizItemSlot id=X/>`` with its filled application ``<QuizItem>``.
+def _collapse_blank_runs_outside_code(markdown: str) -> str:
+    """Collapse 3+ consecutive newlines (left where a slot/block was removed) to a single blank
+    line, leaving fenced code blocks — which may carry intentional blank lines — untouched."""
+    stashed, fences = _stash_code_fences(markdown)
+    stashed = re.sub(r"\n{3,}", "\n\n", stashed)
+    return _unstash_code_fences(stashed, fences)
 
-    Knowledge quizzes are already authored inline in ``body_md``; only application slots need
-    filling. Items are matched to slots by canonical ``slot_id``. A slot with no matching item
-    (the agent produced fewer, or repair dropped it) is removed, and a ``<QuizBlock>`` left
-    empty is removed too. An item carrying no ``slot_id`` is a stale ``after_block``-era
-    artifact and is a hard error (regenerate the chapter).
-    """
+
+def _index_items_by_slot(quiz: dict[str, Any]) -> dict[str, tuple[dict[str, Any], int, str]]:
+    """Map canonical ``slot_id`` -> (item, 1-based index, kind). Fail loud on a slotless item."""
     items_by_slot: dict[str, tuple[dict[str, Any], int, str]] = {}
     for index, item in enumerate(quiz.get("items", []), start=1):
         if not isinstance(item, dict):
@@ -613,17 +622,96 @@ def _resolve_item_slots(body_md: str, quiz: dict[str, Any]) -> str:
                 f"{str(item.get('question', ''))[:60]}"
             )
         items_by_slot[slot_id] = (item, index, "worked")
+    return items_by_slot
+
+
+def _render_filled_slot(
+    slot_id: str, items_by_slot: dict[str, tuple[dict[str, Any], int, str]]
+) -> str | None:
+    """Render the ``<QuizItem>`` filling ``slot_id``, or ``None`` if no item matches the slot."""
+    entry = items_by_slot.get(slot_id)
+    if entry is None:
+        return None
+    item, index, kind = entry
+    return _worked_problem_mdx(item, index) if kind == "worked" else _quiz_item_mdx(item, index)
+
+
+def _resolve_item_slots_via_regex(
+    body_md: str, items_by_slot: dict[str, tuple[dict[str, Any], int, str]]
+) -> str:
+    """Fallback slot resolver for when ``body_md`` is not yet MDX-parseable (AST unavailable).
+
+    Uses the quote-aware ``_QUIZ_ITEM_SLOT_RE`` (which tolerates a ``>`` inside an attribute value)
+    so slots are still filled/dropped rather than leaked, then drops any block left empty.
+    """
 
     def _replace(match: re.Match[str]) -> str:
         id_match = re.search(r'id="([^"]*)"', match.group(0))
-        entry = items_by_slot.get(id_match.group(1) if id_match else "")
-        if entry is None:
-            return ""
-        item, index, kind = entry
-        return _worked_problem_mdx(item, index) if kind == "worked" else _quiz_item_mdx(item, index)
+        return _render_filled_slot(id_match.group(1) if id_match else "", items_by_slot) or ""
 
     resolved = _QUIZ_ITEM_SLOT_RE.sub(_replace, body_md)
     return _EMPTY_QUIZ_BLOCK_RE.sub("", resolved)
+
+
+def _resolve_item_slots(body_md: str, quiz: dict[str, Any]) -> str:
+    """Replace each inline ``<QuizItemSlot id=X/>`` with its filled application ``<QuizItem>``.
+
+    Slots are located by the remark AST (precise source offsets), NOT regex: a regex over the raw
+    text mis-parses a literal ``>`` inside an attribute value (``topic="... for t>0"`` / ``t>0``)
+    and leaves the slot in place, leaking its raw tag to the build (undefined ``QuizItemSlot``
+    component -> prerender crash). The AST also surfaces slots sitting OUTSIDE a ``<QuizBlock>``
+    (stray placeholders) that a block-only / line-based scan misses.
+
+    Knowledge quizzes are already authored inline in ``body_md``; only application slots need
+    filling. Items are matched to slots by canonical ``slot_id``. A slot with no matching item is
+    removed, and a ``<QuizBlock>`` left empty is removed too. An item carrying no ``slot_id`` is a
+    stale ``after_block``-era artifact and is a hard error (regenerate the chapter).
+    """
+    items_by_slot = _index_items_by_slot(quiz)
+    try:
+        layout = extract_quiz_layout(body_md)
+    except QuizExtractError as exc:
+        # Body not yet MDX-parseable (a chapter heal is still pending) or the Node toolchain is
+        # missing: resolve by regex so slots are never silently leaked to the build.
+        _LOG.warning("resolve slots: AST unavailable, using regex fallback: %s", exc)
+        return _resolve_item_slots_via_regex(body_md, items_by_slot)
+
+    # (start, end, replacement) spans into body_md, applied right-to-left so earlier offsets stay
+    # valid. Knowledge <QuizItem>s and other prose are left untouched (never in this list).
+    spans: list[tuple[int, int, str]] = []
+    for block in layout["blocks"]:
+        children = block.get("children", [])
+        slot_fills = [
+            (c, _render_filled_slot(str(c.get("id") or ""), items_by_slot))
+            for c in children
+            if c.get("kind") == "slot"
+        ]
+        keeps_content = any(c.get("kind") in {"item", "unknown"} for c in children) or any(
+            text is not None for _, text in slot_fills
+        )
+        b_start, b_end = block.get("start"), block.get("end")
+        if not keeps_content and isinstance(b_start, int) and isinstance(b_end, int):
+            # Every child is an unfilled slot -> the block would be empty; drop it whole.
+            spans.append((b_start, b_end, ""))
+            continue
+        for child, text in slot_fills:
+            start, end = child.get("start"), child.get("end")
+            if isinstance(start, int) and isinstance(end, int):
+                spans.append((start, end, text or ""))
+
+    for slot in layout["stray_slots"]:
+        start, end = slot.get("start"), slot.get("end")
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        filled = _render_filled_slot(str(slot.get("id") or ""), items_by_slot)
+        # A stray slot sits outside any <QuizBlock>; if it matches an item, wrap the filled item in
+        # its own block so the Deck context exists, otherwise drop the bare placeholder.
+        spans.append((start, end, f"<QuizBlock>\n{filled}\n</QuizBlock>" if filled else ""))
+
+    resolved = body_md
+    for start, end, text in sorted(spans, key=lambda s: s[0], reverse=True):
+        resolved = resolved[:start] + text + resolved[end:]
+    return _collapse_blank_runs_outside_code(resolved)
 
 
 def _drop_invalid_inline_quiz_items(text: str) -> str:
@@ -745,18 +833,35 @@ def _strip_illegal_component_fences(text: str) -> str:
     return _COMPONENT_FENCE_RE.sub(_unwrap, text)
 
 
+def _strip_stray_quiz_slots(text: str) -> str:
+    """Drop any ``<QuizItemSlot/>`` that survived into rendered MDX (and the empty block it leaves).
+
+    A slot is a generation-time placeholder; integrate's ``_resolve_item_slots`` either fills it
+    into a ``<QuizItem>`` or drops it. One reaching the single-source-of-truth ``content`` is an
+    unfilled placeholder whose component is NOT registered in the site MDX provider, so it crashes
+    the production prerender ("Expected component QuizItemSlot to be defined"). Stripping honors the
+    drop-never-fabricate contract and is the final deterministic guard that keeps the build green.
+    """
+    stripped = _QUIZ_ITEM_SLOT_RE.sub("", text)
+    if stripped == text:
+        return text
+    return _EMPTY_QUIZ_BLOCK_RE.sub("", stripped)
+
+
 def _normalize_rendered_mdx(content_dir: Path) -> int:
-    """Normalize math delimiters across every rendered ``.mdx`` under ``content_dir``.
+    """Normalize math delimiters + strip stray quiz slots across every rendered ``.mdx``.
 
     integrate normalizes chapter/concept bodies as it renders them, but the homepage ``index.mdx``
     and any other write path are not individually covered. One final sweep here guarantees the
     single-source-of-truth ``content`` is fully normalized before validation/build — this replaces
-    the second normalize pass that used to live in ``materialize_site``. Returns files changed.
+    the second normalize pass that used to live in ``materialize_site``. It also strips any stray
+    ``<QuizItemSlot/>`` as a build-safety backstop (see :func:`_strip_stray_quiz_slots`). Returns
+    files changed.
     """
     changed = 0
     for path in content_dir.rglob("*.mdx"):
         text = path.read_text(encoding="utf-8")
-        normalized = normalize_mdx_math(text)
+        normalized = _strip_stray_quiz_slots(normalize_mdx_math(text))
         if normalized != text:
             path.write_text(normalized, encoding="utf-8")
             changed += 1

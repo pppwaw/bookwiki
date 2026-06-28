@@ -99,9 +99,16 @@ def _first_heading(body: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+# A tag's attribute span up to its closing `>` / `/>`, skipping over quoted values so a literal
+# `>` inside an attribute (e.g. ``topic="... t>0"`` or a JSON prop ``items={[{"q":"n>1"}]}``)
+# cannot end the tag early. A plain ``[^>]*`` truncates at that `>` and the tag fails to match,
+# silently dropping the item from the index. Non-greedy + quote-first so an inner `>` is consumed.
+_TAG_ATTRS = r"""(?:"[^"]*"|'[^']*'|[^>])*?"""
+
+
 def _component_items(body: str, component: str, prop: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for match in re.finditer(rf"<{re.escape(component)}\b[^>]*>", body, flags=re.DOTALL):
+    for match in re.finditer(rf"<{re.escape(component)}\b{_TAG_ATTRS}>", body, flags=re.DOTALL):
         value = _extract_braced_prop(match.group(0), prop)
         if value is None:
             continue
@@ -241,7 +248,7 @@ def _anki_child_items(body: str) -> list[dict[str, Any]]:
 
 def _component_blocks(body: str, component: str) -> list[dict[str, str]]:
     pattern = re.compile(
-        rf"<{re.escape(component)}(?P<attrs>\s[^>]*)?>(?P<body>[\s\S]*?)</{re.escape(component)}>",
+        rf"<{re.escape(component)}(?P<attrs>\s{_TAG_ATTRS})?>(?P<body>[\s\S]*?)</{re.escape(component)}>",
         flags=re.DOTALL,
     )
     return [
@@ -350,7 +357,7 @@ def source_refs_from_text(text: str) -> list[str]:
 
 def _source_ref_ids(text: str) -> list[str]:
     ids: list[str] = []
-    for match in re.finditer(r"<SourceRef\b(?P<attrs>[^>]*)>", text, flags=re.DOTALL):
+    for match in re.finditer(rf"<SourceRef\b(?P<attrs>{_TAG_ATTRS})>", text, flags=re.DOTALL):
         attrs = match.group("attrs") or ""
         value = _prop_value(attrs, "id")
         if value is None:

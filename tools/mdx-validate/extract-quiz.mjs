@@ -235,6 +235,26 @@ function collectBlocks(tree, source) {
   return blocks;
 }
 
+// Collect every <QuizItemSlot> that is NOT inside a <QuizBlock>. Slots inside a block are
+// already returned via block.children; a stray slot in bare prose (an authored placeholder that
+// escaped its block, or one written loose in the section) is invisible there and would otherwise
+// leak its raw tag to the build (undefined component -> prerender crash). We do NOT descend into
+// a <QuizBlock> — its slots belong to it. Offsets let the resolver splice each slot precisely
+// (a regex `<QuizItemSlot ...[^>]*/>` mis-handles a `>` inside an attribute value, e.g. `t>0`).
+function collectStraySlots(tree) {
+  const slots = [];
+  const walk = (node) => {
+    if (isJsxElement(node) && node.name === QUIZ_BLOCK) return;
+    if (isJsxElement(node) && node.name === QUIZ_ITEM_SLOT) {
+      slots.push({ id: stringAttr(node, "id"), ...offsetsOf(node) });
+      return;
+    }
+    for (const child of node.children || []) walk(child);
+  };
+  walk(tree);
+  return slots;
+}
+
 // remark ``position.offset`` values are UTF-16 code-unit indices (JS string indices), but the
 // Python sanitizer slices by CODE POINTS. Convert every emitted offset to a code-point index so
 // a non-BMP character (e.g. 𝑋/𝜇 math-alphanumerics, emoji, CJK Ext-B) before a quiz block does
@@ -263,6 +283,13 @@ function convertBlockOffsets(blocks, toCodePoint) {
   }
 }
 
+function convertSlotOffsets(slots, toCodePoint) {
+  for (const slot of slots) {
+    if (typeof slot.start === "number") slot.start = toCodePoint(slot.start);
+    if (typeof slot.end === "number") slot.end = toCodePoint(slot.end);
+  }
+}
+
 async function main() {
   const source = await readStdin();
   let tree;
@@ -279,8 +306,11 @@ async function main() {
     return;
   }
   const blocks = collectBlocks(tree, source);
-  convertBlockOffsets(blocks, buildOffsetConverter(source));
-  process.stdout.write(JSON.stringify({ ok: true, blocks, errors: [] }));
+  const straySlots = collectStraySlots(tree);
+  const toCodePoint = buildOffsetConverter(source);
+  convertBlockOffsets(blocks, toCodePoint);
+  convertSlotOffsets(straySlots, toCodePoint);
+  process.stdout.write(JSON.stringify({ ok: true, blocks, straySlots, errors: [] }));
 }
 
 main().catch((err) => {

@@ -41,15 +41,11 @@ def quiz_extractor_available() -> bool:
     )
 
 
-def extract_inline_quizzes(content: str, *, timeout_s: float = 30.0) -> list[dict[str, Any]]:
-    """Return the inline ``<QuizBlock>`` structures found in ``content``.
+def _run_extractor(content: str, *, timeout_s: float) -> dict[str, Any]:
+    """Run the Node extractor on ``content`` and return its parsed JSON payload.
 
-    Each block is ``{"start": int, "end": int, "children": [...]}`` where children are
-    ``kind="item"`` (authored knowledge), ``kind="slot"`` (application placeholder), or
-    ``kind="unknown"`` (stray JSX inside a block). Offsets index into ``content``.
-
-    Raises :class:`QuizExtractError` if the Node toolchain is unavailable, times out, or
-    the MDX cannot be parsed.
+    Raises :class:`QuizExtractError` if the Node toolchain is unavailable, times out, returns
+    non-JSON, or the MDX cannot be parsed.
     """
     node = shutil.which("node")
     if node is None or not _EXTRACTOR.exists() or not (_EXTRACTOR.parent / "node_modules").exists():
@@ -83,8 +79,41 @@ def extract_inline_quizzes(content: str, *, timeout_s: float = 30.0) -> list[dic
     if not data.get("ok"):
         errors = "; ".join(str(error) for error in data.get("errors", []))
         raise QuizExtractError(f"quiz extractor could not parse MDX: {errors}")
+    return data
 
-    blocks = data.get("blocks", [])
+
+def extract_inline_quizzes(content: str, *, timeout_s: float = 30.0) -> list[dict[str, Any]]:
+    """Return the inline ``<QuizBlock>`` structures found in ``content``.
+
+    Each block is ``{"start": int, "end": int, "children": [...]}`` where children are
+    ``kind="item"`` (authored knowledge), ``kind="slot"`` (application placeholder), or
+    ``kind="unknown"`` (stray JSX inside a block). Offsets index into ``content``.
+
+    Raises :class:`QuizExtractError` if the Node toolchain is unavailable, times out, or
+    the MDX cannot be parsed.
+    """
+    blocks = _run_extractor(content, timeout_s=timeout_s).get("blocks", [])
     if not isinstance(blocks, list):
         raise QuizExtractError("quiz extractor returned malformed blocks")
     return blocks
+
+
+def extract_quiz_layout(
+    content: str, *, timeout_s: float = 30.0
+) -> dict[str, list[dict[str, Any]]]:
+    """Return ``{"blocks": [...], "stray_slots": [...]}`` parsed from ``content`` via remark AST.
+
+    ``blocks`` is as :func:`extract_inline_quizzes`; ``stray_slots`` are ``<QuizItemSlot/>`` tags
+    that sit OUTSIDE any ``<QuizBlock>`` (each ``{"id": str|None, "start": int, "end": int}``).
+    The integrate-time slot resolver uses these AST offsets to splice slots precisely — a regex
+    over the raw text mis-parses a ``>`` inside an attribute value (e.g. ``topic="... t>0"``) and
+    silently leaves the slot in place, leaking its raw tag to the build.
+
+    Raises :class:`QuizExtractError` on toolchain/parse failure (callers may fall back).
+    """
+    data = _run_extractor(content, timeout_s=timeout_s)
+    blocks = data.get("blocks", [])
+    stray = data.get("straySlots", [])
+    if not isinstance(blocks, list) or not isinstance(stray, list):
+        raise QuizExtractError("quiz extractor returned malformed layout")
+    return {"blocks": blocks, "stray_slots": stray}
