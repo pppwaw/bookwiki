@@ -237,7 +237,9 @@ export function ExamItem({
 export function ExamQuestion({ children }: { children: ReactNode }) {
   return (
     <div className="exam-question">
-      <MathContent>{children}</MathContent>
+      <div className="exam-question__body">
+        <MathContent>{children}</MathContent>
+      </div>
     </div>
   );
 }
