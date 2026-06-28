@@ -89,38 +89,6 @@ def test_force_from_generate_drops_downstream_and_keeps_split(tmp_path: Path) ->
     assert "agent_results" not in state
 
 
-def test_force_from_check_resets_repair_round_budget(tmp_path: Path) -> None:
-    # A forced rerun (`--from check --force`) must give the repair loop a FRESH round budget.
-    # `_repair_rounds` rides along in the checkpoint, but it is repair-loop bookkeeping, not a
-    # durable artifact: if it survived the rerun, a target that exhausted its rounds last run
-    # would be judged exhausted again immediately and never get re-repaired.
-    cfg = default_config(tmp_path / "books" / "mini")
-    cfg.force_from = "check"
-    checkpoint = {
-        "book_id": cfg.book_id,
-        "sources_md": ["work/sources_md/source.md"],
-        "chapter_sources": {"chapter-1": "work/chapter_sources/chapter-1/source.md"},
-        "agent_results": {"chapter-1": {"chapter": "work/agent_results/chapter-1.chapter.json"}},
-        "content_ready": True,
-        "check_report": "work/logs/check-report.json",
-        "repair_targets": ["chapter-1:chapter"],
-        "repair_exhausted": [{"owner_task_id": "chapter-1:chapter", "rounds": 3}],
-        "_repair_rounds": {"chapter-1:chapter": 3},
-    }
-
-    state = state_for_force_from(cfg, checkpoint)
-
-    # Repair-loop state is cleared for the rerun (fresh budget)...
-    assert "_repair_rounds" not in state
-    assert "repair_targets" not in state
-    assert "repair_exhausted" not in state
-    # ...while upstream artifacts are preserved.
-    assert state["agent_results"] == {
-        "chapter-1": {"chapter": "work/agent_results/chapter-1.chapter.json"}
-    }
-    assert state["content_ready"] is True
-
-
 def test_targeted_force_from_generate_keeps_existing_agent_results(tmp_path: Path) -> None:
     cfg = default_config(tmp_path / "books" / "mini")
     cfg.force_from = "generate"

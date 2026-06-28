@@ -323,9 +323,11 @@ async def test_repair_defers_in_place_mdx_when_a_sibling_rewrites_source(tmp_pat
     assert repaired["repair_artifact_changed"] is True
     # The in-place MDX edit was DEFERRED: no edit reported, the file is untouched on disk, and
     # chapter-2's repair budget was NOT spent (so the post-integrate round can still fix it).
+    # The budget lives on cfg (run-scoped, never checkpointed), not in the returned state.
     assert repaired["mdx_edited"] == []
     assert chapter2_mdx.read_text(encoding="utf-8") == before
-    assert "chapter-2:chapter" not in repaired["_repair_rounds"]
+    assert "_repair_rounds" not in repaired
+    assert "chapter-2:chapter" not in cfg._repair_rounds
 
 
 @pytest.mark.asyncio
@@ -1188,10 +1190,11 @@ async def test_repair_node_records_exhausted_targets_loudly(tmp_path, caplog) ->
         llm_runtime=TestLLMRuntime(),
     )
     # The target has already consumed maxRepairRounds (default 3): the next pass must
-    # NOT silently drop it - it must record the exhaustion.
+    # NOT silently drop it - it must record the exhaustion. The budget lives on cfg (run-scoped,
+    # never checkpointed), so the prior rounds are seeded there, not in the graph state.
+    cfg._repair_rounds = {"chapter-1:chapter": 3}
     state = {
         "repair_targets": ["chapter-1:chapter"],
-        "_repair_rounds": {"chapter-1:chapter": 3},
         "check_report": "work/logs/check-report.json",
     }
 
@@ -1199,6 +1202,8 @@ async def test_repair_node_records_exhausted_targets_loudly(tmp_path, caplog) ->
         result = await repair_node(state, cfg)
 
     assert result["repairs"] == []
+    # The round budget is NEVER written back into the graph state (so it can't be checkpointed).
+    assert "_repair_rounds" not in result
     assert result["repair_exhausted"] == [
         {"owner_task_id": "chapter-1:chapter", "codes": ["MDX_PARSE_ERROR"], "rounds": 3}
     ]

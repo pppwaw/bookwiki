@@ -8,9 +8,10 @@ the legacy ``state.update`` semantics exactly, so no custom reducers are needed 
 lift-and-shift; richer reducers arrive later when ``generate`` fans out.
 
 Keys mirror ``NODE_OUTPUT_KEYS`` in ``bookwiki.scheduler.resume`` plus the control keys
-(``book_id``, ``cache_hit``) and the two intermediate keys that the legacy graph kept
-in state without listing them for ``--from``/``--force`` cleanup (``chapter_topics`` written by
-``split`` and consumed by ``generate``; ``_repair_rounds`` carried across repair rounds).
+(``book_id``, ``cache_hit``) and ``chapter_topics`` (written by ``split``, consumed by
+``generate``), which the legacy graph kept in state without listing it for ``--from``/``--force``
+cleanup. The repair-loop round budget is deliberately NOT a state key (it lives on the
+run-scoped ``BookConfig._repair_rounds`` so it is never checkpointed; see ``repair_node``).
 """
 
 from __future__ import annotations
@@ -94,7 +95,8 @@ class PipelineState(TypedDict, total=False):
     mdx_edited: list[str]
     repair_artifact_changed: bool
     repair_exhausted: list[Any]
-    _repair_rounds: dict[str, int]
+    # NOTE: the repair-loop round budget is NOT a state key — it lives on the run-scoped
+    # ``BookConfig._repair_rounds`` so it is never checkpointed and cannot leak across runs.
 
     # --- index ---
     sqlite: str

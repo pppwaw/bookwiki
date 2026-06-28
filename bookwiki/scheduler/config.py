@@ -75,6 +75,12 @@ class BookConfig:
     target_chapters: list[str] = field(default_factory=list)
     target_concepts: list[str] = field(default_factory=list)
     llm_runtime: Any | None = None
+    # Repair-loop round budget, keyed by repair target. Run-scoped bookkeeping the repair node
+    # increments across the integrate->check->repair loop to bound it. Deliberately NOT part of
+    # the LangGraph state/checkpoint (a fresh process => fresh BookConfig => empty budget), so it
+    # can never leak across runs and revive last run's exhausted counters. Excluded from to_json,
+    # so it does not affect the config hash.
+    _repair_rounds: dict[str, int] = field(default_factory=dict)
 
     @property
     def input_dir(self) -> Path:

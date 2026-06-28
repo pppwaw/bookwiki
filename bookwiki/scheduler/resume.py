@@ -64,10 +64,6 @@ NODE_OUTPUT_KEYS: dict[str, set[str]] = {
         "repair_artifact_changed",
         "repair_targets",
         "repair_exhausted",
-        # Repair-loop round budget. Carried across the integrate->check->repair loop *within* a
-        # run (its termination guarantee), but cleared on a forced rerun so `--from`/`--force`
-        # hands the loop a fresh budget instead of reviving last run's exhausted counters.
-        "_repair_rounds",
     },
     "index": {"sqlite"},
 }

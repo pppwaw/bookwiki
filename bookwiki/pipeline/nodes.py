@@ -4439,7 +4439,12 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
     if not targets:
         _LOG.info("repair: no targets, nothing to do")
         return {"repair_targets": []}
-    rounds = dict(state.get("_repair_rounds", {}))
+    # Round budget lives on the (run-scoped, non-checkpointed) cfg, NOT in the LangGraph state:
+    # it must persist across the in-run integrate->check->repair loop to bound it, but must NOT
+    # ride the checkpoint into a later run (where stale counters would make every target look
+    # exhausted on the first pass). A fresh process => fresh cfg => empty budget. We mutate the
+    # dict in place so each loop iteration sees the previous one's increments.
+    rounds = cfg._repair_rounds
     out_dir = ensure_dir(cfg.work_dir / "repairs")
     outputs = []
     repair_actions: list[dict[str, Any]] = []
@@ -4587,7 +4592,8 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
         # mixed in one round, so an integrate never clobbers an in-place edit.
         "repair_artifact_changed": source_changed,
         "repair_targets": [],
-        "_repair_rounds": rounds,
+        # NOTE: the round budget (cfg._repair_rounds) is intentionally NOT returned into the
+        # LangGraph state — it is run-scoped cfg bookkeeping, never checkpointed (see above).
         "repair_exhausted": exhausted,
     }
 
