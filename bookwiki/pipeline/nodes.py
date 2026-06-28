@@ -790,9 +790,7 @@ _COMPONENT_FENCE_RE = re.compile(
 )
 # Require the component tag to start its own line: a real wrapped component sits on its own line,
 # whereas a string like ``print("<QuizBlock>")`` inside a legit code sample must not trip this.
-_MDX_COMPONENT_RE = re.compile(
-    r"^[ \t]*<(?:Quiz[A-Za-z]*|BookFigure|PreviewLink)\b", re.MULTILINE
-)
+_MDX_COMPONENT_RE = re.compile(r"^[ \t]*<(?:Quiz[A-Za-z]*|BookFigure|PreviewLink)\b", re.MULTILINE)
 _ALLOWED_FENCE_LANGS = {"mermaid"}
 # Codes whose repair edits the rendered ``.mdx`` in place (then re-``check``), rather than
 # re-running a source agent via ``integrate``.
@@ -4446,55 +4444,81 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
     outputs = []
     repair_actions: list[dict[str, Any]] = []
     exhausted: list[dict[str, Any]] = []
+    mdx_edited: list[str] = []
     report = read_json(cfg.book_dir / state.get("check_report", "work/logs/check-report.json"))
+    max_rounds = int(cfg.generation.get("maxRepairRounds", 1) or 1)
     _LOG.info(
         "repair: targets=%d rounds_state=%d max_rounds=%d",
         len(targets),
         len(rounds),
-        int(cfg.generation.get("maxRepairRounds", 1) or 1),
+        max_rounds,
     )
-    mdx_repaired = 0
-    review_repaired = 0
-    applied = 0
-    mdx_edited: list[str] = []
-    for target in targets:
-        target_issues = [
-            issue for issue in report.get("issues", []) if issue.get("owner_task_id") == target
-        ]
-        codes = {str(issue.get("code")) for issue in target_issues}
-        max_rounds = _repair_round_limit(codes, cfg)
+
+    target_set = set(targets)
+    issues_by_target: dict[str, list[dict[str, Any]]] = {}
+    for issue in report.get("issues", []):
+        owner = issue.get("owner_task_id")
+        if owner in target_set:
+            issues_by_target.setdefault(owner, []).append(issue)
+
+    def _codes(t: str) -> set[str]:
+        return {str(issue.get("code")) for issue in issues_by_target.get(t, [])}
+
+    charged: set[str] = set()
+    seen_exhausted: set[str] = set()
+
+    def _charge(target: str) -> bool:
+        """Spend one repair round for ``target`` (idempotent per invocation).
+
+        Returns False — and records the target as exhausted exactly once — when its round
+        budget is used up. A mixed target's source side (round N) and MDX side (round N+1,
+        post-integrate) are charged in *different* invocations, so its two phases each cost a
+        round; the in-place phase is never starved by the source phase within one round.
+        """
+        if target in charged:
+            return True
         if int(rounds.get(target, 0)) >= max_rounds:
-            exhausted.append(
-                {
-                    "owner_task_id": target,
-                    "codes": sorted(codes),
-                    "rounds": int(rounds.get(target, 0)),
-                }
-            )
-            _LOG.warning(
-                "repair exhausted target=%s codes=%s rounds=%d (kept unrepaired)",
-                target,
-                sorted(codes),
-                int(rounds.get(target, 0)),
-            )
-            continue
+            if target not in seen_exhausted:
+                seen_exhausted.add(target)
+                exhausted.append(
+                    {
+                        "owner_task_id": target,
+                        "codes": sorted(_codes(target)),
+                        "rounds": int(rounds.get(target, 0)),
+                    }
+                )
+                _LOG.warning(
+                    "repair exhausted target=%s codes=%s rounds=%d (kept unrepaired)",
+                    target,
+                    sorted(_codes(target)),
+                    int(rounds.get(target, 0)),
+                )
+            return False
         rounds[target] = int(rounds.get(target, 0)) + 1
-        route = "mdx" if codes & _MDX_ROUTE_CODES else "review"
+        charged.add(target)
+        return True
+
+    # --- Phase 1: source rewrites (route back to ``integrate``). Any target carrying a code that
+    # is NOT an in-place MDX fix rewrites its source artifact. We handle those here and DEFER
+    # every in-place MDX edit this round: the ``integrate`` these rewrites force does a full
+    # rmtree + re-render, which would clobber an edit applied now (and waste its repair budget on
+    # a fix that gets re-rendered away). Deferred MDX targets return via ``check`` after integrate.
+    source_targets = [t for t in targets if _codes(t) - _MDX_ROUTE_CODES]
+    for target in source_targets:
+        codes = _codes(target)
+        if not _charge(target):
+            continue
+        target_issues = issues_by_target.get(target, [])
         _LOG.info(
-            "repair: target=%s route=%s codes=%s round=%d/%d",
+            "repair: target=%s route=review codes=%s round=%d/%d",
             target,
-            route,
             sorted(codes),
             rounds[target],
             max_rounds,
         )
-        if codes & _MDX_ROUTE_CODES:
-            # Edit the rendered ``.mdx`` in place; the route below goes back to ``check`` (not
-            # ``integrate``), so the edit is validated directly without being re-rendered away.
-            if await _repair_mdx_file(target, target_issues, state, cfg):
-                mdx_edited.append(target)
-                mdx_repaired += 1
-        else:
+        # A target with no in-place MDX code is regenerated by ReviewAgent; a mixed target only
+        # has its source side dropped here (its MDX side waits for the post-integrate round).
+        if not (codes & _MDX_ROUTE_CODES):
             result = await run_with_cache(
                 ReviewAgent,
                 {
@@ -4511,12 +4535,31 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
                 out_dir / f"{target.replace(':', '-')}.json", _json_model(result.result)
             )
             outputs.append(_rel(path, cfg.book_dir))
-            review_repaired += 1
         action = _apply_repair(target, target_issues, state, cfg)
         if action is not None:
             repair_actions.append(action)
-            applied += 1
             _LOG.warning("repair applied destructive fix (content removed): %s", action)
+
+    # A source rewrite this round means ``integrate`` is coming. Only do in-place MDX edits when
+    # nothing rewrote source (no integrate to clobber them) — otherwise defer to the next round.
+    source_changed = bool(outputs or repair_actions)
+
+    # --- Phase 2: in-place ``.mdx`` edits (route to ``check``, NOT ``integrate``). ---
+    if not source_changed:
+        for target in (t for t in targets if _codes(t) & _MDX_ROUTE_CODES):
+            codes = _codes(target)
+            if not _charge(target):
+                continue
+            _LOG.info(
+                "repair: target=%s route=mdx codes=%s round=%d/%d",
+                target,
+                sorted(codes),
+                rounds[target],
+                max_rounds,
+            )
+            if await _repair_mdx_file(target, issues_by_target.get(target, []), state, cfg):
+                mdx_edited.append(target)
+
     if repair_actions:
         write_json(
             ensure_dir(cfg.work_dir / "logs") / "repair-actions.json",
@@ -4528,29 +4571,25 @@ async def repair_node(state: State, cfg: BookConfig) -> State:
             {"exhausted": exhausted},
         )
     _LOG.info(
-        "repair: done outputs=%d mdx_repaired=%d review_repaired=%d "
-        "destructive_applied=%d exhausted=%d",
+        "repair: done review_repaired=%d destructive_applied=%d mdx_repaired=%d "
+        "deferred_mdx=%d exhausted=%d",
         len(outputs),
-        mdx_repaired,
-        review_repaired,
-        applied,
+        len(repair_actions),
+        len(mdx_edited),
+        sum(1 for t in targets if _codes(t) & _MDX_ROUTE_CODES) if source_changed else 0,
         len(exhausted),
     )
     return {
         "repairs": outputs,
         "mdx_edited": mdx_edited,
-        # Review/destructive repairs change source artifacts and need ``integrate`` to
-        # re-render; in-place ``.mdx`` edits only need ``check`` to re-validate.
-        "repair_artifact_changed": bool(outputs or repair_actions),
+        # Phase 1 (review/destructive) rewrote source artifacts -> ``integrate`` must re-render;
+        # phase 2 (in-place ``.mdx`` edits) only needs ``check`` to re-validate. The two are never
+        # mixed in one round, so an integrate never clobbers an in-place edit.
+        "repair_artifact_changed": source_changed,
         "repair_targets": [],
         "_repair_rounds": rounds,
         "repair_exhausted": exhausted,
     }
-
-
-def _repair_round_limit(codes: set[str], cfg: BookConfig) -> int:
-    del codes
-    return int(cfg.generation.get("maxRepairRounds", 1) or 1)
 
 
 def _target_mdx_path(target: str, cfg: BookConfig) -> Path | None:

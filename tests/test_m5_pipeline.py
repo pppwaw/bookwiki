@@ -203,6 +203,131 @@ async def test_check_routes_bad_quiz_answer_and_repair_drops_invalid_item(tmp_pa
     assert passed["repair_targets"] == []
 
 
+def _write_chapter_results(result_dir, chap_id: str, *, body_md: str, quiz_items) -> dict[str, str]:
+    """Write the four per-chapter agent_results artifacts and return the state mapping."""
+    rel = "work/agent_results"
+    (result_dir / f"{chap_id}.chapter.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": chap_id,
+                    "title": chap_id,
+                    "body_md": body_md,
+                    "concepts": [],
+                    "citations": [{"ref_id": "source-p001", "quote": "Source"}],
+                    "owner_task_id": f"{chap_id}:chapter",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (result_dir / f"{chap_id}.summary.json").write_text(
+        json.dumps({"result": {"summary_md": "Summary.", "owner_task_id": f"{chap_id}:summary"}}),
+        encoding="utf-8",
+    )
+    (result_dir / f"{chap_id}.quiz.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": chap_id,
+                    "items": quiz_items,
+                    "owner_task_id": f"{chap_id}:quiz",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (result_dir / f"{chap_id}.card.json").write_text(
+        json.dumps(
+            {
+                "result": {
+                    "chapter_id": chap_id,
+                    "items": [{"front": "Front", "back": "Back", "citations": []}],
+                    "owner_task_id": f"{chap_id}:card",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {kind: f"{rel}/{chap_id}.{kind}.json" for kind in ("chapter", "summary", "quiz", "card")}
+
+
+@pytest.mark.asyncio
+async def test_repair_defers_in_place_mdx_when_a_sibling_rewrites_source(tmp_path) -> None:
+    # A single check round flags TWO files: chapter-1 needs a source rewrite (bad quiz answer ->
+    # dropped, re-rendered via integrate) and chapter-2 needs an in-place MDX fix (`n<30`).
+    # If both are repaired in the same round, the integrate that chapter-1 forces would rmtree +
+    # re-render and clobber chapter-2's in-place edit. The fix: when any source rewrite happens
+    # this round, DEFER all in-place MDX edits — don't touch the file and don't spend its repair
+    # budget — so the later (post-integrate) round can fix it without being clobbered.
+    book_dir = tmp_path / "book"
+    result_dir = book_dir / "work" / "agent_results"
+    result_dir.mkdir(parents=True)
+
+    quiz_block = (
+        '\n\n<QuizBlock>\n<QuizItemSlot id="{c}:s0:slot-000" topic="t" '
+        'sourceRefs={{["source-p001"]}} />\n</QuizBlock>'
+    )
+    chapter1 = _write_chapter_results(
+        result_dir,
+        "chapter-1",
+        body_md="Clean body." + quiz_block.format(c="chapter-1"),
+        quiz_items=[
+            {
+                "question": "Bad?",
+                "choices": ["A", "B"],
+                "answer": "C",
+                "explanation": "x",
+                "citations": [],
+                "slot_id": "chapter-1:s0:slot-000",
+            }
+        ],
+    )
+    chapter2 = _write_chapter_results(
+        result_dir,
+        "chapter-2",
+        # A bare comparison `n<30` makes the rendered MDX fail to compile (MDX_PARSE_ERROR).
+        body_md="当 n<30 时不准确。" + quiz_block.format(c="chapter-2"),
+        quiz_items=[
+            {
+                "question": "Ok?",
+                "choices": ["A", "B"],
+                "answer": "A",
+                "explanation": "x",
+                "citations": [],
+                "slot_id": "chapter-2:s0:slot-000",
+            }
+        ],
+    )
+
+    cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book", llm_runtime=TestLLMRuntime())
+    cfg.generation["siteTypeCheck"] = "off"
+    state = {
+        "agent_results": {"chapter-1": chapter1, "chapter-2": chapter2},
+        "alias_map": {},
+        "concept_pages": {},
+    }
+
+    integrate_node(state, cfg)
+    checked = await check_node(state, cfg)
+    # Sanity: this really is a mixed round (one source target + one MDX target).
+    assert set(checked["repair_targets"]) == {"chapter-1:quiz", "chapter-2:chapter"}
+
+    chapter2_mdx = cfg.content_dir / "chapters" / "chapter-2.mdx"
+    before = chapter2_mdx.read_text(encoding="utf-8")
+
+    repaired = await repair_node({**state, **checked}, cfg)
+
+    # The source rewrite happened -> route back to integrate.
+    assert repaired["repair_artifact_changed"] is True
+    # The in-place MDX edit was DEFERRED: no edit reported, the file is untouched on disk, and
+    # chapter-2's repair budget was NOT spent (so the post-integrate round can still fix it).
+    assert repaired["mdx_edited"] == []
+    assert chapter2_mdx.read_text(encoding="utf-8") == before
+    assert "chapter-2:chapter" not in repaired["_repair_rounds"]
+
+
 @pytest.mark.asyncio
 async def test_check_accepts_hyphenated_source_refs_from_sources_md(tmp_path) -> None:
     book_dir = tmp_path / "book"
@@ -632,8 +757,7 @@ def test_integrate_uses_alias_map_embedded_in_reconciled_concepts(tmp_path) -> N
     )
     assert (
         '<PreviewLink href={"/docs/concepts/递归"} title={"递归"} '
-        'summary={"Concept."}>递归</PreviewLink>'
-        in chapter
+        'summary={"Concept."}>递归</PreviewLink>' in chapter
     )
     assert "[[递推]]" not in chapter
 
@@ -752,9 +876,7 @@ async def test_check_routes_unknown_refs_for_concept_and_quiz_owners(tmp_path) -
 
 @pytest.mark.asyncio
 async def test_check_node_aborts_when_mdx_validator_unavailable(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "bookwiki.pipeline.nodes.mdx_validator_available", lambda: False
-    )
+    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: False)
     cfg = BookConfig(
         book_dir=tmp_path / "book",
         book_id="book",
@@ -767,14 +889,10 @@ async def test_check_node_aborts_when_mdx_validator_unavailable(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_check_node_escape_valve_degrades_to_error_log(
-    tmp_path, monkeypatch, caplog
-) -> None:
+async def test_check_node_escape_valve_degrades_to_error_log(tmp_path, monkeypatch, caplog) -> None:
     import logging
 
-    monkeypatch.setattr(
-        "bookwiki.pipeline.nodes.mdx_validator_available", lambda: False
-    )
+    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: False)
     book_dir = tmp_path / "book"
     cfg = BookConfig(
         book_dir=book_dir,
@@ -832,9 +950,7 @@ async def test_check_node_installs_site_dependencies_without_node_modules(
 
 
 @pytest.mark.asyncio
-async def test_check_node_reports_site_dependency_install_failure(
-    tmp_path, monkeypatch
-) -> None:
+async def test_check_node_reports_site_dependency_install_failure(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
     monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
     monkeypatch.setenv("BOOKWIKI_CHAT_API_KEY", "secret-token")
@@ -943,6 +1059,7 @@ async def test_check_node_reports_site_typecheck_failure(tmp_path, monkeypatch) 
         title="Book",
         llm_runtime=TestLLMRuntime(),
     )
+
     def fake_run(cmd, *args, **kwargs):  # noqa: ANN001
         if cmd == ["/usr/bin/pnpm", "install"]:
             return SimpleNamespace(returncode=0, stdout="ok", stderr="")
