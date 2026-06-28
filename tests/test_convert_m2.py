@@ -1027,7 +1027,7 @@ def test_convert_node_reuses_matching_hashed_artifact(
             "assets": [],
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     first_state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
 
@@ -1044,7 +1044,7 @@ def test_convert_node_reuses_matching_hashed_artifact(
     def fail_convert(path: Path, *, source_id: str):
         pytest.fail("matching convert artifact should be reused")
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fail_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fail_convert)
 
     second_state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
 
@@ -1070,7 +1070,7 @@ def test_convert_node_reruns_artifact_without_current_convert_version(
             "assets": [],
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     first_state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
     manifest_path = cfg.book_dir / first_state["source_ref_manifests"][0]
@@ -1184,7 +1184,7 @@ def test_convert_node_calls_layout_repair_for_table_candidates(
             "content_list": None,
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
 
@@ -1212,7 +1212,7 @@ def test_convert_node_skips_layout_repair_without_candidates(
             "content_list": None,
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
 
@@ -1263,7 +1263,7 @@ def test_caption_node_adds_vision_caption_to_image_blocks(
             "assets": [],
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
 
@@ -1348,7 +1348,7 @@ def test_caption_node_uses_nested_mineru_image_source_paths(
             ],
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
 
@@ -1417,7 +1417,7 @@ def test_caption_node_passes_heading_section_context_to_vision_agent(
             "assets": [],
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
     source_path = cfg.book_dir / state["sources_md"][0]
@@ -1616,7 +1616,7 @@ def test_caption_node_records_group_caption_failures(
         raise RuntimeError("caption unavailable")
 
     monkeypatch.setattr(
-        "bookwiki.pipeline.nodes._run_vision_caption_group",
+        "bookwiki.pipeline.convert._run_vision_caption_group",
         fail_group,
         raising=False,
     )
@@ -1714,7 +1714,7 @@ def test_caption_node_fails_stage_after_recording_caption_failures(
         )
 
     monkeypatch.setattr(
-        "bookwiki.pipeline.nodes._run_vision_caption_group",
+        "bookwiki.pipeline.convert._run_vision_caption_group",
         fake_run_vision_caption_group,
     )
 
@@ -1779,7 +1779,7 @@ def test_caption_node_refines_existing_non_vision_caption_once(
             "assets": [],
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
     asyncio.run(caption_node(state, cfg))
@@ -1839,7 +1839,7 @@ def test_caption_node_preserves_latex_backslashes_when_rewriting_book_figure(
             "assets": [],
         }
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.convert_document_to_source", fake_convert)
+    monkeypatch.setattr("bookwiki.pipeline.convert.convert_document_to_source", fake_convert)
 
     state = asyncio.run(convert_node({"book_id": cfg.book_id}, cfg))
     asyncio.run(caption_node(state, cfg))

@@ -113,7 +113,7 @@ async def test_generate_node_writes_survivors_and_raises_on_failure(
             raise RuntimeError("boom in chapter-2")
         return _gen_result(chapter_id)
 
-    monkeypatch.setattr(nodes, "generate_chapter_sections", fake_generate_chapter_sections)
+    monkeypatch.setattr("bookwiki.pipeline.generate.generate_chapter_sections", fake_generate_chapter_sections)
 
     with pytest.raises(RuntimeError, match="chapter-2"):
         await generate_node(state, cfg)

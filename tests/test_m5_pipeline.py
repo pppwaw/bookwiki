@@ -878,7 +878,7 @@ async def test_check_routes_unknown_refs_for_concept_and_quiz_owners(tmp_path) -
 
 @pytest.mark.asyncio
 async def test_check_node_aborts_when_mdx_validator_unavailable(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: False)
+    monkeypatch.setattr("bookwiki.pipeline.check.mdx_validator_available", lambda: False)
     cfg = BookConfig(
         book_dir=tmp_path / "book",
         book_id="book",
@@ -894,7 +894,7 @@ async def test_check_node_aborts_when_mdx_validator_unavailable(tmp_path, monkey
 async def test_check_node_escape_valve_degrades_to_error_log(tmp_path, monkeypatch, caplog) -> None:
     import logging
 
-    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: False)
+    monkeypatch.setattr("bookwiki.pipeline.check.mdx_validator_available", lambda: False)
     book_dir = tmp_path / "book"
     cfg = BookConfig(
         book_dir=book_dir,
@@ -916,7 +916,7 @@ async def test_check_node_escape_valve_degrades_to_error_log(tmp_path, monkeypat
 async def test_check_node_installs_site_dependencies_without_node_modules(
     tmp_path, monkeypatch
 ) -> None:
-    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.check.mdx_validator_available", lambda: True)
     monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
     fake_template = tmp_path / "site-template"
     _write_minimal_site_template(fake_template)
@@ -953,7 +953,7 @@ async def test_check_node_installs_site_dependencies_without_node_modules(
 
 @pytest.mark.asyncio
 async def test_check_node_reports_site_dependency_install_failure(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.check.mdx_validator_available", lambda: True)
     monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
     monkeypatch.setenv("BOOKWIKI_CHAT_API_KEY", "secret-token")
     fake_template = tmp_path / "site-template"
@@ -991,7 +991,7 @@ async def test_check_node_reports_site_dependency_install_failure(tmp_path, monk
 async def test_check_node_runs_site_typecheck_when_dependencies_exist(
     tmp_path, monkeypatch
 ) -> None:
-    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.check.mdx_validator_available", lambda: True)
     monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
     fake_template = tmp_path / "site-template"
     _write_minimal_site_template(fake_template)
@@ -1043,7 +1043,7 @@ async def test_check_node_runs_site_typecheck_when_dependencies_exist(
 
 @pytest.mark.asyncio
 async def test_check_node_reports_site_typecheck_failure(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.check.mdx_validator_available", lambda: True)
     monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
     monkeypatch.setenv("BOOKWIKI_CHAT_API_KEY", "secret-token")
     fake_template = tmp_path / "site-template"
@@ -1089,7 +1089,7 @@ async def test_check_node_reuses_symlinked_site_node_modules_and_skips_install(
 ) -> None:
     # Persistent workspace: an existing (even symlinked) node_modules is reused, not severed — so
     # check skips ``pnpm install`` and goes straight to types:check on the in-place site.
-    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.check.mdx_validator_available", lambda: True)
     monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
     fake_template = tmp_path / "site-template"
     _write_minimal_site_template(fake_template)
@@ -1128,7 +1128,7 @@ async def test_check_node_reuses_symlinked_site_node_modules_and_skips_install(
 async def test_check_node_reports_site_build_failure(tmp_path, monkeypatch) -> None:
     # build runs after types:check passes, to surface runtime render errors (e.g. ShikiError on an
     # unknown code-fence language) that a type-only check cannot see.
-    monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
+    monkeypatch.setattr("bookwiki.pipeline.check.mdx_validator_available", lambda: True)
     monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
     fake_template = tmp_path / "site-template"
     _write_minimal_site_template(fake_template)

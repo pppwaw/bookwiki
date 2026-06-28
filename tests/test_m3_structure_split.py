@@ -419,8 +419,7 @@ def test_structure_node_chunks_source_and_writes_concept_candidates(
     text = source.read_text(encoding="utf-8")
     first, second = text.split("<!-- source_ref: Week-10-p999 -->")
     monkeypatch.setattr(
-        pipeline_nodes,
-        "chunk_by_heading",
+        "bookwiki.pipeline.structure.chunk_by_heading",
         lambda *_args, **_kwargs: [
             SimpleNamespace(
                 text=first,
@@ -469,8 +468,7 @@ def test_structure_node_raises_when_chunking_drops_source_ref(
     text = source.read_text(encoding="utf-8")
     first, _second = text.split("<!-- source_ref: r2 -->")
     monkeypatch.setattr(
-        pipeline_nodes,
-        "chunk_by_heading",
+        "bookwiki.pipeline.structure.chunk_by_heading",
         lambda *_args, **_kwargs: [
             SimpleNamespace(
                 text=first,
