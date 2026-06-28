@@ -13,6 +13,8 @@ import {
   useState,
 } from 'react';
 import { MathText } from './MathText';
+import { Markdown } from './markdown';
+import { postEvaluation, type EvaluationResult, type PointScore } from '@/lib/evaluate-client';
 
 // Chapter-end exam + past-paper walkthrough.
 //
@@ -359,16 +361,6 @@ function FillBlankInputs({ acceptedAnswers, id }: { acceptedAnswers: string[][];
 
 // --- worked ----------------------------------------------------------------
 
-type EvaluationResult = {
-  verdict: 'correct' | 'partial' | 'incorrect';
-  score: number;
-  max_score: number;
-  matched_points: string[];
-  missing_points: string[];
-  feedback: string;
-  revised_answer: string;
-};
-
 function WorkedAnswer({
   id,
   referenceAnswer,
@@ -401,23 +393,12 @@ function WorkedAnswer({
     setSubmitting(true);
     deck.report(id, { earned: 0, max: maxScore, pending: true });
     try {
-      const response = await fetch('/api/evaluate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: item.type,
-          reference_answer: referenceAnswer,
-          rubric,
-          user_answer: userAnswer,
-        }),
+      const evaluation = await postEvaluation({
+        question: item.type,
+        reference_answer: referenceAnswer,
+        rubric,
+        user_answer: userAnswer,
       });
-      const payload = (await response.json()) as EvaluationResult | { error?: string };
-      if (!response.ok) {
-        setError('error' in payload && payload.error ? payload.error : '判分失败');
-        deck.report(id, { earned: 0, max: maxScore, pending: false });
-        return;
-      }
-      const evaluation = payload as EvaluationResult;
       setResult(evaluation);
       deck.report(id, { earned: evaluation.score, max: evaluation.max_score, pending: false });
     } catch (err) {
@@ -461,8 +442,7 @@ function WorkedAnswer({
             {verdictLabel(result.verdict)} · {formatScore(result.score)} / {formatScore(result.max_score)}
           </strong>
           <Paragraphs text={result.feedback} />
-          <PointList label="命中要点" points={result.matched_points} />
-          <PointList label="缺漏要点" points={result.missing_points} />
+          <PointScoreList points={result.points} />
         </div>
       ) : null}
       {reveal ? (
@@ -477,15 +457,20 @@ function WorkedAnswer({
 
 // --- shared helpers --------------------------------------------------------
 
-function PointList({ label, points }: { label: string; points: string[] }) {
+function PointScoreList({ points }: { points: PointScore[] }) {
   if (points.length === 0) return null;
   return (
     <div className="exam-points">
-      <h4>{label}</h4>
+      <h4>逐点得分</h4>
       <ul>
         {points.map((point, index) => (
-          <li key={`${index}:${point}`}>
-            <MathText text={point} />
+          <li className={`exam-point exam-point-${pointTone(point)}`} key={`${index}:${point.point}`}>
+            <span className="exam-point-score">
+              {formatScore(point.earned)} / {formatScore(point.weight)}
+            </span>
+            <span className="exam-point-text">
+              <Markdown inline text={point.point} />
+            </span>
           </li>
         ))}
       </ul>
@@ -493,20 +478,14 @@ function PointList({ label, points }: { label: string; points: string[] }) {
   );
 }
 
+function pointTone(point: PointScore): 'full' | 'partial' | 'none' {
+  if (point.earned >= point.weight) return 'full';
+  if (point.earned <= 0) return 'none';
+  return 'partial';
+}
+
 function Paragraphs({ text }: { text: string }) {
-  return (
-    <>
-      {text
-        .split(/\n{2,}/)
-        .map((part) => part.trim())
-        .filter(Boolean)
-        .map((paragraph, index) => (
-          <p key={`${index}:${paragraph}`}>
-            <MathText text={paragraph} />
-          </p>
-        ))}
-    </>
-  );
+  return <Markdown text={text} />;
 }
 
 function MathContent({ children }: { children: ReactNode }): ReactNode {

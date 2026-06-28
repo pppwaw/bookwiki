@@ -3,7 +3,8 @@
 import './WorkedProblem.css';
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { MathText } from './MathText';
+import { Markdown } from './markdown';
+import { postEvaluation, type EvaluationResult, type PointScore } from '@/lib/evaluate-client';
 
 type Citation = {
   ref_id: string;
@@ -13,16 +14,6 @@ type Citation = {
 type RubricPoint = {
   point: string;
   weight: number;
-};
-
-type EvaluationResult = {
-  verdict: 'correct' | 'partial' | 'incorrect';
-  score: number;
-  max_score: number;
-  matched_points: string[];
-  missing_points: string[];
-  feedback: string;
-  revised_answer: string;
 };
 
 export function WorkedProblem({
@@ -57,23 +48,14 @@ export function WorkedProblem({
     setError('');
     setResult(null);
     try {
-      const response = await fetch('/api/evaluate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chapter_id: chapterId || undefined,
-          question,
-          reference_answer: referenceAnswer,
-          rubric,
-          user_answer: userAnswer,
-        }),
+      const evaluation = await postEvaluation({
+        chapter_id: chapterId || undefined,
+        question,
+        reference_answer: referenceAnswer,
+        rubric,
+        user_answer: userAnswer,
       });
-      const payload = (await response.json()) as EvaluationResult | { error?: string };
-      if (!response.ok) {
-        setError('error' in payload && payload.error ? payload.error : '判分失败');
-        return;
-      }
-      setResult(payload as EvaluationResult);
+      setResult(evaluation);
     } catch (err) {
       setError(err instanceof Error ? err.message : '判分失败');
     } finally {
@@ -150,8 +132,7 @@ function EvaluationPanel({
         </span>
       </div>
       <TextBlock text={result.feedback} />
-      <PointList className="worked-points-matched" label="命中要点" points={result.matched_points} />
-      <PointList className="worked-points-missing" label="缺漏要点" points={result.missing_points} />
+      <PointScoreList points={result.points} />
       <AnswerBlock title="修补后的答案" text={result.revised_answer} />
       <AnswerBlock title="完整参考答案" text={referenceAnswer} />
       {citations.length > 0 ? (
@@ -162,7 +143,7 @@ function EvaluationPanel({
               {cite.quote ? (
                 <span>
                   {' · '}
-                  <MathText text={cite.quote} />
+                  <Markdown inline text={cite.quote} />
                 </span>
               ) : null}
             </li>
@@ -173,20 +154,31 @@ function EvaluationPanel({
   );
 }
 
-function PointList({ className, label, points }: { className: string; label: string; points: string[] }) {
+function PointScoreList({ points }: { points: PointScore[] }) {
   if (points.length === 0) return null;
   return (
-    <div className={className}>
-      <h4>{label}</h4>
+    <div className="worked-points">
+      <h4>逐点得分</h4>
       <ul>
         {points.map((point, index) => (
-          <li key={`${index}:${point}`}>
-            <MathText text={point} />
+          <li className={`worked-point worked-point-${pointTone(point)}`} key={`${index}:${point.point}`}>
+            <span className="worked-point-score">
+              {formatScore(point.earned)} / {formatScore(point.weight)}
+            </span>
+            <span className="worked-point-text">
+              <Markdown inline text={point.point} />
+            </span>
           </li>
         ))}
       </ul>
     </div>
   );
+}
+
+function pointTone(point: PointScore): 'full' | 'partial' | 'none' {
+  if (point.earned >= point.weight) return 'full';
+  if (point.earned <= 0) return 'none';
+  return 'partial';
 }
 
 function AnswerBlock({ text, title }: { text: string; title: string }) {
@@ -201,15 +193,7 @@ function AnswerBlock({ text, title }: { text: string; title: string }) {
 function TextBlock({ className = '', text }: { className?: string; text: string }) {
   return (
     <div className={className || undefined}>
-      {text
-        .split(/\n{2,}/)
-        .map((part) => part.trim())
-        .filter(Boolean)
-        .map((paragraph, index) => (
-          <p key={`${index}:${paragraph}`}>
-            <MathText text={paragraph} />
-          </p>
-        ))}
+      <Markdown text={text} />
     </div>
   );
 }

@@ -319,9 +319,47 @@
   font-size: 0.9rem;
 }
 .exam-points ul {
+  list-style: none;
   margin: 0.25rem 0 0;
-  padding-left: 1.2rem;
+  padding: 0;
   font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.exam-point {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.4rem;
+  border-left: 3px solid var(--color-fd-border);
+  background: color-mix(in oklab, var(--color-fd-muted) 40%, transparent);
+}
+.exam-point-score {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.82rem;
+  min-width: 3.2rem;
+}
+.exam-point-full {
+  border-left-color: #16a34a;
+}
+.exam-point-full .exam-point-score {
+  color: #16a34a;
+}
+.exam-point-partial {
+  border-left-color: #d97706;
+}
+.exam-point-partial .exam-point-score {
+  color: #d97706;
+}
+.exam-point-none {
+  border-left-color: #dc2626;
+}
+.exam-point-none .exam-point-score {
+  color: #dc2626;
 }
 .exam-reference,
 .exam-recap {

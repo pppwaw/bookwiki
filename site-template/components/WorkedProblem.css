@@ -24,8 +24,7 @@
   color: var(--color-fd-muted-foreground);
 }
 .worked-problem-question h3,
-.worked-points-matched h4,
-.worked-points-missing h4 {
+.worked-points h4 {
   margin: 0.8rem 0 0.35rem;
   font-size: 0.95rem;
 }
@@ -114,16 +113,50 @@
 .worked-evaluation-incorrect {
   border-color: color-mix(in oklab, #dc2626 35%, transparent);
 }
-.worked-points-matched ul,
-.worked-points-missing ul,
 .worked-citations {
   margin: 0.35rem 0 0;
   padding-left: 1.2rem;
 }
-.worked-points-matched li::marker {
+.worked-points ul {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.worked-point {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.4rem;
+  border-left: 3px solid var(--color-fd-border);
+  background: color-mix(in oklab, var(--color-fd-muted) 40%, transparent);
+}
+.worked-point-score {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.82rem;
+  min-width: 3.2rem;
+}
+.worked-point-full {
+  border-left-color: #16a34a;
+}
+.worked-point-full .worked-point-score {
   color: #16a34a;
 }
-.worked-points-missing li::marker {
+.worked-point-partial {
+  border-left-color: #d97706;
+}
+.worked-point-partial .worked-point-score {
+  color: #d97706;
+}
+.worked-point-none {
+  border-left-color: #dc2626;
+}
+.worked-point-none .worked-point-score {
   color: #dc2626;
 }
 .worked-answer-block {
