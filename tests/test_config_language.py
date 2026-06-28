@@ -249,6 +249,34 @@ def test_site_main_sets_site_language_from_book_config(
     assert (next_cache / "next-development.log").read_text(encoding="utf-8") == "cache"
 
 
+def test_site_main_installs_even_when_node_modules_present(tmp_path, monkeypatch) -> None:
+    # A framework/template refresh may change dependencies, so main must always run ``pnpm
+    # install`` (idempotent — a no-op when deps match) rather than skip it when node_modules exists.
+    book_dir = tmp_path / "books" / "mini"
+    book_dir.mkdir(parents=True)
+    content_dir = book_dir / "site" / "content" / "docs"
+    content_dir.mkdir(parents=True)
+    (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
+    (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
+    (book_dir / "site" / "node_modules").mkdir(parents=True)
+    (book_dir / "book.config.json").write_text(
+        json.dumps({"book_id": "mini", "title": "Mini"}), encoding="utf-8"
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, env, check):  # noqa: ANN001
+        calls.append(cmd)
+
+    monkeypatch.setattr(sys, "argv", ["site.py", str(book_dir)])
+    monkeypatch.setattr(site.subprocess, "run", fake_run)
+
+    site.main()
+
+    assert calls[0] == ["pnpm", "install"]  # install runs despite an existing node_modules
+    assert ["pnpm", "build"] in calls
+    assert calls[-1] == ["pnpm", "start"]
+
+
 def test_site_main_syncs_only_chat_env_to_site_env_file(tmp_path, monkeypatch) -> None:
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)

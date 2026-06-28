@@ -253,8 +253,7 @@ def main() -> None:
     env["BOOKWIKI_SITE_LANGUAGE"] = cfg.language
     env.setdefault("NODE_OPTIONS", "--max-old-space-size=4096")
 
-    if not (site_dir / "node_modules").exists():
-        subprocess.run(["pnpm", "install"], cwd=site_dir, env=env, check=True)
+    subprocess.run(["pnpm", "install"], cwd=site_dir, env=env, check=True)
     subprocess.run(["pnpm", "build"], cwd=site_dir, env=env, check=True)
     subprocess.run(["pnpm", "start"], cwd=site_dir, env=env, check=True)
 
