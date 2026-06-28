@@ -1,0 +1,228 @@
+/* QuizBlock styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+
+/* ---------- quiz ---------- */
+.quiz-block {
+  counter-reset: quiz-item;
+}
+.quiz-block-head {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px dashed var(--color-fd-border);
+}
+.quiz-progress {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 12rem;
+}
+.quiz-progress-label {
+  font-size: 0.78rem;
+  color: var(--color-fd-muted-foreground);
+  font-weight: 500;
+}
+.quiz-progress-bar {
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--color-fd-secondary);
+  overflow: hidden;
+}
+.quiz-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--color-fd-primary) 90%, transparent),
+    var(--color-fd-primary)
+  );
+  transition: width 0.3s ease;
+}
+.quiz-item {
+  counter-increment: quiz-item;
+  border-radius: 0.7rem;
+  padding: 0.4rem 0;
+  transition: background 0.2s ease;
+}
+.quiz-item + .quiz-item {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-fd-border);
+}
+/* Item-level verdict after checking — a soft left accent so the whole question
+   reads as right/wrong at a glance (option-level state lives on .quiz-option). */
+.quiz-item-correct,
+.quiz-item-wrong {
+  border-left: 3px solid;
+  padding-left: 0.85rem;
+}
+.quiz-item-correct {
+  border-left-color: #16a34a;
+  background: color-mix(in oklab, #16a34a 5%, transparent);
+}
+.quiz-item-wrong {
+  border-left-color: #dc2626;
+  background: color-mix(in oklab, #dc2626 5%, transparent);
+}
+.quiz-title {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+.quiz-counter {
+  display: inline-flex;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-fd-primary) 14%, var(--color-fd-secondary));
+  color: var(--color-fd-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.quiz-counter::before {
+  content: counter(quiz-item);
+}
+.quiz-title h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.quiz-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+@media (min-width: 640px) {
+  .quiz-options {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.quiz-option {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  text-align: start;
+  min-height: 2.5rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--color-fd-border);
+  background: var(--color-fd-background);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+}
+.quiz-option:hover {
+  background: color-mix(in oklab, var(--color-fd-primary) 6%, var(--color-fd-background));
+}
+.quiz-option:active {
+  transform: scale(0.99);
+}
+.quiz-option.selected {
+  border-color: var(--color-fd-primary);
+  background: color-mix(in oklab, var(--color-fd-primary) 10%, transparent);
+  color: var(--color-fd-primary);
+}
+.quiz-option.is-answer {
+  border-color: #16a34a;
+  background: color-mix(in oklab, #16a34a 12%, transparent);
+  color: #15803d;
+}
+.quiz-option.is-wrong {
+  border-color: #dc2626;
+  background: color-mix(in oklab, #dc2626 12%, transparent);
+  color: #b91c1c;
+}
+.quiz-option-marker {
+  display: inline-flex;
+  width: 1.1rem;
+  height: 1.1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: transparent;
+}
+.quiz-option.is-answer .quiz-option-marker {
+  background: #16a34a;
+  color: white;
+}
+.quiz-option.is-wrong .quiz-option-marker {
+  background: #dc2626;
+  color: white;
+}
+.quiz-option-body {
+  flex: 1;
+}
+.quiz-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.85rem;
+}
+.quiz-check {
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+  border-color: var(--color-fd-primary);
+}
+.quiz-check:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-fd-primary) 90%, black);
+}
+.quiz-try-again {
+  background: var(--color-fd-secondary);
+  color: var(--color-fd-secondary-foreground);
+}
+.quiz-reset {
+  background: transparent;
+  color: var(--color-fd-muted-foreground);
+}
+.quiz-feedback {
+  margin-top: 0.85rem;
+  border-radius: 0.6rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.quiz-feedback.correct {
+  background: color-mix(in oklab, #16a34a 12%, transparent);
+  border-color: color-mix(in oklab, #16a34a 35%, transparent);
+}
+.quiz-feedback.wrong {
+  background: color-mix(in oklab, #dc2626 12%, transparent);
+  border-color: color-mix(in oklab, #dc2626 35%, transparent);
+}
+.quiz-feedback-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.quiz-feedback-headline strong {
+  font-size: 0.95rem;
+}
+.quiz-feedback.correct .quiz-feedback-headline strong {
+  color: #15803d;
+}
+.quiz-feedback.wrong .quiz-feedback-headline strong {
+  color: #b91c1c;
+}
+.quiz-feedback-answer {
+  font-size: 0.85rem;
+  color: var(--color-fd-muted-foreground);
+}
+.quiz-feedback-body {
+  font-size: 0.92rem;
+  line-height: 1.5;
+}

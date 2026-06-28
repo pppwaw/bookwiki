@@ -1,3 +1,5 @@
+import './home.css';
+
 import Link from 'next/link';
 import { getSourcePage, source } from '@/lib/source';
 import { docsRoute } from '@/lib/shared';

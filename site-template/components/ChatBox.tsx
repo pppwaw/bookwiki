@@ -1,5 +1,7 @@
 'use client';
 
+import './ChatBox.css';
+
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type ChatStatus, type UIMessage } from 'ai';
 import { Send } from 'lucide-react';

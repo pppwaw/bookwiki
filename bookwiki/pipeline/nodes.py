@@ -3707,9 +3707,12 @@ def _write_exam_page(cfg: BookConfig, chapter_dir: Path, exam_rel: str, display_
     exam = ExamResult.model_validate(_agent_result(read_json(cfg.book_dir / exam_rel)))
     mode = "walkthrough" if exam.owner_task_id.endswith(":explain") else "exam"
     page_title = f"{display_title} · {'讲解' if mode == 'walkthrough' else '测验'}"
+    # An exam page is its own page type (NOT ``chapter``): the site only appends the
+    # Feynman panel / lists in the home chapter index for ``chapter``/``concept`` pages,
+    # and an exam is neither — it is a standalone paper that should carry neither.
     write_text(
         chapter_dir / _EXAM_PAGE_FILENAME,
-        _frontmatter({"title": page_title, "type": "chapter"}) + render_exam_mdx(exam, mode=mode),
+        _frontmatter({"title": page_title, "type": "exam"}) + render_exam_mdx(exam, mode=mode),
     )
     write_json(chapter_dir / "meta.json", {"title": display_title, "pages": ["index", "exam"]})
 

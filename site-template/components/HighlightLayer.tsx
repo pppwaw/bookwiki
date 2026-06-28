@@ -1,5 +1,7 @@
 'use client';
 
+import './highlight.css';
+
 import { useEffect } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { HighlightColors, useHighlights } from '@/lib/highlights';

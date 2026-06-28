@@ -1,0 +1,159 @@
+/* AnkiDeck styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+
+/* ---------- anki ---------- */
+.anki-deck:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-fd-primary) 50%, transparent);
+  outline-offset: 2px;
+}
+.anki-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  flex-wrap: wrap;
+}
+.anki-progress {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 12rem;
+}
+.anki-progress-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-fd-muted-foreground);
+}
+.anki-progress-bar {
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--color-fd-secondary);
+  overflow: hidden;
+}
+.anki-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--color-fd-primary) 90%, transparent),
+    var(--color-fd-primary)
+  );
+  transition: width 0.3s ease;
+}
+.anki-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.anki-nav {
+  background: var(--color-fd-background);
+  min-width: 2.4rem;
+  font-size: 1rem;
+}
+.anki-nav:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-fd-primary) 8%, var(--color-fd-background));
+}
+.anki-reset {
+  background: transparent;
+  color: var(--color-fd-muted-foreground);
+}
+.anki-stage {
+  perspective: 1200px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.anki-card {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 9rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.85rem;
+  background: var(--color-fd-secondary);
+  padding: 1rem 1.1rem;
+  cursor: pointer;
+  text-align: start;
+  transition: transform 0.45s cubic-bezier(0.4, 0.2, 0.2, 1), background 0.25s ease;
+}
+.anki-card:hover {
+  background: color-mix(in oklab, var(--color-fd-primary) 6%, var(--color-fd-secondary));
+}
+.anki-card.flipped {
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--color-fd-primary) 14%, var(--color-fd-card)),
+    color-mix(in oklab, var(--color-fd-primary) 4%, var(--color-fd-card))
+  );
+}
+.anki-card-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: 7rem;
+}
+.anki-card-face {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+/* The front face (currently the only face) fills the card so its content
+   vertically centers within the card's min-height. */
+.anki-card-front {
+  flex: 1;
+  justify-content: center;
+}
+.anki-face-tag {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-fd-muted-foreground);
+}
+.anki-card.flipped .anki-face-tag::after {
+  content: ' · back';
+  color: var(--color-fd-primary);
+}
+.anki-face-body {
+  font-size: 1.02rem;
+  line-height: 1.55;
+}
+.anki-face-content {
+  width: 100%;
+}
+.anki-face-back-content {
+  color: var(--color-fd-primary);
+}
+.anki-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-fd-muted-foreground);
+  text-align: center;
+}
+.anki-export {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.15rem;
+}
+.anki-export-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-fd-border);
+  background: var(--color-fd-secondary);
+  color: var(--color-fd-foreground);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.anki-export-link:hover {
+  background: color-mix(in oklab, var(--color-fd-primary) 8%, var(--color-fd-secondary));
+  border-color: color-mix(in oklab, var(--color-fd-primary) 30%, var(--color-fd-border));
+}

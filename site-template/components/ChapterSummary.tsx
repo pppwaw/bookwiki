@@ -1,3 +1,5 @@
+import './ChapterSummary.css';
+
 import type { ReactNode } from 'react';
 
 export function ChapterSummary({ children }: { children: ReactNode }) {

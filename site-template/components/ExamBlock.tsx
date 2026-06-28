@@ -1,5 +1,7 @@
 'use client';
 
+import './ExamBlock.css';
+
 import {
   createContext,
   Fragment,

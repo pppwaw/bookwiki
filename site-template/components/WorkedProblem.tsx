@@ -1,5 +1,7 @@
 'use client';
 
+import './WorkedProblem.css';
+
 import { useMemo, useState, type FormEvent } from 'react';
 import { MathText } from './MathText';
 
@@ -88,7 +90,12 @@ export function WorkedProblem({
       <section className="worked-problem-question">
         <h3>题目</h3>
         <TextBlock text={question} />
-        {explanation ? <TextBlock className="worked-problem-hint" text={explanation} /> : null}
+        {explanation ? (
+          <details className="worked-problem-hint">
+            <summary>提示</summary>
+            <TextBlock text={explanation} />
+          </details>
+        ) : null}
       </section>
       <form className="worked-problem-form" onSubmit={submit}>
         <label htmlFor={`${id}-answer`}>你的解题过程</label>

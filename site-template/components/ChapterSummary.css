@@ -1,0 +1,30 @@
+/* ChapterSummary styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+
+/* ---------- chapter summary ---------- */
+.chapter-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0 0 1.5rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: 0.85rem;
+  border: 1px solid color-mix(in oklab, var(--color-fd-primary) 28%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--color-fd-primary) 10%, transparent),
+    color-mix(in oklab, var(--color-fd-primary) 3%, transparent)
+  );
+}
+.chapter-summary-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-fd-primary);
+}
+.chapter-summary-body {
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--color-fd-foreground);
+}

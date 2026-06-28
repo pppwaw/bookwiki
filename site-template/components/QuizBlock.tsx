@@ -1,5 +1,7 @@
 'use client';
 
+import './QuizBlock.css';
+
 import {
   createContext,
   Fragment,

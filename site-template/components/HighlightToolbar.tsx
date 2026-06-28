@@ -1,5 +1,7 @@
 'use client';
 
+import './highlight.css';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import {

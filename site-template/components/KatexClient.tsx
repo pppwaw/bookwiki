@@ -1,5 +1,7 @@
 'use client';
 
+import './KatexClient.css';
+
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import { renderKatexToString } from '@/lib/katex';
@@ -22,7 +24,10 @@ import { renderKatexToString } from '@/lib/katex';
 // unmounts on navigation.
 
 export function renderPendingKatex(root: ParentNode = document) {
-  const nodes = root.querySelectorAll<HTMLElement>('.katex-src');
+  const nodes = new Set<HTMLElement>(root.querySelectorAll<HTMLElement>('.katex-src'));
+  // querySelectorAll only finds descendants — include the root itself when it is
+  // the marker (e.g. a bare inline-math span handed straight to the observer).
+  if (root instanceof HTMLElement && root.classList.contains('katex-src')) nodes.add(root);
   nodes.forEach((el) => {
     const display = el.classList.contains('math-display');
     const tex = el.textContent ?? '';
@@ -43,6 +48,24 @@ export function KatexClient() {
 
   useEffect(() => {
     renderPendingKatex();
+
+    // Robustness over the fragile "every island must remember to re-trigger us"
+    // contract: watch for any `.katex-src` that enters the DOM later — exam
+    // explanations revealed on submit, flipped Anki backs, quiz feedback, or any
+    // future reveal — and paint it automatically. Rendering strips the
+    // `katex-src` class and emits non-marker KaTeX markup, so this never loops.
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        mutation.addedNodes.forEach((node) => {
+          if (!(node instanceof HTMLElement)) return;
+          if (node.classList.contains('katex-src') || node.querySelector('.katex-src')) {
+            renderPendingKatex(node);
+          }
+        });
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [pathname]);
 
   return null;

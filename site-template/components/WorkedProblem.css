@@ -1,0 +1,141 @@
+/* WorkedProblem styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+.worked-problem {
+  border-radius: 0.7rem;
+  padding: 0.4rem 0;
+}
+.worked-problem-head,
+.worked-evaluation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.worked-problem-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-fd-primary);
+}
+.worked-problem-score {
+  font-size: 0.82rem;
+  color: var(--color-fd-muted-foreground);
+}
+.worked-problem-question h3,
+.worked-points-matched h4,
+.worked-points-missing h4 {
+  margin: 0.8rem 0 0.35rem;
+  font-size: 0.95rem;
+}
+/* Hint/approach commentary — collapsed by default so it does not spoil the
+   problem; the student opens it deliberately (question-first pedagogy). */
+.worked-problem-hint {
+  margin-top: 0.5rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.9rem;
+}
+.worked-problem-hint > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.worked-problem-hint[open] > summary {
+  margin-bottom: 0.35rem;
+}
+.worked-problem-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+}
+.worked-problem-form label {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.worked-problem-form textarea {
+  width: 100%;
+  min-height: 10rem;
+  resize: vertical;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.65rem;
+  background: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+  padding: 0.75rem 0.85rem;
+  font: inherit;
+  line-height: 1.5;
+}
+.worked-problem-form textarea:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-fd-primary) 45%, transparent);
+  outline-offset: 2px;
+}
+.worked-problem-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.worked-problem-actions button {
+  min-height: 2.25rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--color-fd-border);
+  padding: 0.45rem 0.85rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.worked-problem-actions button[type='submit'] {
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+  border-color: var(--color-fd-primary);
+}
+.worked-problem-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.worked-problem-error,
+.worked-evaluation {
+  margin-top: 0.85rem;
+  border-radius: 0.6rem;
+  padding: 0.85rem 0.95rem;
+}
+.worked-problem-error {
+  border: 1px solid color-mix(in oklab, #dc2626 35%, transparent);
+  background: color-mix(in oklab, #dc2626 10%, transparent);
+  color: #b91c1c;
+}
+.worked-evaluation {
+  border: 1px solid var(--color-fd-border);
+  background: color-mix(in oklab, var(--color-fd-primary) 6%, transparent);
+}
+.worked-evaluation-correct {
+  border-color: color-mix(in oklab, #16a34a 35%, transparent);
+}
+.worked-evaluation-incorrect {
+  border-color: color-mix(in oklab, #dc2626 35%, transparent);
+}
+.worked-points-matched ul,
+.worked-points-missing ul,
+.worked-citations {
+  margin: 0.35rem 0 0;
+  padding-left: 1.2rem;
+}
+.worked-points-matched li::marker {
+  color: #16a34a;
+}
+.worked-points-missing li::marker {
+  color: #dc2626;
+}
+.worked-answer-block {
+  margin-top: 0.7rem;
+  border-top: 1px dashed var(--color-fd-border);
+  padding-top: 0.65rem;
+}
+.worked-answer-block summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.worked-citations {
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.78rem;
+}

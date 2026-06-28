@@ -1,5 +1,7 @@
 'use client';
 
+import './BookFigure.css';
+
 import { useState } from 'react';
 import { SourceRef } from './SourceRef';
 

@@ -1,5 +1,8 @@
 'use client';
 
+import './review.css';
+import '@/components/highlight.css';
+
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { MathText } from '@/components/MathText';

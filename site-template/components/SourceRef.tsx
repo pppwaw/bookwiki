@@ -1,5 +1,7 @@
 'use client';
 
+import './SourceRef.css';
+
 import { useState } from 'react';
 import { MathText } from './MathText';
 

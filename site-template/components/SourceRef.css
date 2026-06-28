@@ -1,0 +1,46 @@
+/* SourceRef styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+
+/* ---------- source ref ---------- */
+.source-ref {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--color-fd-primary) 35%, transparent);
+  background: color-mix(in oklab, var(--color-fd-primary) 8%, transparent);
+  padding: 0.05rem 0.5rem;
+  font-size: 0.78em;
+  font-weight: 600;
+  color: var(--color-fd-primary);
+  cursor: help;
+  outline: none;
+}
+.source-ref:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-fd-primary) 45%, transparent);
+}
+/* The ref id inside the pill (e.g. p001) — keep numerals even and the run tight. */
+.source-ref-id {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+.source-ref-tooltip {
+  position: absolute;
+  bottom: calc(100% + 0.35rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: max-content;
+  max-width: 18rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.5rem;
+  background: var(--color-fd-popover);
+  color: var(--color-fd-popover-foreground);
+  border: 1px solid var(--color-fd-border);
+  box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.25);
+  font-weight: 400;
+  font-size: 0.85rem;
+  white-space: normal;
+}

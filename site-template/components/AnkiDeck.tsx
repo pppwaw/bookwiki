@@ -1,5 +1,7 @@
 'use client';
 
+import './AnkiDeck.css';
+
 import {
   createContext,
   type KeyboardEvent,

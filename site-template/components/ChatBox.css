@@ -1,0 +1,33 @@
+/* ChatBox styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+
+/* ---------- chat ---------- */
+.chat-form {
+  display: flex;
+  gap: 0.75rem;
+}
+.chat-form textarea {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-fd-border);
+  background: var(--color-fd-background);
+  padding: 0.6rem 0.75rem;
+  color: inherit;
+  min-height: 5rem;
+  resize: vertical;
+}
+.chat-form button {
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+  border-color: var(--color-fd-primary);
+}
+.chat-answer {
+  display: block;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-fd-border);
+  padding: 0.8rem;
+  text-decoration: none;
+}
+.chat-answer p {
+  margin: 0.4rem 0 0;
+}

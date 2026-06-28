@@ -1,0 +1,414 @@
+/* home styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+.bw-home {
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: clamp(2.5rem, 6vw, 5rem) clamp(1.25rem, 5vw, 3rem) 5rem;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(2.75rem, 6vw, 4.5rem);
+}
+.bw-cover {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: clamp(2rem, 5vw, 4rem);
+  align-items: center;
+}
+.bw-cover-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.35rem;
+}
+.bw-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-fd-muted-foreground);
+}
+.bw-kicker-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--color-fd-primary);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-fd-primary) 18%, transparent);
+}
+.bw-title {
+  margin: 0;
+  font-family: var(--bw-font-serif);
+  font-weight: 600;
+  font-size: clamp(2.6rem, 6vw, 4.25rem);
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  color: var(--color-fd-foreground);
+}
+.bw-lead {
+  margin: 0;
+  max-width: 36ch;
+  font-size: clamp(1.02rem, 1.5vw, 1.2rem);
+  line-height: 1.7;
+  color: var(--color-fd-muted-foreground);
+}
+.bw-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  font-size: 0.9rem;
+  color: var(--color-fd-muted-foreground);
+}
+.bw-meta-item strong {
+  margin-right: 0.18rem;
+  font-family: var(--bw-font-serif);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-fd-foreground);
+}
+.bw-meta-sep {
+  width: 1px;
+  height: 1rem;
+  background: var(--color-fd-border);
+}
+.bw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 0.4rem;
+}
+.bw-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.7rem;
+  padding: 0.72rem 1.2rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1;
+  border: 1px solid transparent;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.16s ease, background-color 0.16s ease,
+    border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.bw-btn svg {
+  transition: transform 0.16s ease;
+}
+.bw-btn:hover svg {
+  transform: translateX(2px);
+}
+.bw-btn-primary {
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+}
+.bw-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px -14px color-mix(in oklab, var(--color-fd-primary) 75%, transparent);
+}
+.bw-btn-ghost {
+  background: transparent;
+  color: var(--color-fd-foreground);
+  border-color: var(--color-fd-border);
+}
+.bw-btn-ghost:hover {
+  background: color-mix(in oklab, var(--color-fd-foreground) 6%, transparent);
+  border-color: color-mix(in oklab, var(--color-fd-foreground) 24%, transparent);
+}
+.bw-plate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bw-book {
+  position: relative;
+  display: flex;
+  width: clamp(11rem, 19vw, 14.5rem);
+  aspect-ratio: 3 / 4;
+  border-radius: 0.3rem 0.7rem 0.7rem 0.3rem;
+  background: linear-gradient(
+    122deg,
+    color-mix(in oklab, var(--color-fd-primary) 32%, var(--color-fd-card)),
+    color-mix(in oklab, var(--color-fd-primary) 15%, var(--color-fd-card)) 52%,
+    var(--color-fd-card) 100%
+  );
+  border: 1px solid color-mix(in oklab, var(--color-fd-primary) 30%, var(--color-fd-border));
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-fd-card) 70%, white),
+    inset 0 0 0 1px color-mix(in oklab, var(--color-fd-card) 36%, transparent),
+    26px 30px 60px -32px color-mix(in oklab, var(--color-fd-foreground) 55%, transparent);
+  transform: rotate(2.2deg);
+}
+
+/* Soft top-left sheen, as if the cloth catches the light. */
+.bw-book::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(
+    155deg,
+    color-mix(in oklab, var(--color-fd-card) 55%, transparent),
+    transparent 36%
+  );
+  pointer-events: none;
+}
+
+/* The stacked book/page resting behind the cover, for depth. */
+.bw-book::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--color-fd-muted);
+  border: 1px solid var(--color-fd-border);
+  transform: translate(0.7rem, 0.7rem) rotate(-3.5deg);
+}
+
+/* A proper spine band hugging the binding edge. */
+.bw-book-spine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0.85rem;
+  border-radius: 0.3rem 0 0 0.3rem;
+  background: linear-gradient(
+    to right,
+    color-mix(in oklab, var(--color-fd-primary) 42%, var(--color-fd-foreground) 10%),
+    color-mix(in oklab, var(--color-fd-primary) 22%, var(--color-fd-card)) 72%,
+    transparent
+  );
+  box-shadow:
+    inset -1px 0 0 color-mix(in oklab, var(--color-fd-foreground) 14%, transparent),
+    inset 1px 0 0 color-mix(in oklab, var(--color-fd-card) 50%, white);
+}
+.bw-book-face {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: clamp(2.4rem, 6vw, 3.4rem) clamp(1.1rem, 2.2vw, 1.6rem)
+    clamp(1.4rem, 2.6vw, 1.9rem);
+  padding-left: clamp(1.5rem, 2.8vw, 2.1rem);
+}
+
+/* Debossed title cartouche; abstract rules stand in for the title so the
+   graphic never depends on the (any-language) title text. */
+.bw-book-plate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  width: 86%;
+  padding: clamp(0.9rem, 2vw, 1.25rem) clamp(0.8rem, 1.8vw, 1.1rem);
+  border-radius: 0.2rem;
+  border: 1px solid color-mix(in oklab, var(--color-fd-primary) 28%, var(--color-fd-border));
+  background: color-mix(in oklab, var(--color-fd-card) 38%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-fd-card) 60%, white),
+    inset 0 -1px 0 color-mix(in oklab, var(--color-fd-foreground) 8%, transparent);
+}
+.bw-book-line {
+  width: 78%;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-fd-primary) 68%, var(--color-fd-foreground));
+}
+.bw-book-line:nth-child(2) {
+  width: 54%;
+}
+.bw-book-byline {
+  margin-top: 0.15rem;
+  width: 40%;
+  height: 0.2rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-fd-muted-foreground) 70%, transparent);
+}
+
+/* Publisher's colophon near the foot of the cover. */
+.bw-book-mark {
+  width: clamp(2.2rem, 4.5vw, 3rem);
+  height: auto;
+  color: color-mix(in oklab, var(--color-fd-primary) 70%, var(--color-fd-foreground));
+  opacity: 0.9;
+}
+.bw-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+}
+.bw-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--color-fd-border);
+}
+.bw-section-title {
+  margin: 0;
+  font-family: var(--bw-font-serif);
+  font-size: clamp(1.5rem, 3vw, 1.95rem);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-fd-foreground);
+}
+.bw-section-note {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-fd-muted-foreground);
+}
+.bw-toc {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bw-toc-item + .bw-toc-item {
+  border-top: 1px solid var(--color-fd-border);
+}
+.bw-toc-link {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1.15rem;
+  padding: 1.05rem 0.6rem;
+  border-radius: 0.6rem;
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.16s ease, padding 0.16s ease;
+}
+.bw-toc-link:hover,
+.bw-toc-link:focus-within {
+  background: color-mix(in oklab, var(--color-fd-foreground) 4%, transparent);
+  padding-inline: 0.95rem;
+}
+.bw-toc-index {
+  font-family: var(--bw-font-serif);
+  font-size: 1.15rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in oklab, var(--color-fd-primary) 78%, var(--color-fd-muted-foreground));
+}
+.bw-toc-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.bw-toc-name {
+  font-size: 1.08rem;
+  font-weight: 600;
+  color: var(--color-fd-foreground);
+  text-decoration: none;
+}
+.bw-toc-name::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 0.6rem;
+}
+.bw-toc-desc {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--color-fd-muted-foreground);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.bw-toc-desc a {
+  position: relative;
+  z-index: 1;
+}
+.bw-toc-arrow {
+  color: var(--color-fd-muted-foreground);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.bw-toc-link:hover .bw-toc-arrow {
+  opacity: 1;
+  transform: translateX(0);
+}
+.bw-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.bw-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.45rem 0.95rem;
+  font-size: 0.92rem;
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--color-fd-foreground);
+  background: var(--color-fd-card);
+  border: 1px solid var(--color-fd-border);
+  transition: color 0.16s ease, background-color 0.16s ease,
+    border-color 0.16s ease, transform 0.16s ease;
+}
+.bw-chip:hover {
+  color: var(--color-fd-primary);
+  background: color-mix(in oklab, var(--color-fd-primary) 9%, transparent);
+  border-color: color-mix(in oklab, var(--color-fd-primary) 45%, transparent);
+  transform: translateY(-1px);
+}
+@media (max-width: 860px) {
+  .bw-cover {
+    grid-template-columns: 1fr;
+  }
+  .bw-plate {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bw-cover-body > *,
+  .bw-plate {
+    animation: bw-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .bw-cover-body > *:nth-child(2) {
+    animation-delay: 0.06s;
+  }
+  .bw-cover-body > *:nth-child(3) {
+    animation-delay: 0.12s;
+  }
+  .bw-cover-body > *:nth-child(4) {
+    animation-delay: 0.18s;
+  }
+  .bw-cover-body > *:nth-child(5) {
+    animation-delay: 0.24s;
+  }
+  .bw-plate {
+    animation-delay: 0.1s;
+  }
+}
+@keyframes bw-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -1,0 +1,14 @@
+/* KatexClient styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+
+/* ---------- math (client-rendered KaTeX) ---------- */
+
+/* `.katex-src` marks raw TeX awaiting client-side KaTeX rendering (see
+   components/KatexClient.tsx). Hide the literal TeX until it is rendered to
+   avoid a flash of `\frac{...}` on load/navigation. KatexClient removes the
+   class once KaTeX renders; a formula that fails to parse keeps its raw TeX and
+   becomes visible again. This app requires JS — without it, body/TOC math
+   stays hidden. */
+.katex-src {
+  color: transparent;
+}

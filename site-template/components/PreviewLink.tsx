@@ -1,3 +1,5 @@
+import './PreviewLink.css';
+
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { MathText } from './MathText';

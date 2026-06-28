@@ -1,0 +1,55 @@
+/* PreviewLink styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+
+/* ---------- preview links ---------- */
+.preview-link-wrap {
+  position: relative;
+  display: inline;
+}
+.preview-link {
+  text-decoration-style: dotted;
+  text-underline-offset: 0.16em;
+}
+.preview-link-card {
+  position: absolute;
+  bottom: calc(100% + 0.45rem);
+  left: 50%;
+  z-index: 40;
+  display: none;
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 2rem));
+  transform: translateX(-50%);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-popover);
+  color: var(--color-fd-popover-foreground);
+  box-shadow: 0 14px 30px -14px rgba(0, 0, 0, 0.32);
+  padding: 0.65rem 0.75rem;
+  white-space: normal;
+}
+.preview-link-card::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 0.6rem;
+  height: 0.6rem;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border-right: 1px solid var(--color-fd-border);
+  border-bottom: 1px solid var(--color-fd-border);
+  background: var(--color-fd-popover);
+}
+.preview-link-wrap:hover .preview-link-card,
+.preview-link-wrap:focus-within .preview-link-card {
+  display: grid;
+  gap: 0.3rem;
+}
+.preview-link-title {
+  font-weight: 650;
+  line-height: 1.35;
+}
+.preview-link-summary {
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}

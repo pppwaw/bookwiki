@@ -1,0 +1,342 @@
+/* ExamBlock styles — carved out of app/global.css. Global semantic class
+   names (unchanged); imported as a side-effect by the component. */
+
+/* ---------- exam (chapter-end paper) ---------- */
+.exam-block {
+  counter-reset: exam-item;
+}
+.exam-block-head {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px dashed var(--color-fd-border);
+}
+.exam-block-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-fd-muted-foreground);
+}
+.exam-submit {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  border: 1px solid var(--color-fd-primary);
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+  padding: 0.45rem 0.95rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.exam-submit:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-fd-primary) 90%, black);
+}
+.exam-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.exam-score {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+}
+.exam-score-pending {
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.85rem;
+}
+.exam-reset {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  border-radius: 0.55rem;
+  border: 1px solid var(--color-fd-border);
+  background: transparent;
+  color: var(--color-fd-muted-foreground);
+  padding: 0.3rem 0.7rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.exam-reset:hover {
+  background: var(--color-fd-secondary);
+}
+
+/* per-question */
+.exam-item {
+  counter-increment: exam-item;
+  padding: 0.3rem 0;
+}
+.exam-item + .exam-item {
+  margin-top: 1.1rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--color-fd-border);
+}
+.exam-question {
+  display: flex;
+  gap: 0.65rem;
+  align-items: baseline;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.exam-question::before {
+  content: counter(exam-item);
+  display: inline-flex;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-fd-primary) 14%, var(--color-fd-secondary));
+  color: var(--color-fd-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.exam-question > p {
+  margin: 0;
+  flex: 1;
+}
+.exam-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+@media (min-width: 640px) {
+  .exam-options {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.exam-option {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  text-align: start;
+  min-height: 2.5rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--color-fd-border);
+  background: var(--color-fd-background);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+}
+.exam-option:hover {
+  background: color-mix(in oklab, var(--color-fd-primary) 6%, var(--color-fd-background));
+}
+.exam-option:active {
+  transform: scale(0.99);
+}
+.exam-option.selected {
+  border-color: var(--color-fd-primary);
+  background: color-mix(in oklab, var(--color-fd-primary) 10%, transparent);
+  color: var(--color-fd-primary);
+}
+.exam-option.is-answer {
+  border-color: #16a34a;
+  background: color-mix(in oklab, #16a34a 12%, transparent);
+  color: #15803d;
+}
+.exam-option.is-wrong {
+  border-color: #dc2626;
+  background: color-mix(in oklab, #dc2626 12%, transparent);
+  color: #b91c1c;
+}
+.exam-option-marker {
+  display: inline-flex;
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.exam-option.is-answer .exam-option-marker {
+  background: #16a34a;
+  color: white;
+}
+.exam-option.is-wrong .exam-option-marker {
+  background: #dc2626;
+  color: white;
+}
+.exam-option-body {
+  flex: 1;
+}
+.exam-option-body p {
+  margin: 0;
+}
+.exam-explanation {
+  margin-top: 0.75rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-fd-border);
+  background: color-mix(in oklab, var(--color-fd-primary) 6%, transparent);
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+.exam-explanation > :first-child {
+  margin-top: 0;
+}
+.exam-explanation > :last-child {
+  margin-bottom: 0;
+}
+
+/* fill-in-the-blank */
+.exam-fill {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+.exam-fill-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+.exam-fill-row label {
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-fd-muted-foreground);
+}
+.exam-fill-row input {
+  flex: 1;
+  min-width: 8rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+  padding: 0.45rem 0.7rem;
+  font: inherit;
+  font-size: 0.92rem;
+}
+.exam-fill-row input:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-fd-primary) 45%, transparent);
+  outline-offset: 2px;
+}
+.exam-fill-row input:disabled {
+  opacity: 0.7;
+}
+.exam-fill-ok {
+  font-size: 0.85rem;
+  color: #15803d;
+}
+.exam-fill-bad {
+  font-size: 0.85rem;
+  color: #b91c1c;
+}
+
+/* worked (chapter-end deck variant) */
+.exam-worked {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+.exam-worked > label {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.exam-worked textarea {
+  width: 100%;
+  min-height: 8rem;
+  resize: vertical;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.65rem;
+  background: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+  padding: 0.7rem 0.85rem;
+  font: inherit;
+  line-height: 1.5;
+}
+.exam-worked textarea:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-fd-primary) 45%, transparent);
+  outline-offset: 2px;
+}
+.exam-worked > button {
+  align-self: flex-start;
+  min-height: 2.25rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--color-fd-primary);
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+  padding: 0.45rem 0.95rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.exam-worked > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.exam-worked-error {
+  border-radius: 0.6rem;
+  border: 1px solid color-mix(in oklab, #dc2626 35%, transparent);
+  background: color-mix(in oklab, #dc2626 10%, transparent);
+  color: #b91c1c;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+}
+.exam-worked-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-fd-border);
+  background: color-mix(in oklab, var(--color-fd-primary) 6%, transparent);
+  padding: 0.85rem 0.95rem;
+}
+.exam-worked-correct {
+  border-color: color-mix(in oklab, #16a34a 35%, transparent);
+  background: color-mix(in oklab, #16a34a 10%, transparent);
+}
+.exam-worked-incorrect {
+  border-color: color-mix(in oklab, #dc2626 35%, transparent);
+  background: color-mix(in oklab, #dc2626 10%, transparent);
+}
+.exam-worked-partial {
+  border-color: color-mix(in oklab, #d97706 35%, transparent);
+  background: color-mix(in oklab, #d97706 10%, transparent);
+}
+.exam-points h4 {
+  margin: 0.5rem 0 0.3rem;
+  font-size: 0.9rem;
+}
+.exam-points ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+.exam-reference,
+.exam-recap {
+  margin-top: 0.7rem;
+  border-top: 1px dashed var(--color-fd-border);
+  padding-top: 0.65rem;
+}
+.exam-reference summary,
+.exam-recap summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.exam-recap-body {
+  margin-top: 0.5rem;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
