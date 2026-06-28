@@ -195,7 +195,7 @@ def test_site_main_sets_site_language_from_book_config(
 ) -> None:
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text(
         "---\ntitle: Mini\n---\n\n# Mini Book\n",
@@ -252,7 +252,7 @@ def test_site_main_sets_site_language_from_book_config(
 def test_site_main_syncs_only_chat_env_to_site_env_file(tmp_path, monkeypatch) -> None:
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -301,7 +301,7 @@ def test_site_main_syncs_only_chat_env_to_site_env_file(tmp_path, monkeypatch) -
 def test_site_main_preserves_existing_node_options(tmp_path, monkeypatch) -> None:
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -326,7 +326,7 @@ def test_site_main_preserves_existing_node_options(tmp_path, monkeypatch) -> Non
 def test_materialize_site_preserves_local_env_file(tmp_path) -> None:
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -335,7 +335,7 @@ def test_materialize_site_preserves_local_env_file(tmp_path) -> None:
         encoding="utf-8",
     )
     env_path = book_dir / "site" / ".env.local"
-    env_path.parent.mkdir(parents=True)
+    env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text("BOOKWIKI_CHAT_API_KEY=book-local\n", encoding="utf-8")
 
     site.materialize_site(load_config(book_dir))
@@ -368,7 +368,7 @@ def test_materialize_site_preserves_build_caches(tmp_path) -> None:
     # hash, so keeping them is safe (and the industry norm — CI caches .next).
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -395,7 +395,7 @@ def test_materialize_site_preserves_node_modules(tmp_path) -> None:
     # forces a costly reinstall. Persistent workspace keeps them.
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -416,7 +416,7 @@ def test_materialize_site_preserves_symlinked_node_modules(tmp_path) -> None:
     # A symlinked node_modules (shared store) is likewise preserved, not severed.
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -428,7 +428,7 @@ def test_materialize_site_preserves_symlinked_node_modules(tmp_path) -> None:
     target.mkdir()
     (target / "marker.txt").write_text("shared deps", encoding="utf-8")
     site_dir = book_dir / "site"
-    site_dir.mkdir()
+    site_dir.mkdir(exist_ok=True)
     node_modules = site_dir / "node_modules"
     node_modules.symlink_to(target, target_is_directory=True)
 

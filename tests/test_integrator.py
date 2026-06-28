@@ -201,14 +201,11 @@ def test_integrate_node_renders_fixed_agent_results_to_mdx_snapshot(tmp_path: Pa
 
     result = integrate_node(state, cfg)
 
-    assert result == {"content_ready": True, "content_index": "content/docs/index.mdx"}
-    chapter_mdx = (book_dir / "content" / "docs" / "chapters" / "chapter-1.mdx").read_text(
-        encoding="utf-8"
-    )
-    concept_mdx = (book_dir / "content" / "docs" / "concepts" / "state-space.mdx").read_text(
-        encoding="utf-8"
-    )
-    index_mdx = (book_dir / "content" / "docs" / "index.mdx").read_text(encoding="utf-8")
+    assert result == {"content_ready": True, "content_index": "site/content/docs/index.mdx"}
+    docs = book_dir / "site" / "content" / "docs"
+    chapter_mdx = (docs / "chapters" / "chapter-1.mdx").read_text(encoding="utf-8")
+    concept_mdx = (docs / "concepts" / "state-space.mdx").read_text(encoding="utf-8")
+    index_mdx = (docs / "index.mdx").read_text(encoding="utf-8")
 
     chapter_preview = (
         '<PreviewLink href={"/docs/concepts/state-space"} title={"state space"} '
@@ -408,8 +405,8 @@ def test_integrate_node_resolves_chapter_figures_from_source(tmp_path: Path) -> 
 
     result = integrate_node(state, cfg)
 
-    assert result == {"content_ready": True, "content_index": "content/docs/index.mdx"}
-    chapter_mdx = (book_dir / "content" / "docs" / "chapters" / "chapter-1.mdx").read_text(
+    assert result == {"content_ready": True, "content_index": "site/content/docs/index.mdx"}
+    chapter_mdx = (book_dir / "site" / "content" / "docs" / "chapters" / "chapter-1.mdx").read_text(
         encoding="utf-8"
     )
 

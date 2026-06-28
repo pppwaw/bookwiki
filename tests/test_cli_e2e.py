@@ -88,7 +88,7 @@ def test_resume_reports_cache_hits_after_completed_run(tmp_path) -> None:
     assert "run status:" in checked.stdout
 
     db_path = book_dir / "site" / ".bookwiki" / "bookwiki.sqlite"
-    content_index = book_dir / "content" / "docs" / "index.mdx"
+    content_index = book_dir / "site" / "content" / "docs" / "index.mdx"
 
     assert db_path.exists()
     assert content_index.exists()

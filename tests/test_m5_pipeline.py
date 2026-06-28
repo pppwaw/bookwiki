@@ -627,7 +627,7 @@ def test_integrate_uses_alias_map_embedded_in_reconciled_concepts(tmp_path) -> N
 
     integrate_node(state, cfg)
 
-    chapter = (book_dir / "content" / "docs" / "chapters" / "chapter-1.mdx").read_text(
+    chapter = (book_dir / "site" / "content" / "docs" / "chapters" / "chapter-1.mdx").read_text(
         encoding="utf-8"
     )
     assert (
@@ -802,7 +802,7 @@ async def test_check_node_installs_site_dependencies_without_node_modules(
     _write_minimal_site_template(fake_template)
     monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
     book_dir = tmp_path / "book"
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -842,7 +842,7 @@ async def test_check_node_reports_site_dependency_install_failure(
     _write_minimal_site_template(fake_template)
     monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
     book_dir = tmp_path / "book"
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -879,7 +879,7 @@ async def test_check_node_runs_site_typecheck_when_dependencies_exist(
     _write_minimal_site_template(fake_template)
     monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
     book_dir = tmp_path / "book"
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -933,7 +933,7 @@ async def test_check_node_reports_site_typecheck_failure(tmp_path, monkeypatch) 
     (fake_template / "node_modules").mkdir()
     monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
     book_dir = tmp_path / "book"
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -965,18 +965,20 @@ async def test_check_node_reports_site_typecheck_failure(tmp_path, monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_check_node_removes_symlinked_site_node_modules_before_install(
+async def test_check_node_reuses_symlinked_site_node_modules_and_skips_install(
     tmp_path, monkeypatch
 ) -> None:
+    # Persistent workspace: an existing (even symlinked) node_modules is reused, not severed — so
+    # check skips ``pnpm install`` and goes straight to types:check on the in-place site.
     monkeypatch.setattr("bookwiki.pipeline.nodes.mdx_validator_available", lambda: True)
     monkeypatch.setattr("bookwiki.pipeline.nodes.shutil.which", lambda name: "/usr/bin/pnpm")
     fake_template = tmp_path / "site-template"
     _write_minimal_site_template(fake_template)
-    template_node_modules = fake_template / "node_modules"
-    template_node_modules.mkdir()
     monkeypatch.setattr(site, "TEMPLATE_DIR", fake_template)
+    shared_node_modules = tmp_path / "shared-node-modules"
+    shared_node_modules.mkdir()
     book_dir = tmp_path / "book"
-    content_dir = book_dir / "content" / "docs"
+    content_dir = book_dir / "site" / "content" / "docs"
     content_dir.mkdir(parents=True)
     (content_dir / "index.mdx").write_text("---\ntitle: Mini\n---\n\n# Mini\n", encoding="utf-8")
     (content_dir / "meta.json").write_text('{"pages":["index"]}', encoding="utf-8")
@@ -986,8 +988,7 @@ async def test_check_node_removes_symlinked_site_node_modules_before_install(
         title="Book",
         llm_runtime=TestLLMRuntime(),
     )
-    cfg.site_dir.mkdir(parents=True)
-    (cfg.site_dir / "node_modules").symlink_to(template_node_modules, target_is_directory=True)
+    (cfg.site_dir / "node_modules").symlink_to(shared_node_modules, target_is_directory=True)
     calls: list[list[str]] = []
 
     def fake_run(cmd, *args, **kwargs):  # noqa: ANN001
@@ -999,8 +1000,8 @@ async def test_check_node_removes_symlinked_site_node_modules_before_install(
     result = await check_node({}, cfg)
 
     assert result["repair_targets"] == []
-    assert calls == [["/usr/bin/pnpm", "install"], ["/usr/bin/pnpm", "run", "types:check"]]
-    assert not (cfg.site_dir / "node_modules").is_symlink()
+    assert calls == [["/usr/bin/pnpm", "run", "types:check"]]  # install skipped, deps present
+    assert (cfg.site_dir / "node_modules").is_symlink()  # symlink preserved, not severed
 
 
 @pytest.mark.asyncio

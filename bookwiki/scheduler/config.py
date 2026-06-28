@@ -90,7 +90,9 @@ class BookConfig:
 
     @property
     def content_dir(self) -> Path:
-        return self.book_dir / "content" / "docs"
+        # Single source of truth: integrate renders straight into the site, and check/repair/index
+        # operate on it in place. The whole pipeline follows this one property into ``site``.
+        return self.site_dir / "content" / "docs"
 
     @property
     def site_dir(self) -> Path:

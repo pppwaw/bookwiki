@@ -3612,6 +3612,11 @@ def _write_exam_page(cfg: BookConfig, chapter_dir: Path, exam_rel: str, display_
 
 
 def integrate_node(state: State, cfg: BookConfig) -> State:
+    # Lay the Next.js framework into ``site`` before rendering content into it. ``content`` is in
+    # SKIP/PRESERVE, so this never clobbers the docs we are about to (re)render. Idempotent.
+    from scripts.site import scaffold_site_template
+
+    scaffold_site_template(cfg)
     content_dir = ensure_dir(cfg.content_dir)
     chapters_dir = content_dir / "chapters"
     # Rebuilt from scratch each run: recursive removal clears both flat and nested
@@ -3890,6 +3895,12 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         },
     )
     _emit_concept_graph(state, cfg)
+    # scaffold ran before the graph existed; publish it now that integrate has emitted it.
+    graph_src = cfg.work_dir / "concept-graph.json"
+    if graph_src.exists():
+        graph_dst = cfg.site_dir / "public" / "concept-graph.json"
+        graph_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(graph_src, graph_dst)
     normalized = _normalize_rendered_mdx(content_dir)
     _LOG.info("integrate: normalized math in %d mdx file(s)", normalized)
     stitching = audit_stitching(content_dir, alias_map)
@@ -3962,68 +3973,51 @@ def _site_typecheck_issues(cfg: BookConfig) -> list[Issue]:
         _LOG.info("%s", message)
         return []
 
-    try:
-        from scripts.site import materialize_site
-    except ImportError as exc:
-        return [
-            Issue(
-                severity="error",
-                code="SITE_TYPECHECK_ERROR",
-                message=f"site type check failed to import site helper: {exc}",
-                owner_task_id="site:typecheck",
-            )
-        ]
-
-    try:
-        site_dir = materialize_site(cfg)
-    except FileNotFoundError as exc:
-        return [
-            Issue(
-                severity="error",
-                code="SITE_TYPECHECK_ERROR",
-                message=f"site type check failed to materialize site: {exc}",
-                owner_task_id="site:typecheck",
-            )
-        ]
-
+    # site is the single source of truth: integrate already scaffolded the framework and rendered
+    # content into it, so check validates it in place — no per-round materialize. Reuse installed
+    # deps (preserved across runs); only install when node_modules is genuinely absent.
+    site_dir = cfg.site_dir
     env = _site_typecheck_env(cfg)
-    try:
-        install_proc = subprocess.run(  # noqa: S603 - fixed argv, project-local package manager
-            [pnpm, "install"],
-            cwd=site_dir,
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return [
-            Issue(
-                severity="error",
-                code="SITE_TYPECHECK_ERROR",
-                message=f"site dependency install failed to run: {exc}",
-                owner_task_id="site:typecheck",
+    if not (site_dir / "node_modules").exists():
+        try:
+            install_proc = subprocess.run(  # noqa: S603 - fixed argv, project-local package manager
+                [pnpm, "install"],
+                cwd=site_dir,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=300,
             )
-        ]
-    if install_proc.returncode != 0:
-        output = _redact_site_typecheck_output(
-            "\n".join(
-                part for part in [install_proc.stdout.strip(), install_proc.stderr.strip()] if part
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            return [
+                Issue(
+                    severity="error",
+                    code="SITE_TYPECHECK_ERROR",
+                    message=f"site dependency install failed to run: {exc}",
+                    owner_task_id="site:typecheck",
+                )
+            ]
+        if install_proc.returncode != 0:
+            output = _redact_site_typecheck_output(
+                "\n".join(
+                    part
+                    for part in [install_proc.stdout.strip(), install_proc.stderr.strip()]
+                    if part
+                )
             )
-        )
-        if len(output) > 4000:
-            output = output[:4000] + "..."
-        return [
-            Issue(
-                severity="error",
-                code="SITE_TYPECHECK_ERROR",
-                message=(
-                    f"site dependency install failed (exit {install_proc.returncode}): {output}"
-                ),
-                owner_task_id="site:typecheck",
-            )
-        ]
+            if len(output) > 4000:
+                output = output[:4000] + "..."
+            return [
+                Issue(
+                    severity="error",
+                    code="SITE_TYPECHECK_ERROR",
+                    message=(
+                        f"site dependency install failed (exit {install_proc.returncode}): {output}"
+                    ),
+                    owner_task_id="site:typecheck",
+                )
+            ]
 
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, project-local package script

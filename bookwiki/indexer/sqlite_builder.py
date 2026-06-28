@@ -45,7 +45,7 @@ def build_sqlite_index(content_dir: str | Path, db_path: str | Path) -> Path:
 def rebuild_sqlite(book_dir: str | Path) -> Path:
     book_dir = Path(book_dir)
     return build_sqlite_index(
-        book_dir / "content" / "docs",
+        book_dir / "site" / "content" / "docs",
         book_dir / "site" / ".bookwiki" / "bookwiki.sqlite",
     )
 

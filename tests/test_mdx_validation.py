@@ -200,7 +200,7 @@ def _write(path: Path, text: str) -> None:
 @pytest.mark.asyncio
 async def test_check_node_flags_uncompilable_chapter_mdx(tmp_path: Path) -> None:
     book_dir = tmp_path / "book"
-    docs = book_dir / "content" / "docs"
+    docs = book_dir / "site" / "content" / "docs"
     _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
     # A chapter with a bare comparison `n<30` plus the sections check_node expects,
     # so the only error is the MDX one.
@@ -210,6 +210,7 @@ async def test_check_node_flags_uncompilable_chapter_mdx(tmp_path: Path) -> None
         "当 n<30 时不准确。\n\n<QuizBlock></QuizBlock>\n\n## Anki Cards\n\n## Sources\n",
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+    cfg.generation["siteTypeCheck"] = "off"  # these exercise MDX checks, not the site build
 
     result = await check_node({"agent_results": {}, "concept_pages": {}}, cfg)
 
@@ -227,13 +228,14 @@ async def test_check_node_exempts_exam_page_from_pedagogical_section_checks(tmp_
     # ``exam.mdx`` is a structural page: the teaching body lives in the sibling ``index.mdx``,
     # the exam page legitimately carries no QuizBlock/Anki/Sources. check_node must NOT flag it.
     book_dir = tmp_path / "book"
-    docs = book_dir / "content" / "docs"
+    docs = book_dir / "site" / "content" / "docs"
     _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
     _write(
         docs / "chapters" / "chapter-1" / "exam.mdx",
         "---\ntitle: Chapter 1 · 测验\n---\n\n# 测验\n\n干净的题面，没有教学区块。\n",
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+    cfg.generation["siteTypeCheck"] = "off"  # these exercise MDX checks, not the site build
 
     result = await check_node({"agent_results": {}, "concept_pages": {}}, cfg)
 
@@ -250,13 +252,14 @@ async def test_check_node_reports_missing_quiz_as_warning_not_repair_target(tmp_
     # skip questions when content is thin). MISSING_QUIZ has no deterministic repair, so it is a
     # ``warning`` that gets recorded but never enters repair_targets (no futile repair rounds).
     book_dir = tmp_path / "book"
-    docs = book_dir / "content" / "docs"
+    docs = book_dir / "site" / "content" / "docs"
     _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
     _write(
         docs / "chapters" / "chapter-1.mdx",
         "---\ntitle: Chapter 1\n---\n\n# Chapter 1\n\n干净的正文，没有任何教学区块。\n",
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+    cfg.generation["siteTypeCheck"] = "off"  # these exercise MDX checks, not the site build
 
     result = await check_node({"agent_results": {}, "concept_pages": {}}, cfg)
 
@@ -367,7 +370,7 @@ async def test_mdx_edit_repair_agent_edits_full_mdx_in_place() -> None:
 @pytest.mark.asyncio
 async def test_check_node_flags_uncompilable_concept_mdx(tmp_path: Path) -> None:
     book_dir = tmp_path / "book"
-    docs = book_dir / "content" / "docs"
+    docs = book_dir / "site" / "content" / "docs"
     _write(docs / "index.mdx", "---\ntitle: Book\n---\n\n## 目录\n")
     # A concept page with a stray inline <cite> tag and bare math: both break MDX.
     _write(
@@ -376,6 +379,7 @@ async def test_check_node_flags_uncompilable_concept_mdx(tmp_path: Path) -> None
         '需要 <cite ref_id="p001">Solve {\\frac{a}{b}} \\le 10</cite> 个观测。\n',
     )
     cfg = BookConfig(book_dir=book_dir, book_id="book", title="Book")
+    cfg.generation["siteTypeCheck"] = "off"  # these exercise MDX checks, not the site build
 
     result = await check_node({"agent_results": {}, "concept_pages": {}}, cfg)
 

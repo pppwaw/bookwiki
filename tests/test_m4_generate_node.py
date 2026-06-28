@@ -273,10 +273,11 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     result_dir = book_dir / "work" / "agent_results"
     concept_dir = result_dir / "concepts"
     concept_dir.mkdir(parents=True)
-    (book_dir / "content" / "docs" / "chapters").mkdir(parents=True)
-    (book_dir / "content" / "docs" / "concepts").mkdir(parents=True)
-    (book_dir / "content" / "docs" / "chapters" / "stale.mdx").write_text("stale", encoding="utf-8")
-    (book_dir / "content" / "docs" / "concepts" / "stale.mdx").write_text("stale", encoding="utf-8")
+    docs = book_dir / "site" / "content" / "docs"
+    (docs / "chapters").mkdir(parents=True)
+    (docs / "concepts").mkdir(parents=True)
+    (docs / "chapters" / "stale.mdx").write_text("stale", encoding="utf-8")
+    (docs / "concepts" / "stale.mdx").write_text("stale", encoding="utf-8")
     (concept_dir / "Point-Estimation.json").write_text(
         json.dumps(
             {
@@ -401,8 +402,8 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     result = integrate_node(state, cfg)
 
     assert result["content_ready"] is True
-    assert result["content_index"] == "content/docs/index.mdx"
-    index_text = (book_dir / "content" / "docs" / "index.mdx").read_text(encoding="utf-8")
+    assert result["content_index"] == "site/content/docs/index.mdx"
+    index_text = (book_dir / "site" / "content" / "docs" / "index.mdx").read_text(encoding="utf-8")
     assert index_text.startswith(
         "---\ntitle: Book\ndescription: Book 的互动学习指南：章节目录与核心概念。\n---\n\n## 目录"
     )
@@ -414,10 +415,10 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
         '<Card title={"Point Estimation"} href={"/docs/concepts/Point-Estimation"}'
     ) in index_text
     assert "(./chapters/chapter-6)" not in index_text
-    assert not (book_dir / "content" / "docs" / "chapters" / "stale.mdx").exists()
-    assert not (book_dir / "content" / "docs" / "concepts" / "stale.mdx").exists()
+    assert not (book_dir / "site" / "content" / "docs" / "chapters" / "stale.mdx").exists()
+    assert not (book_dir / "site" / "content" / "docs" / "concepts" / "stale.mdx").exists()
 
-    chapter_page = book_dir / "content" / "docs" / "chapters" / "chapter-6.mdx"
+    chapter_page = book_dir / "site" / "content" / "docs" / "chapters" / "chapter-6.mdx"
     assert chapter_page.exists()
     chapter_text = chapter_page.read_text(encoding="utf-8")
     frontmatter = chapter_text.split("---", 2)[1]
@@ -478,7 +479,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
     assert "\\frac&#123;1&#125;&#123;2n&#125;" in chapter_text
     assert "<Markdown" not in chapter_text
 
-    concept_page = book_dir / "content" / "docs" / "concepts" / "Point-Estimation.mdx"
+    concept_page = book_dir / "site" / "content" / "docs" / "concepts" / "Point-Estimation.mdx"
     assert concept_page.exists()
     concept_text = concept_page.read_text(encoding="utf-8")
     assert "\\(" not in concept_text
@@ -494,7 +495,7 @@ def test_integrate_node_writes_mdx_frontmatter_components_and_concept_backlinks(
         in concept_text
     )
 
-    zh_concept_page = book_dir / "content" / "docs" / "concepts" / "似然函数.mdx"
+    zh_concept_page = book_dir / "site" / "content" / "docs" / "concepts" / "似然函数.mdx"
     assert zh_concept_page.exists()
     zh_concept_text = zh_concept_page.read_text(encoding="utf-8")
     assert (
@@ -553,7 +554,7 @@ def test_integrate_node_writes_two_level_grouped_chapters(tmp_path) -> None:
     book_dir = tmp_path / "book"
     result_dir = book_dir / "work" / "agent_results"
     result_dir.mkdir(parents=True)
-    chapters_root = book_dir / "content" / "docs" / "chapters"
+    chapters_root = book_dir / "site" / "content" / "docs" / "chapters"
     chapters_root.mkdir(parents=True)
     # Stale flat file from a previous (ungrouped) run must be cleared on rerun.
     (chapters_root / "chapter-9-2.mdx").write_text("stale", encoding="utf-8")
@@ -595,5 +596,5 @@ def test_integrate_node_writes_two_level_grouped_chapters(tmp_path) -> None:
     assert "chapter_id: chapter-9-2" in leaf_text
     assert leaf_text.split("---", 2)[2].lstrip().startswith("# 9.2 Infinite Series")
 
-    index_text = (book_dir / "content" / "docs" / "index.mdx").read_text("utf-8")
+    index_text = (book_dir / "site" / "content" / "docs" / "index.mdx").read_text("utf-8")
     assert 'href={"/docs/chapters/chapter-9/chapter-9-2"}' in index_text

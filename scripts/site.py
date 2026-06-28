@@ -14,7 +14,6 @@ try:
     from ._common import book_arg_parser  # type: ignore[import-not-found] # noqa: E402
 except ImportError:  # pragma: no cover - direct script execution
     from _common import book_arg_parser  # type: ignore[no-redef] # noqa: E402
-from bookwiki.integrator.markdown_renderers import normalize_mdx_math  # noqa: E402
 from bookwiki.scheduler.config import BookConfig, load_config  # noqa: E402
 
 TEMPLATE_DIR = ROOT / "site-template"
@@ -27,9 +26,8 @@ SITE_ENV_KEYS = (
     "BOOKWIKI_EVALUATE_MODEL",
 )
 # site is a persistent workspace: keep installed deps (node_modules) and build caches (.next,
-# .source) across re-materialize so ``pnpm build`` stays incremental. These are all in
-# SKIP_TEMPLATE_NAMES too, so the template-copy pass leaves them untouched — pure preservation.
-# (``content`` becomes single-source-of-truth in a later step that rewrites the copy logic.)
+# .source) across re-scaffold so ``pnpm build`` stays incremental, and keep ``content`` — the
+# single source of truth rendered by ``integrate_node`` — from being wiped or overwritten here.
 PRESERVE_SITE_NAMES = {
     ".bookwiki",
     ".env.local",
@@ -37,6 +35,7 @@ PRESERVE_SITE_NAMES = {
     "node_modules",
     ".next",
     ".source",
+    "content",
 }
 SKIP_TEMPLATE_NAMES = {
     ".bookwiki",
@@ -45,6 +44,7 @@ SKIP_TEMPLATE_NAMES = {
     ".source",
     "node_modules",
     "tsconfig.tsbuildinfo",
+    "content",
 }
 
 
@@ -59,7 +59,14 @@ def load_site_config(book_dir: str | Path) -> BookConfig:
     return cfg
 
 
-def materialize_site(book: BookConfig | str | Path) -> Path:
+def scaffold_site_template(book: BookConfig | str | Path) -> Path:
+    """Lay the Next.js site framework into ``site_dir`` without touching ``content/docs``.
+
+    ``content/docs`` is the single source of truth, rendered straight into the site by
+    ``integrate_node`` (which also normalizes math). This only (re)installs the framework files,
+    public assets, and the concept graph. Idempotent; preserves deps and build caches and the
+    rendered ``content`` (see PRESERVE_SITE_NAMES / SKIP_TEMPLATE_NAMES).
+    """
     cfg = book if isinstance(book, BookConfig) else load_site_config(book)
 
     site_dir = cfg.site_dir
@@ -75,16 +82,14 @@ def materialize_site(book: BookConfig | str | Path) -> Path:
             continue
         target = site_dir / child.name
         if child.is_dir():
-            shutil.copytree(child, target, ignore=shutil.ignore_patterns(*SKIP_TEMPLATE_NAMES))
+            shutil.copytree(
+                child,
+                target,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns(*SKIP_TEMPLATE_NAMES),
+            )
         else:
             shutil.copy2(child, target)
-
-    target_docs = site_dir / "content" / "docs"
-    if target_docs.exists():
-        _remove_path(target_docs)
-    target_docs.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(cfg.content_dir, target_docs)
-    _normalize_site_mdx(target_docs)
 
     source_assets = cfg.work_dir / "assets"
     target_assets = site_dir / "public" / "bookwiki-assets"
@@ -107,12 +112,8 @@ def materialize_site(book: BookConfig | str | Path) -> Path:
     return site_dir
 
 
-def _normalize_site_mdx(content_dir: Path) -> None:
-    for path in content_dir.rglob("*.mdx"):
-        text = path.read_text(encoding="utf-8")
-        normalized = normalize_mdx_math(text)
-        if normalized != text:
-            path.write_text(normalized, encoding="utf-8")
+# Transitional alias until call sites migrate (removed in the site.py main slimming step).
+materialize_site = scaffold_site_template
 
 
 def sync_site_env(site_dir: Path) -> Path | None:
@@ -242,15 +243,18 @@ def main() -> None:
     parser = book_arg_parser("Start the BookWiki Next.js demo site.")
     args = parser.parse_args()
 
+    # load_site_config requires content/docs to exist — i.e. the pipeline (integrate) has rendered
+    # the single source of truth into the site already. main only frames it and serves.
     cfg = load_site_config(args.book_dir)
-    site_dir = materialize_site(cfg)
+    site_dir = scaffold_site_template(cfg)
     sync_site_env(site_dir)
     sync_public_book_id(site_dir, cfg.book_id)
     env = os.environ.copy()
     env["BOOKWIKI_SITE_LANGUAGE"] = cfg.language
     env.setdefault("NODE_OPTIONS", "--max-old-space-size=4096")
 
-    subprocess.run(["pnpm", "install"], cwd=site_dir, env=env, check=True)
+    if not (site_dir / "node_modules").exists():
+        subprocess.run(["pnpm", "install"], cwd=site_dir, env=env, check=True)
     subprocess.run(["pnpm", "build"], cwd=site_dir, env=env, check=True)
     subprocess.run(["pnpm", "start"], cwd=site_dir, env=env, check=True)
 

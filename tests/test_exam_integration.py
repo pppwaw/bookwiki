@@ -99,7 +99,7 @@ def test_chapter_with_exam_becomes_folder_with_exam_page(tmp_path: Path) -> None
 
     integrate_node(_state(), cfg)
 
-    chapters = book_dir / "content" / "docs" / "chapters"
+    chapters = book_dir / "site" / "content" / "docs" / "chapters"
     assert (chapters / "chapter-1" / "index.mdx").exists()
     assert not (chapters / "chapter-1.mdx").exists()
     exam_mdx = (chapters / "chapter-1" / "exam.mdx").read_text(encoding="utf-8")
@@ -116,7 +116,7 @@ def test_walkthrough_mode_detected_from_owner_task_id(tmp_path: Path) -> None:
     integrate_node(_state(), cfg)
 
     exam_mdx = (
-        book_dir / "content" / "docs" / "chapters" / "chapter-1" / "exam.mdx"
+        book_dir / "site" / "content" / "docs" / "chapters" / "chapter-1" / "exam.mdx"
     ).read_text(encoding="utf-8")
     assert 'mode="walkthrough"' in exam_mdx
 
