@@ -745,6 +745,24 @@ def _strip_illegal_component_fences(text: str) -> str:
     return _COMPONENT_FENCE_RE.sub(_unwrap, text)
 
 
+def _normalize_rendered_mdx(content_dir: Path) -> int:
+    """Normalize math delimiters across every rendered ``.mdx`` under ``content_dir``.
+
+    integrate normalizes chapter/concept bodies as it renders them, but the homepage ``index.mdx``
+    and any other write path are not individually covered. One final sweep here guarantees the
+    single-source-of-truth ``content`` is fully normalized before validation/build — this replaces
+    the second normalize pass that used to live in ``materialize_site``. Returns files changed.
+    """
+    changed = 0
+    for path in content_dir.rglob("*.mdx"):
+        text = path.read_text(encoding="utf-8")
+        normalized = normalize_mdx_math(text)
+        if normalized != text:
+            path.write_text(normalized, encoding="utf-8")
+            changed += 1
+    return changed
+
+
 def _normalize_concept_links(
     markdown: str,
     alias_map: dict[str, str],
@@ -3872,6 +3890,8 @@ def integrate_node(state: State, cfg: BookConfig) -> State:
         },
     )
     _emit_concept_graph(state, cfg)
+    normalized = _normalize_rendered_mdx(content_dir)
+    _LOG.info("integrate: normalized math in %d mdx file(s)", normalized)
     stitching = audit_stitching(content_dir, alias_map)
     if not stitching.ok:
         _LOG.warning(

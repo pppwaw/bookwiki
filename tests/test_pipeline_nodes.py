@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from bookwiki.integrator.markdown_renderers import normalize_public_asset_markdown_images
+from bookwiki.integrator.markdown_renderers import (
+    normalize_mdx_math,
+    normalize_public_asset_markdown_images,
+)
 from bookwiki.pipeline.nodes import (
     _drop_missing_local_markdown_links,
     _illegal_component_fence_issues,
+    _normalize_rendered_mdx,
     _strip_illegal_component_fences,
     _target_mdx_path,
 )
@@ -113,3 +117,22 @@ def test_target_mdx_path_returns_none_for_missing_file(tmp_path) -> None:
     cfg = SimpleNamespace(content_dir=tmp_path)
 
     assert _target_mdx_path("Chapter-404/index:chapter", cfg) is None
+
+
+# --- Task 2: 数学归一化前移进 integrate，覆盖全部 mdx 写入（含 index.mdx） ---
+
+
+def test_normalize_rendered_mdx_normalizes_every_file(tmp_path) -> None:
+    (tmp_path / "chapters" / "Ch-1").mkdir(parents=True)
+    home = tmp_path / "index.mdx"
+    nested = tmp_path / "chapters" / "Ch-1" / "index.mdx"
+    # 首页用 LaTeX 定界符 \(...\)（未归一化）；嵌套页已是规范的 $...$。
+    home.write_text("---\ntitle: H\n---\n\n行内 \\(a+b\\) 公式。\n", encoding="utf-8")
+    nested.write_text("已规范 $x$ 文本。\n", encoding="utf-8")
+
+    changed = _normalize_rendered_mdx(tmp_path)
+
+    home_text = home.read_text(encoding="utf-8")
+    assert "\\(" not in home_text and "$a+b$" in home_text  # 首页被归一化
+    assert normalize_mdx_math(home_text) == home_text  # 达到幂等点
+    assert changed == 1  # 只有首页改变，已规范文件不重写
