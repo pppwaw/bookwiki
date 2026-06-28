@@ -18,11 +18,13 @@
 import { compile } from "@mdx-js/mdx";
 import katex from "katex";
 import remarkCjkFriendly from "remark-cjk-friendly";
+import remarkFrontmatter from "remark-frontmatter";
 import remarkMath from "remark-math";
 import remarkMdx from "remark-mdx";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { visit } from "unist-util-visit";
+import { parse as parseYaml } from "yaml";
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -47,14 +49,24 @@ function diagnostic(err) {
   };
 }
 
-// Same remark stack as the site, used only to walk the tree. remark-math is essential:
-// it consumes `$...$`/`$$...$$` into math nodes so LaTeX braces are NOT seen as JSX
+// Same remark stack as the site, used only to walk the tree. remark-frontmatter makes the
+// leading `---...---` a `yaml` node (exactly like fumadocs-mdx, which extracts frontmatter as
+// YAML before MDX ever runs) so its body is NOT compiled as MDX — without it the `summary`
+// field's LaTeX is parsed as flow/text and its `{...}` braces blow up acorn. remark-math is
+// essential: it consumes `$...$`/`$$...$$` into math nodes so LaTeX braces are NOT seen as JSX
 // expressions; only braces in real flow/text position survive as mdx expression nodes.
 const exprProcessor = unified()
   .use(remarkParse)
   .use(remarkMdx)
+  .use(remarkFrontmatter)
   .use(remarkCjkFriendly)
   .use(remarkMath);
+
+// Mirror of the site's <Markdown> (site-template/components/markdown.tsx): frontmatter fields
+// like `summary`/`key_points` are rendered with `remark().use(remarkGfm).use(remarkMath)` as
+// plain *markdown* (NOT MDX), so `{...}` is literal text there and only `$...$` math matters.
+// We parse each field as markdown to KaTeX-check its math the same way the page will render it.
+const markdownProcessor = unified().use(remarkParse).use(remarkMath);
 
 function findBareExpressions(tree) {
   const errors = [];
@@ -203,6 +215,93 @@ function findBrokenMath(tree) {
   return errors;
 }
 
+// Frontmatter string fields the site renders through <Markdown> (so their `$...$` math is
+// KaTeX-rendered and broken TeX degrades to raw text, just like body math). Each entry is a
+// top-level YAML key; values may be a string or an array of strings (e.g. `key_points`).
+const MARKDOWN_FRONTMATTER_FIELDS = ["summary", "description", "key_points"];
+
+// 1-based line of a top-level YAML key inside the leading frontmatter block, for a useful
+// pointer in the diagnostic (the math's own column is meaningless once YAML has unfolded the
+// folded scalar into one logical string). Returns null if not found.
+function frontmatterKeyLine(content, key) {
+  const lines = content.split("\n");
+  if (lines[0] !== "---") return null;
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i] === "---") break;
+    if (new RegExp(`^${key}\\s*:`).test(lines[i])) return i + 1;
+  }
+  return null;
+}
+
+// Re-render every `$...$` in a frontmatter markdown field with the SAME KaTeX settings as
+// findBrokenMath, so broken TeX in `summary`/`key_points`/... is caught instead of silently
+// shipping as raw text on the page. Reported as warnings (render-quality, not build-breakers).
+function frontmatterMathWarnings(value, label, line) {
+  const warnings = [];
+  const tree = markdownProcessor.parse(value);
+  visit(tree, (node) => {
+    if (node.type !== "math" && node.type !== "inlineMath") return;
+    const tex = String(node.value || "");
+    try {
+      katex.renderToString(normalizeKatexInput(tex), {
+        throwOnError: true,
+        strict: false,
+        output: "html",
+        displayMode: node.type === "math",
+      });
+    } catch (err) {
+      const reason = String((err && (err.message || err.reason)) || err)
+        .replace(/\s+/g, " ")
+        .slice(0, 160);
+      const snippet = tex.replace(/\s+/g, " ").slice(0, 40);
+      warnings.push({
+        message:
+          `invalid LaTeX math in frontmatter "${label}" ($${snippet}$): ${reason}; the site ` +
+          "renders this field as markdown (KaTeX throwOnError is off) so it ships as raw text — fix the TeX",
+        line,
+        column: null,
+        rule: "frontmatter-math-render-error",
+      });
+    }
+  });
+  return warnings;
+}
+
+// Validate the markdown of frontmatter fields the page renders with <Markdown>. We parse the
+// YAML ourselves (the folded scalar becomes one logical string, so cross-line `$...$` pairs
+// correctly) and KaTeX-check each field's math.
+function findFrontmatterWarnings(content) {
+  const warnings = [];
+  if (!content.startsWith("---\n")) return warnings;
+  const end = content.indexOf("\n---", 4);
+  if (end === -1) return warnings;
+  const yamlText = content.slice(4, end);
+  let data;
+  try {
+    data = parseYaml(yamlText);
+  } catch {
+    // A malformed YAML frontmatter is fumadocs-mdx's concern (it parses the same block); we
+    // only validate the markdown of fields we can read, so bail quietly here.
+    return warnings;
+  }
+  if (!data || typeof data !== "object") return warnings;
+  for (const field of MARKDOWN_FRONTMATTER_FIELDS) {
+    const raw = data[field];
+    if (raw == null) continue;
+    const line = frontmatterKeyLine(content, field);
+    if (typeof raw === "string") {
+      warnings.push(...frontmatterMathWarnings(raw, field, line));
+    } else if (Array.isArray(raw)) {
+      raw.forEach((item, index) => {
+        if (typeof item === "string") {
+          warnings.push(...frontmatterMathWarnings(item, `${field}[${index}]`, line));
+        }
+      });
+    }
+  }
+  return warnings;
+}
+
 async function main() {
   const raw = await readStdin();
   // Batch mode (``--batch``): stdin is a JSON object ``{"files":[{path,content}]}`` and we
@@ -237,10 +336,14 @@ async function validateContent(content) {
   const errors = [];
   const warnings = [];
   try {
-    await compile(content, { remarkPlugins: [remarkCjkFriendly, remarkMath] });
+    await compile(content, { remarkPlugins: [remarkFrontmatter, remarkCjkFriendly, remarkMath] });
   } catch (err) {
     errors.push(diagnostic(err));
   }
+  // Frontmatter is YAML, not MDX (fumadocs-mdx strips it before compile) — validate the
+  // markdown of the fields the page renders with <Markdown> separately, regardless of the
+  // body's compile result.
+  warnings.push(...findFrontmatterWarnings(content));
   // Only scan for render-crashing bare expressions when the parse/compile itself is clean;
   // a compile failure already pinpoints the syntax problem.
   if (errors.length === 0) {

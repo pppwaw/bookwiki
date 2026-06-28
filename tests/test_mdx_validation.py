@@ -100,6 +100,24 @@ def test_validate_mdx_allows_braces_inside_math() -> None:
     assert validate_mdx("统计量 $Z = \\bar{X} / \\sqrt{n}$。") == []
 
 
+@needs_node
+def test_validate_mdx_does_not_compile_frontmatter_as_mdx() -> None:
+    # Frontmatter is YAML (fumadocs-mdx strips it before MDX runs), so its `summary` LaTeX
+    # must NOT be compiled as MDX. A folded YAML scalar splits the inline `$...$` across two
+    # physical lines; remark-math won't pair `$` across the fold, leaving `V_{\mathrm{rms}}`
+    # braces to blow up acorn — UNLESS frontmatter is recognised and skipped. Regression for
+    # the "Could not parse expression with acorn" false positive on a valid summary.
+    body = (
+        "---\n"
+        "title: Average Power\n"
+        "summary: It equals $\\frac{1}{2}V_m I_m \\cos(\\theta_v\n"
+        "  - \\theta_i)$ or $P = V_{\\mathrm{rms}}I_{\\mathrm{rms}}\\cos(\\theta_v\n"
+        "  - \\theta_i)$.\n"
+        "---\n\n# Average Power\n\n正文里有 $x^2$。\n"
+    )
+    assert validate_mdx(body) == []
+
+
 # --------------------------------------------------------------------------- #
 # allowlist scan - reject render-time-unsafe JSX that still *compiles*
 # (the `<cite ref=...>` RSC crash class), without false-flagging safe content
