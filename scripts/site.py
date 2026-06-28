@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -241,6 +242,11 @@ def _parse_env_value(value: str) -> str:
 
 def main() -> None:
     parser = book_arg_parser("Start the BookWiki Next.js demo site.")
+    parser.add_argument(
+        "start_args",
+        nargs=argparse.REMAINDER,
+        help="Extra args forwarded to `pnpm start` (next start), e.g. `-- -p 4000 -H 0.0.0.0`.",
+    )
     args = parser.parse_args()
 
     # load_site_config requires content/docs to exist — i.e. the pipeline (integrate) has rendered
@@ -255,7 +261,13 @@ def main() -> None:
 
     subprocess.run(["pnpm", "install"], cwd=site_dir, env=env, check=True)
     subprocess.run(["pnpm", "build"], cwd=site_dir, env=env, check=True)
-    subprocess.run(["pnpm", "start"], cwd=site_dir, env=env, check=True)
+
+    # Forward any trailing args to `next start`. pnpm passes everything after `--`
+    # straight through to the underlying script.
+    start_cmd = ["pnpm", "start"]
+    if args.start_args:
+        start_cmd.extend(args.start_args)
+    subprocess.run(start_cmd, cwd=site_dir, env=env, check=True)
 
 
 if __name__ == "__main__":
