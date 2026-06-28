@@ -245,7 +245,8 @@ def test_site_main_sets_site_language_from_book_config(
         book_dir / "site" / "public" / "bookwiki-assets" / "mini" / "figure.png"
     ).read_bytes() == b"image"
     assert sqlite_path.read_bytes() == b"sqlite fixture"
-    assert not next_cache.exists()
+    # .next build cache survives materialize (persistent workspace → incremental builds).
+    assert (next_cache / "next-development.log").read_text(encoding="utf-8") == "cache"
 
 
 def test_site_main_syncs_only_chat_env_to_site_env_file(tmp_path, monkeypatch) -> None:
@@ -361,7 +362,10 @@ def test_sync_public_book_id_writes_and_is_idempotent(tmp_path) -> None:
     assert "BOOKWIKI_CHAT_API_KEY=book-local" in second
 
 
-def test_materialize_site_removes_content_derived_caches(tmp_path) -> None:
+def test_materialize_site_preserves_build_caches(tmp_path) -> None:
+    # site is a persistent workspace now: .next/.source build caches must survive re-materialize so
+    # the next ``pnpm build`` is incremental. Next.js/fumadocs invalidate their own caches by file
+    # hash, so keeping them is safe (and the industry norm — CI caches .next).
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
     content_dir = book_dir / "content" / "docs"
@@ -377,16 +381,18 @@ def test_materialize_site_removes_content_derived_caches(tmp_path) -> None:
     next_cache = site_dir / ".next"
     source_cache.mkdir(parents=True)
     next_cache.mkdir()
-    (source_cache / "stale.txt").write_text("old mdx", encoding="utf-8")
-    (next_cache / "stale.txt").write_text("old build", encoding="utf-8")
+    (source_cache / "keep.txt").write_text("incremental mdx", encoding="utf-8")
+    (next_cache / "keep.txt").write_text("incremental build", encoding="utf-8")
 
     site.materialize_site(load_config(book_dir))
 
-    assert not source_cache.exists()
-    assert not next_cache.exists()
+    assert (source_cache / "keep.txt").read_text(encoding="utf-8") == "incremental mdx"
+    assert (next_cache / "keep.txt").read_text(encoding="utf-8") == "incremental build"
 
 
-def test_materialize_site_removes_node_modules_by_default(tmp_path) -> None:
+def test_materialize_site_preserves_node_modules(tmp_path) -> None:
+    # Dependencies are independent of book content; deleting node_modules every materialize only
+    # forces a costly reinstall. Persistent workspace keeps them.
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
     content_dir = book_dir / "content" / "docs"
@@ -399,14 +405,15 @@ def test_materialize_site_removes_node_modules_by_default(tmp_path) -> None:
     )
     node_modules = book_dir / "site" / "node_modules"
     node_modules.mkdir(parents=True)
-    (node_modules / "stale.txt").write_text("old deps", encoding="utf-8")
+    (node_modules / "marker.txt").write_text("installed deps", encoding="utf-8")
 
     site.materialize_site(load_config(book_dir))
 
-    assert not node_modules.exists()
+    assert (node_modules / "marker.txt").read_text(encoding="utf-8") == "installed deps"
 
 
-def test_materialize_site_removes_symlinked_node_modules(tmp_path) -> None:
+def test_materialize_site_preserves_symlinked_node_modules(tmp_path) -> None:
+    # A symlinked node_modules (shared store) is likewise preserved, not severed.
     book_dir = tmp_path / "books" / "mini"
     book_dir.mkdir(parents=True)
     content_dir = book_dir / "content" / "docs"
@@ -419,6 +426,7 @@ def test_materialize_site_removes_symlinked_node_modules(tmp_path) -> None:
     )
     target = tmp_path / "shared-node-modules"
     target.mkdir()
+    (target / "marker.txt").write_text("shared deps", encoding="utf-8")
     site_dir = book_dir / "site"
     site_dir.mkdir()
     node_modules = site_dir / "node_modules"
@@ -426,9 +434,8 @@ def test_materialize_site_removes_symlinked_node_modules(tmp_path) -> None:
 
     site.materialize_site(load_config(book_dir))
 
-    assert not node_modules.exists()
-    assert not node_modules.is_symlink()
-    assert target.exists()
+    assert node_modules.is_symlink()
+    assert (node_modules / "marker.txt").exists()
 
 
 def test_site_main_fails_loudly_when_content_docs_is_missing(

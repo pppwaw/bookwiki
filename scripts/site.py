@@ -26,10 +26,17 @@ SITE_ENV_KEYS = (
     "BOOKWIKI_EVALUATE_BASE_URL",
     "BOOKWIKI_EVALUATE_MODEL",
 )
+# site is a persistent workspace: keep installed deps (node_modules) and build caches (.next,
+# .source) across re-materialize so ``pnpm build`` stays incremental. These are all in
+# SKIP_TEMPLATE_NAMES too, so the template-copy pass leaves them untouched — pure preservation.
+# (``content`` becomes single-source-of-truth in a later step that rewrites the copy logic.)
 PRESERVE_SITE_NAMES = {
     ".bookwiki",
     ".env.local",
     "tsconfig.tsbuildinfo",
+    "node_modules",
+    ".next",
+    ".source",
 }
 SKIP_TEMPLATE_NAMES = {
     ".bookwiki",
