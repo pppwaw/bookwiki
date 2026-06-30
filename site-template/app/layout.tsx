@@ -3,6 +3,7 @@ import 'katex/dist/katex.css';
 import './global.css';
 import { Inter } from 'next/font/google';
 import { AISearch, AISearchPanel, AISearchTrigger } from '@/components/ai/search';
+import SearchDialog from '@/components/search-dialog';
 import { MessageCircleIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { buttonVariants } from 'fumadocs-ui/components/ui/button';
@@ -17,7 +18,7 @@ export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
-        <RootProvider>
+        <RootProvider search={{ SearchDialog }}>
           <AISearch>
             <AISearchPanel />
             <AISearchTrigger
