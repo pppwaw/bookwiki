@@ -1,5 +1,6 @@
 import type { SortedResult } from 'fumadocs-core/search';
 import { searchChunks } from '@/lib/rag';
+import { toPlainSnippet } from '@/lib/snippet';
 
 export async function GET(request: Request): Promise<Response> {
   const query = new URL(request.url).searchParams.get('query')?.trim() ?? '';
@@ -15,7 +16,11 @@ export async function GET(request: Request): Promise<Response> {
       seenPages.add(chunk.slug);
       results.push({ id: `page:${chunk.slug}`, type: 'page', content: chunk.title, url: pageUrl });
     }
-    results.push({ id: chunk.chunkId, type: 'text', content: chunk.text, url: pageUrl });
+    // The dialog renders `content` as plain text, so strip MDX/markdown/math.
+    const snippet = toPlainSnippet(chunk.text);
+    if (snippet) {
+      results.push({ id: chunk.chunkId, type: 'text', content: snippet, url: pageUrl });
+    }
   }
 
   return Response.json(results);
