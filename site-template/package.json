@@ -8,7 +8,8 @@
     "start": "next start",
     "types:check": "next typegen && fumadocs-mdx && tsc --noEmit",
     "postinstall": "fumadocs-mdx",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.193",
@@ -52,7 +53,8 @@
     "oxlint": "^1.65.0",
     "postcss": "^8.5.14",
     "tailwindcss": "^4.3.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
