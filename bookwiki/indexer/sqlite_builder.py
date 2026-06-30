@@ -12,6 +12,9 @@ from bookwiki.indexer.mdx_parser import MdxPage, parse_mdx_file
 from bookwiki.indexer.rag_chunker import RagChunk, chunk_page
 from bookwiki.scheduler.llm import record_stage_usage
 from bookwiki.utils.files import ensure_dir
+from bookwiki.utils.logging import get_logger
+
+_LOG = get_logger("bookwiki.indexer.sqlite_builder")
 
 
 def build_sqlite_index(
@@ -381,8 +384,10 @@ def _insert_embeddings(
 ) -> None:
     rows = conn.execute("SELECT rowid, text FROM chunks ORDER BY rowid").fetchall()
     if not rows:
+        _LOG.info("index: no chunks to embed")
         return
     texts = [row[1] for row in rows]
+    _LOG.info("index: embedding %d chunks model=%s", len(rows), model)
     vectors, prompt_tokens = embedder.embed_texts(
         texts, model=model, api_key=api_key, base_url=base_url
     )
@@ -394,10 +399,14 @@ def _insert_embeddings(
         )
     # Attribute embedding spend to the active pipeline stage (no-op outside a stage
     # context, e.g. direct rebuilds/tests). Mirrors the LLM Router's accounting.
-    record_stage_usage(
-        cost_cny=embedder.embed_cost_cny(prompt_tokens),
-        prompt_tokens=prompt_tokens,
-        completion_tokens=0,
+    cost_cny = embedder.embed_cost_cny(prompt_tokens)
+    record_stage_usage(cost_cny=cost_cny, prompt_tokens=prompt_tokens, completion_tokens=0)
+    _LOG.info(
+        "index: embedded %d chunks dim=%d tokens=%d cost_cny=%.6f",
+        len(rows),
+        dim,
+        prompt_tokens,
+        cost_cny,
     )
     conn.execute(
         "INSERT OR REPLACE INTO search_meta (key, value) VALUES ('embedding_model', ?)",

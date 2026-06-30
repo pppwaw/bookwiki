@@ -7,6 +7,9 @@ import urllib.error
 import urllib.request
 
 from bookwiki.scheduler.llm import OPENROUTER_USD_TO_CNY
+from bookwiki.utils.logging import get_logger
+
+_LOG = get_logger("bookwiki.indexer.embedder")
 
 DEFAULT_EMBED_MODEL = "baai/bge-m3"
 DEFAULT_EMBED_DIM = 1024
@@ -75,9 +78,17 @@ def embed_texts(
         return [], 0
     vectors: list[list[float]] = []
     total_tokens = 0
-    for start in range(0, len(texts), _EMBED_BATCH):
+    total_batches = (len(texts) + _EMBED_BATCH - 1) // _EMBED_BATCH
+    for index, start in enumerate(range(0, len(texts), _EMBED_BATCH), start=1):
         batch = texts[start : start + _EMBED_BATCH]
         raw, tokens = _raw_embed(batch, model=model, api_key=api_key, base_url=base_url)
         vectors.extend(_normalize(vec) for vec in raw)
         total_tokens += tokens
+        _LOG.info(
+            "embedding: [%d/%d] %d chunks (running tokens=%d)",
+            index,
+            total_batches,
+            len(batch),
+            total_tokens,
+        )
     return vectors, total_tokens
