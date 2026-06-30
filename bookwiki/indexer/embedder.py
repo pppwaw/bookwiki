@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import math
 import struct
-from typing import Any
+import urllib.error
+import urllib.request
 
 from bookwiki.scheduler.llm import OPENROUTER_USD_TO_CNY
 
@@ -14,6 +16,9 @@ DEFAULT_EMBED_DIM = 1024
 # guardrail rate the LLM Router uses, so manual accounting matches the rest of the
 # run's budget currency. Update here if the model or its price changes.
 EMBED_PRICE_USD_PER_1M = 0.01
+
+_EMBED_TIMEOUT_SECONDS = 120
+_EMBED_BATCH = 64
 
 
 def floats_to_blob(vec: list[float]) -> bytes:
@@ -31,34 +36,35 @@ def _normalize(vec: list[float]) -> list[float]:
     return [v / norm for v in vec]
 
 
-def _usage_tokens(usage: Any) -> int:
-    if usage is None:
-        return 0
-    prompt = getattr(usage, "prompt_tokens", None)
-    if prompt is None and isinstance(usage, dict):
-        prompt = usage.get("prompt_tokens") or usage.get("total_tokens")
-    if prompt is None:
-        prompt = getattr(usage, "total_tokens", 0)
-    return int(prompt or 0)
-
-
 def _raw_embed(
     texts: list[str], *, model: str, api_key: str, base_url: str
 ) -> tuple[list[list[float]], int]:
-    # Lazy import keeps the module (and the test suite, which stubs ``_raw_embed``)
-    # free of litellm's heavy import. ``custom_llm_provider='openai'`` routes the
-    # OpenAI-compatible /embeddings call to the given OpenRouter base verbatim.
-    from litellm import embedding
-
-    resp = embedding(
-        model=model,
-        input=texts,
-        api_key=api_key,
-        api_base=base_url,
-        custom_llm_provider="openai",
+    # Direct call to the OpenAI-compatible /embeddings endpoint. litellm's embedding
+    # response converter raises an opaque empty-message error against OpenRouter, so
+    # we own the request/parse here and surface the real response body on failure.
+    payload = json.dumps({"model": model, "input": texts}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url.rstrip('/')}/embeddings",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
     )
-    embeddings = [item["embedding"] for item in resp["data"]]
-    tokens = _usage_tokens(resp.get("usage") if hasattr(resp, "get") else getattr(resp, "usage", None))
+    try:
+        with urllib.request.urlopen(req, timeout=_EMBED_TIMEOUT_SECONDS) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(f"embedding 请求失败 {exc.code} ({model}): {detail}") from exc
+
+    data = body.get("data")
+    if not data:
+        raise RuntimeError(f"embedding 响应缺少 data ({model}): {json.dumps(body)[:500]}")
+    embeddings = [item["embedding"] for item in data]
+    usage = body.get("usage") or {}
+    tokens = int(usage.get("prompt_tokens") or usage.get("total_tokens") or 0)
     return embeddings, tokens
 
 
@@ -67,5 +73,11 @@ def embed_texts(
 ) -> tuple[list[list[float]], int]:
     if not texts:
         return [], 0
-    raw, tokens = _raw_embed(texts, model=model, api_key=api_key, base_url=base_url)
-    return [_normalize(vec) for vec in raw], tokens
+    vectors: list[list[float]] = []
+    total_tokens = 0
+    for start in range(0, len(texts), _EMBED_BATCH):
+        batch = texts[start : start + _EMBED_BATCH]
+        raw, tokens = _raw_embed(batch, model=model, api_key=api_key, base_url=base_url)
+        vectors.extend(_normalize(vec) for vec in raw)
+        total_tokens += tokens
+    return vectors, total_tokens

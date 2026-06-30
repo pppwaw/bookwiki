@@ -62,7 +62,8 @@
 
 ### 5.2 构建期 embedding — `bookwiki/indexer/`
 
-- 新增 `embedder.py`:用现有 `litellm`(已是依赖)的 `embedding(custom_llm_provider="openai", api_base=OpenRouter)` 算 passage 向量、L2 normalize、打包 float32 bytes,并返回 `(vectors, prompt_tokens)`。
+- 新增 `embedder.py`:**直接 POST** OpenRouter 的 OpenAI 兼容 `/embeddings`(分批,每批 64 条),算 passage 向量、L2 normalize、打包 float32 bytes,返回 `(vectors, prompt_tokens)`。
+  - 不走 `litellm.embedding`:实测其响应转换器对 OpenRouter 抛空消息异常(`convert_to_model_response_object` → `InternalServerError`),把真实响应吞掉。直连是该 API 的真实契约(非兜底),且失败时打印真实响应体便于排错。
 - **成本记账(手动)**:litellm.embedding 直调不经 completion Router,故不进其预算/定价体系。改为在 `_insert_embeddings` 用 token 数 × bge-m3 单价(`$0.01/1M × OPENROUTER_USD_TO_CNY`)算出 CNY,调 `scheduler.llm.record_stage_usage` 归到 `index` 阶段(无 stage 上下文时安全 no-op)。注:这只做归因记账,不触发 Router 的预算上限强制(embedding 花销极小,可接受)。
 - `sqlite_builder._insert_chunks`:写入 `embedding` 列;写 `search_meta`。
 - 失败(无 key / 网络 / 维度不符)直接抛错,不静默跳过。
