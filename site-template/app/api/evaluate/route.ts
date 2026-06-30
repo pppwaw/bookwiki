@@ -62,7 +62,7 @@ export async function POST(request: Request) {
   const baseURL = process.env.BOOKWIKI_EVALUATE_BASE_URL ?? process.env.BOOKWIKI_CHAT_BASE_URL ?? DefaultBaseURL;
   const openrouter = createOpenRouter({ apiKey, baseURL, appName: 'BookWiki' });
   const maxScore = payload.rubric.reduce((total, point) => total + point.weight, 0);
-  const grounding = groundingText(payload);
+  const grounding = await groundingText(payload);
 
   // Stream NDJSON to the browser: a once-per-second heartbeat keeps the
   // connection alive while grading runs (the model output is structured JSON, so
@@ -168,8 +168,8 @@ function userPrompt(payload: EvaluateRequest, maxScore: number) {
   );
 }
 
-function groundingText(payload: EvaluateRequest) {
-  const chunks = searchChunks(payload.question, MaxGroundingChunks, payload.chapter_id);
+async function groundingText(payload: EvaluateRequest) {
+  const chunks = await searchChunks(payload.question, MaxGroundingChunks, payload.chapter_id);
   return chunks
     .map((chunk) => [`[${chunk.chunkId}] ${chunk.title}`, chunk.headingPath ?? '', chunk.text].filter(Boolean).join('\n'))
     .join('\n\n---\n\n');

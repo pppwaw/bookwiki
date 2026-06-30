@@ -136,7 +136,7 @@ export async function POST(request: Request) {
             chapterId: z.string().optional().describe('Optional chapter id filter.'),
           }),
           execute: async ({ query, limit, chapterId: requestedChapterId }) => {
-            const chunks = searchChunks(query, limit, requestedChapterId ?? chapterId);
+            const chunks = await searchChunks(query, limit, requestedChapterId ?? chapterId);
             addChunkSources(sources, chunks);
             return {
               query,
