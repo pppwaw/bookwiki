@@ -38,6 +38,8 @@ def chunk_page(page: MdxPage, max_chars: int = 1200) -> list[RagChunk]:
             )
         )
     for heading_path, section_id, raw in sections:
+        if _is_referenced_by(heading_path):
+            continue
         text = _plain_text(raw)
         if not text:
             continue
@@ -110,13 +112,29 @@ _TAG_ATTRS = r"""(?:"[^"]*"|'[^']*'|[^>])*?"""
 
 
 def _plain_text(text: str) -> str:
+    # Quiz/Anki blocks are structured data — drop the whole block incl. children.
     text = re.sub(r"<(QuizBlock|AnkiDeck)\b[\s\S]*?</\1>", "", text)
     text = re.sub(rf"<(QuizBlock|AnkiDeck)\b{_TAG_ATTRS}/>\s*", "", text, flags=re.DOTALL)
-    text = re.sub(rf"<SourceRef\b{_TAG_ATTRS}>\s*", "", text)
+    # Strip every remaining MDX/JSX component (capitalised tag name) together with
+    # its attribute blob — <PreviewLink summary={...}>, <ExamItem rubric={[...]}>,
+    # <SourceRef/>, <Citation/> … — but keep the child text. These attributes are
+    # scaffolding noise for both RAG and search. Math ($…$, $$…$$) and prose are
+    # left untouched so the LLM still retrieves formulas.
+    text = re.sub(rf"<[A-Z]\w*{_TAG_ATTRS}/>", "", text, flags=re.DOTALL)
+    text = re.sub(rf"<[A-Z]\w*{_TAG_ATTRS}>", "", text, flags=re.DOTALL)
+    text = re.sub(r"</[A-Z]\w*>", "", text)
     text = re.sub(r"<!--\s*source_ref:\s*[^>]+-->", "", text)
     text = re.sub(r"^\s*---\s*$", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _is_referenced_by(heading_path: str | None) -> bool:
+    """Auto-generated ``## Referenced By`` backlink sections are pure navigation
+    scaffolding (duplicated PreviewLink lists); they should not be indexed."""
+    if not heading_path:
+        return False
+    return heading_path.split(" > ")[-1].strip().casefold() == "referenced by"
 
 
 def _split_text(text: str, max_chars: int) -> list[str]:
