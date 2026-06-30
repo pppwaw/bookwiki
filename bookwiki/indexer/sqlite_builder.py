@@ -10,6 +10,7 @@ from typing import Any
 from bookwiki.indexer import embedder
 from bookwiki.indexer.mdx_parser import MdxPage, parse_mdx_file
 from bookwiki.indexer.rag_chunker import RagChunk, chunk_page
+from bookwiki.scheduler.llm import record_stage_usage
 from bookwiki.utils.files import ensure_dir
 
 
@@ -382,13 +383,22 @@ def _insert_embeddings(
     if not rows:
         return
     texts = [row[1] for row in rows]
-    vectors = embedder.embed_texts(texts, model=model, api_key=api_key, base_url=base_url)
+    vectors, prompt_tokens = embedder.embed_texts(
+        texts, model=model, api_key=api_key, base_url=base_url
+    )
     dim = len(vectors[0]) if vectors else embedder.DEFAULT_EMBED_DIM
     for (rowid, _text), vec in zip(rows, vectors):
         conn.execute(
             "UPDATE chunks SET embedding = ? WHERE rowid = ?",
             (embedder.floats_to_blob(vec), rowid),
         )
+    # Attribute embedding spend to the active pipeline stage (no-op outside a stage
+    # context, e.g. direct rebuilds/tests). Mirrors the LLM Router's accounting.
+    record_stage_usage(
+        cost_cny=embedder.embed_cost_cny(prompt_tokens),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=0,
+    )
     conn.execute(
         "INSERT OR REPLACE INTO search_meta (key, value) VALUES ('embedding_model', ?)",
         (model,),

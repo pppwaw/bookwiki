@@ -56,19 +56,27 @@ def test_floats_to_blob_roundtrip() -> None:
 
 def test_embed_texts_normalizes(monkeypatch) -> None:
     def fake_post(texts, *, model, api_key, base_url):
-        return [[3.0, 4.0] for _ in texts]  # 未归一化,模长 5
+        return [[3.0, 4.0] for _ in texts], 7  # 未归一化(模长 5)+ token 数
 
     monkeypatch.setattr(embedder, "_raw_embed", fake_post)
-    out = embedder.embed_texts(["a", "b"], model="m", api_key="k", base_url="u")
+    out, tokens = embedder.embed_texts(["a", "b"], model="m", api_key="k", base_url="u")
     assert len(out) == 2
+    assert tokens == 7
     assert math.isclose(math.hypot(*out[0]), 1.0, rel_tol=1e-6)
+
+
+def test_embed_cost_cny_uses_usd_to_cny() -> None:
+    from bookwiki.scheduler.llm import OPENROUTER_USD_TO_CNY
+
+    cost = embedder.embed_cost_cny(1_000_000)
+    assert math.isclose(cost, embedder.EMBED_PRICE_USD_PER_1M * OPENROUTER_USD_TO_CNY, rel_tol=1e-9)
 
 
 def test_build_writes_embeddings_and_meta(tmp_path: Path, monkeypatch) -> None:
     from bookwiki.indexer import sqlite_builder
 
     def fake_embed(texts, *, model, api_key, base_url):
-        return [[1.0] + [0.0] * 1023 for _ in texts]
+        return [[1.0] + [0.0] * 1023 for _ in texts], 42
 
     monkeypatch.setattr(sqlite_builder.embedder, "embed_texts", fake_embed)
     _write_page(tmp_path)
