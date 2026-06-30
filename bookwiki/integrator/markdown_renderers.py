@@ -371,13 +371,16 @@ def _style_attr_to_jsx(match: re.Match[str]) -> str:
 
 
 def normalize_source_cites(mdx: str) -> str:
-    """Rewrite raw ``<cite ref=...>`` tags to the registered ``SourceRef`` MDX component.
+    """Rewrite raw ``<cite ref=...>`` / ``<Citation ref_id=...>`` tags to the registered
+    ``SourceRef`` MDX component.
 
     React treats ``ref`` as a special prop, so a model-emitted ``<cite ref="p001">``
     can compile as MDX but crash during Next prerender with "Refs cannot be used in
-    Server Components". ``SourceRef`` is the site-supported citation surface, so this
-    deterministic rewrite preserves the ref id and quote while removing the special
-    prop before the page reaches React.
+    Server Components". A model also sometimes hallucinates a capitalized ``<Citation>``
+    component, which is not registered in ``getMDXComponents`` and crashes prerender with
+    "Expected component `Citation` to be defined". ``SourceRef`` is the site-supported
+    citation surface, so this deterministic rewrite preserves the ref id and quote while
+    removing the offending tag before the page reaches React.
     """
     parts = re.split(r"(```[\s\S]*?```|`[^`\n]*`)", mdx)
     return "".join(
@@ -386,7 +389,8 @@ def normalize_source_cites(mdx: str) -> str:
 
 
 _CITE_REF_RE = re.compile(
-    r"<cite\s+(?P<attr>ref|ref_id)=(?P<q>[\"'])(?P<id>.*?)(?P=q)\s*(?:/\s*>|>(?P<quote>[\s\S]*?)</cite>)",
+    r"<(?:cite|citation)\s+(?P<attr>ref|ref_id)=(?P<q>[\"'])(?P<id>.*?)(?P=q)"
+    r"\s*(?:/\s*>|>(?P<quote>[\s\S]*?)</(?:cite|citation)\s*>)",
     re.IGNORECASE,
 )
 

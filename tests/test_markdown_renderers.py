@@ -185,6 +185,19 @@ def test_self_closing_raw_cite_ref_is_rewritten() -> None:
     assert out == '<SourceRef id={"p001"} />'
 
 
+def test_capitalized_citation_tag_is_rewritten() -> None:
+    """A model sometimes emits a hallucinated ``<Citation ref_id=.../>`` JSX component instead of
+    the ``<cite>`` marker. ``Citation`` is not a registered MDX component, so it crashes the Next
+    prerender with "Expected component `Citation` to be defined". Normalize it to ``SourceRef`` too.
+    """
+    out = normalize_source_cites('<Citation ref_id="14-.1-vector-field-p002"/>')
+    assert out == '<SourceRef id={"14-.1-vector-field-p002"} />'
+
+    paired = normalize_source_cites('<Citation ref="p001">quoted</Citation>')
+    assert paired == '<SourceRef id={"p001"} quote={"quoted"} />'
+    assert "Citation" not in out and "Citation" not in paired
+
+
 def test_raw_cite_quote_prop_preserves_braces() -> None:
     out = normalize_source_cites('<cite ref="p001">Solve {a} with $x_{1}$</cite>')
 

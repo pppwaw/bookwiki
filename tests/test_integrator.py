@@ -521,6 +521,67 @@ def test_normalize_concept_links_leaves_unknown_chapter_wikilink_bare() -> None:
     assert "<PreviewLink" not in out
 
 
+def test_normalize_concept_links_never_links_inside_headings() -> None:
+    """A ``[[...]]`` wikilink that appears inside a heading (``## ...``) must resolve to plain
+    text, never a ``<PreviewLink>``. fumadocs pre-renders heading content into the module-level
+    ``toc`` export as bare JSX; a custom component there references an undefined identifier
+    (``ReferenceError: PreviewLink is not defined``) and crashes the whole build."""
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    alias_map = {"有界集": "有界集"}
+    concept_previews = {
+        "有界集": {"href": "/docs/concepts/有界集", "title": "有界集", "summary": "s"},
+    }
+    chapter_previews = {
+        "12.3 Limits and Continuity": {
+            "href": "/docs/chapters/ch12/12.3",
+            "title": "12.3 Limits and Continuity",
+            "summary": "ch",
+        },
+    }
+    body = (
+        "## 闭集 $\\neq$ [[有界集]]\n\n"
+        "正文里提到[[有界集]]时仍然要链接。\n\n"
+        "## 与 [[12.3 Limits and Continuity]] 的联系\n"
+    )
+    out = _normalize_concept_links(body, alias_map, concept_previews, chapter_previews)
+
+    # Heading lines carry plain text — no JSX component leaks into the toc.
+    assert "## 闭集 $\\neq$ 有界集" in out
+    assert "## 与 12.3 Limits and Continuity 的联系" in out
+    # No PreviewLink on any heading line.
+    for line in out.splitlines():
+        if line.lstrip().startswith("#"):
+            assert "<PreviewLink" not in line
+    # Body prose outside headings still links normally.
+    assert '<PreviewLink href={"/docs/concepts/有界集"}' in out
+
+
+def test_auto_link_skips_headings_that_contain_inline_math() -> None:
+    """A *bare* concept term in a heading must never be auto-linked — even when the heading also
+    contains inline math (``$\\neq$``). The protected-span split fragments such a heading into
+    ``## 闭集 `` / ``$\\neq$`` / `` 有界集``; the trailing fragment no longer starts with ``#``, so
+    a naive per-line heading guard misses it and injects a ``<PreviewLink>`` into the ``toc`` (the
+    real ``ReferenceError: PreviewLink is not defined`` crash on the 闭集 page)."""
+    from bookwiki.pipeline.nodes import _normalize_concept_links
+
+    alias_map = {"有界集": "有界集"}
+    concept_previews = {
+        "有界集": {"href": "/docs/concepts/有界集", "title": "有界集", "summary": "s"},
+    }
+    # The heading carries the term as plain prose (no ``[[ ]]``) plus inline math — exactly the
+    # generated 闭集 heading. The same term in body prose must still auto-link.
+    body = "## 闭集 $\\neq$ 有界集\n\n正文提到有界集这个概念。\n"
+    out = _normalize_concept_links(body, alias_map, concept_previews)
+
+    assert "## 闭集 $\\neq$ 有界集" in out
+    for line in out.splitlines():
+        if line.lstrip().startswith("#"):
+            assert "<PreviewLink" not in line
+    # Body prose outside the heading still auto-links the term.
+    assert '<PreviewLink href={"/docs/concepts/有界集"}' in out.split("\n\n", 1)[1]
+
+
 def test_normalize_concept_links_suppress_excludes_self_keeps_others() -> None:
     """Concept pages pass auto_link=True with ``suppress`` set to their own name: the page's own
     term is never self-linked, but bare mentions of *other* concepts still auto-link."""
@@ -589,10 +650,7 @@ def test_normalize_concept_links_does_not_auto_link_inside_preview_links() -> No
         },
     }
 
-    body = (
-        'Use [[Kirchhoff\'s Voltage Law (KVL)]] for loops. '
-        "Voltage appears later as plain prose."
-    )
+    body = "Use [[Kirchhoff's Voltage Law (KVL)]] for loops. Voltage appears later as plain prose."
     out = _normalize_concept_links(body, alias_map, previews)
 
     first_link = out.split("</PreviewLink>", 1)[0]

@@ -537,12 +537,23 @@ def _normalize_concept_links(
 
     def replace(match: re.Match[str]) -> str:
         label = match.group(1).strip()
+        # A heading line carrying a ``<PreviewLink>`` crashes the whole site build: fumadocs
+        # pre-renders heading content into the module-level ``toc`` export as *bare* JSX (e.g.
+        # ``jsx(PreviewLink, …)``), but the compiled module never imports ``PreviewLink`` — so
+        # evaluating the module throws ``ReferenceError: PreviewLink is not defined`` (it is only
+        # in scope via ``useMDXComponents()`` inside the body component). Resolve a ``[[ ]]`` that
+        # sits inside a heading to plain display text instead. ``_auto_link_concept_terms`` already
+        # skips heading lines; this keeps the ``[[ ]]`` rewriter consistent with it.
+        line_start = match.string.rfind("\n", 0, match.start()) + 1
+        in_heading = match.string[line_start : match.start()].lstrip().startswith("#")
         # ``[[...]]`` is the explicit cross-reference syntax. Per the authoring contract
         # (see COMMON_SYSTEM_PROMPT) bare prose terms auto-link to concepts, so an author only
         # reaches for ``[[name]]`` when they mean a *chapter*. Resolve chapters first; a name that
         # is both a concept and a chapter therefore links to the chapter (the author's intent).
         chapter = chapters.get(label) or chapters.get(_concept_key(label))
         if chapter:
+            if in_heading:
+                return chapter["title"]
             return _preview_link_mdx(
                 chapter["href"], chapter["title"], chapter["summary"], chapter["title"]
             )
@@ -551,11 +562,13 @@ def _normalize_concept_links(
         canonical = alias_map.get(label) or alias_map.get(_concept_key(label)) or label
         preview = concept_previews.get(canonical)
         if preview:
+            if in_heading:
+                return canonical
             linked_canonicals.add(canonical)
             return _preview_link_mdx(
                 preview["href"], preview["title"], preview["summary"], canonical
             )
-        return f"[[{canonical}]]"
+        return canonical if in_heading else f"[[{canonical}]]"
 
     normalized = re.sub(r"\[\[([^\]]+)\]\]", replace, markdown)
     # ``auto_link`` turns bare prose terms into concept links. Both chapter bodies and concept
@@ -585,8 +598,20 @@ def _concept_link_terms(
     return sorted(terms.values(), key=lambda item: len(item[0]), reverse=True)
 
 
+# A whole heading line is protected as a single unit (FIRST alternative, ``re.MULTILINE`` so ``^``
+# anchors at every line start). A bare concept term in a heading must never be auto-linked, because
+# fumadocs pre-renders heading content into the module-level ``toc`` export as bare JSX — a
+# ``<PreviewLink>`` there references an undefined identifier and crashes the build. Protecting the
+# *line* (not just leading ``#``) is essential: a heading like ``## 闭集 $\neq$ 有界集`` would
+# otherwise be fragmented by the inline-``$...$`` span into ``## 闭集 `` / ``$\neq$`` / `` 有界集``,
+# and the trailing fragment — no longer starting with ``#`` — would slip past a per-line guard.
 _CONCEPT_LINK_PROTECTED_RE = re.compile(
-    r"(<PreviewLink\b[\s\S]*?</PreviewLink>|```[\s\S]*?```|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$|\[[^\]\n]+\]\([^)]+\)|<[^>\n]+>)"
+    r"(^[ \t]*#{1,6}[^\n]*"  # whole heading line (term in a heading must never auto-link)
+    r"|<PreviewLink\b[\s\S]*?</PreviewLink>"
+    r"|```[\s\S]*?```|`[^`\n]*`"
+    r"|\$\$[\s\S]*?\$\$|\$[^$\n]*\$"
+    r"|\[[^\]\n]+\]\([^)]+\)|<[^>\n]+>)",
+    re.MULTILINE,
 )
 
 
