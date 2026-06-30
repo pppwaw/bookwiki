@@ -106,9 +106,11 @@ def _heading_sections(body: str) -> list[tuple[str | None, str | None, str]]:
 
 
 # A tag's attribute span, skipping over quoted values so a literal `>` inside an attribute (e.g.
-# ``quote="... t>0"``) cannot end the tag early — a plain ``[^>]*`` truncates there, leaving the
-# component markup un-stripped in the plain-text chunk. Non-greedy + quote-first (see mdx_parser).
-_TAG_ATTRS = r"""(?:"[^"]*"|'[^']*'|[^>])*?"""
+# ``quote="... t>0"``) cannot end the tag early. The catch-all ``[^"'>]`` EXCLUDES quotes so each
+# character belongs to exactly one branch — without that, a `"` can match both the quoted branch
+# and the catch-all, and applying this across every ``<Capitalized>`` tag triggers catastrophic
+# backtracking (ReDoS) on real book MDX. Greedy + unambiguous → linear.
+_TAG_ATTRS = r"""(?:"[^"]*"|'[^']*'|[^"'>])*"""
 
 
 def _plain_text(text: str) -> str:
