@@ -7,12 +7,21 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from bookwiki.indexer import embedder
 from bookwiki.indexer.mdx_parser import MdxPage, parse_mdx_file
 from bookwiki.indexer.rag_chunker import RagChunk, chunk_page
 from bookwiki.utils.files import ensure_dir
 
 
-def build_sqlite_index(content_dir: str | Path, db_path: str | Path) -> Path:
+def build_sqlite_index(
+    content_dir: str | Path,
+    db_path: str | Path,
+    *,
+    embed: bool = False,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> Path:
     content_dir = Path(content_dir)
     db_path = Path(db_path)
     ensure_dir(db_path.parent)
@@ -29,6 +38,16 @@ def build_sqlite_index(content_dir: str | Path, db_path: str | Path) -> Path:
         _insert_chunks(conn, pages)
         _insert_learning_items(conn, pages)
         _insert_source_refs(conn, pages)
+        if embed:
+            resolved_model = model or embedder.DEFAULT_EMBED_MODEL
+            if not api_key:
+                raise RuntimeError("embedding 需要 api_key(OPENROUTER_API_KEY)")
+            _insert_embeddings(
+                conn,
+                resolved_model,
+                api_key,
+                base_url or "https://openrouter.ai/api/v1",
+            )
         conn.execute("INSERT INTO fts_chunks(fts_chunks) VALUES('rebuild')")
         conn.commit()
     finally:
@@ -77,6 +96,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             text             TEXT    NOT NULL,
             source_refs_json TEXT    NOT NULL,
             token_count      INTEGER,
+            embedding        BLOB,
             FOREIGN KEY (page_id) REFERENCES pages (id)
         );
 
@@ -85,7 +105,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             heading_path,
             content='chunks',
             content_rowid='rowid',
-            tokenize='unicode61 remove_diacritics 2'
+            tokenize='trigram'
         );
 
         CREATE TABLE quiz_items
@@ -140,6 +160,12 @@ def _create_schema(conn: sqlite3.Connection) -> None:
                 ''
             ) AS body
         FROM pages;
+
+        CREATE TABLE search_meta
+        (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         """
     )
 
@@ -347,6 +373,30 @@ def _unique_item_id(
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _insert_embeddings(
+    conn: sqlite3.Connection, model: str, api_key: str, base_url: str
+) -> None:
+    rows = conn.execute("SELECT rowid, text FROM chunks ORDER BY rowid").fetchall()
+    if not rows:
+        return
+    texts = [row[1] for row in rows]
+    vectors = embedder.embed_texts(texts, model=model, api_key=api_key, base_url=base_url)
+    dim = len(vectors[0]) if vectors else embedder.DEFAULT_EMBED_DIM
+    for (rowid, _text), vec in zip(rows, vectors):
+        conn.execute(
+            "UPDATE chunks SET embedding = ? WHERE rowid = ?",
+            (embedder.floats_to_blob(vec), rowid),
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO search_meta (key, value) VALUES ('embedding_model', ?)",
+        (model,),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO search_meta (key, value) VALUES ('embedding_dim', ?)",
+        (str(dim),),
+    )
 
 
 def _optional_str(value: Any) -> str | None:
