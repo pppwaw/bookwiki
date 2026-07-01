@@ -1120,12 +1120,14 @@ function Input(props: ComponentProps<'textarea'>) {
         )}
       />
       {/*
-        Height mirror for the auto-growing textarea. `whitespace-pre-wrap` makes
-        it honor explicit newlines (Shift+Enter) so the box grows on multi-line
-        input, and a trailing space (not "\n") reserves caret room without adding
+        Height mirror for the auto-growing textarea. It must share the textarea's
+        font metrics (`text-sm`) or each mirrored line is taller than the real
+        text line, leaving a growing gap at the bottom on multi-line input.
+        `whitespace-pre-wrap` honors explicit newlines (Shift+Enter) so the box
+        grows, and a trailing space (not "\n") reserves caret room without adding
         a phantom empty line — so an empty composer stays exactly one line tall.
       */}
-      <div ref={ref} className={cn(shared, 'invisible whitespace-pre-wrap break-all')}>
+      <div ref={ref} className={cn(shared, 'invisible whitespace-pre-wrap break-all text-sm')}>
         {`${props.value?.toString() ?? ''} `}
       </div>
     </div>
