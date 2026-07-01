@@ -20,6 +20,8 @@ from bookwiki.pipeline.nodes import (
 from bookwiki.scheduler.config import default_config
 from bookwiki.scheduler.llm import TestLLMRuntime
 from bookwiki.split.chapter_splitter import (
+    SourceFragment,
+    _is_boundary_fragment,
     chapter_groups_from_specs,
     compute_slug_remap,
     parse_approved_structure,
@@ -811,3 +813,28 @@ def test_compute_slug_remap_handles_groups_and_reserves_appendix() -> None:
     assert remap["Chapter-9"] == "Chapter-9"
     assert remap["9.2-Infinite-Series"] == "9.2-Infinite-Series"
     assert remap["appendix"] == "appendix"
+
+
+def _frag(body: str) -> SourceFragment:
+    return SourceFragment(
+        source_path="bk.md", source_id="bk", source_ref="bk-p020", body=body
+    )
+
+
+def test_is_boundary_fragment_detects_heading_with_leading_body() -> None:
+    # 跨页:上一章结尾 + 新章标题(英/中)
+    assert _is_boundary_fragment(
+        _frag("Final paragraph of chapter five.\n\n# Chapter 6 Point Estimation\n\nOpening.")
+    )
+    assert _is_boundary_fragment(
+        _frag("上一章结尾段落。\n\n# 第 6 章 点估计\n\n本章开头。")
+    )
+
+
+def test_is_boundary_fragment_ignores_clean_start_and_non_chapter() -> None:
+    # 干净章起始:标题在开头,前面无正文
+    assert not _is_boundary_fragment(_frag("# Chapter 6 Point Estimation\n\nFresh page top."))
+    assert not _is_boundary_fragment(_frag("# 第6章 点估计\n\n本章开头。"))
+    # 非章节标题 / 子节 / 纯正文
+    assert not _is_boundary_fragment(_frag("## 6.3 Subsection\n\nnot a chapter heading"))
+    assert not _is_boundary_fragment(_frag("Just prose mentioning chapter six, no heading."))

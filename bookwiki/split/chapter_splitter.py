@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -12,6 +13,15 @@ from bookwiki.convert.common import SOURCE_REF_RE, slugify_path_segment
 
 # The catch-all bucket id for unassigned source fragments; reserved so no chapter title claims it.
 APPENDIX_CHAPTER_ID = "appendix"
+
+_LOG = logging.getLogger(__name__)
+
+# A chapter-level markdown heading: English "# Chapter 6 ..." or Chinese "# 第6章 ...".
+# Sub-section headings ("## 6.3 ...") and prose mentions are intentionally excluded.
+_CHAPTER_HEADING_RE = re.compile(
+    r"(?m)^#{1,6}[ \t]+(?:chapter[ \t]+\d+|第\s*[0-9〇一二三四五六七八九十百千]+\s*章)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -364,6 +374,17 @@ def _string_list(value: object) -> list[str]:
         if text:
             items.append(text)
     return items
+
+
+def _is_boundary_fragment(fragment: SourceFragment) -> bool:
+    """True when this page fragment straddles a chapter boundary.
+
+    A boundary page carries the previous chapter's tail *and* the next chapter's
+    opening: its body contains a chapter heading with non-whitespace text before it.
+    A clean chapter start (heading at the top, nothing before) is not a boundary.
+    """
+    match = _CHAPTER_HEADING_RE.search(fragment.body)
+    return bool(match) and bool(fragment.body[: match.start()].strip())
 
 
 def _assign_fragment(fragment: SourceFragment, specs: list[ChapterSpec]) -> tuple[str, float, str]:
