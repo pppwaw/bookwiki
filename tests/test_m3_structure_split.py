@@ -837,6 +837,7 @@ def test_is_boundary_fragment_ignores_clean_start_and_non_chapter() -> None:
     assert not _is_boundary_fragment(_frag("# 第6章 点估计\n\n本章开头。"))
     # 非章节标题 / 子节 / 纯正文
     assert not _is_boundary_fragment(_frag("## 6.3 Subsection\n\nnot a chapter heading"))
+    assert not _is_boundary_fragment(_frag("Just prose mentioning chapter six, no heading."))
 
 
 BOUNDARY_APPROVED = """chapters:
@@ -914,4 +915,3 @@ def test_split_clean_chapter_start_is_not_shared(tmp_path: Path) -> None:
 
     assert not any(item["reason"] == "boundary_carry" for item in result.alignment)
     assert "bk-p020" not in result.chapters["Chapter-Five-Foundations"]
-    assert not _is_boundary_fragment(_frag("Just prose mentioning chapter six, no heading."))
