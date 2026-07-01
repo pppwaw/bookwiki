@@ -915,3 +915,58 @@ def test_split_clean_chapter_start_is_not_shared(tmp_path: Path) -> None:
 
     assert not any(item["reason"] == "boundary_carry" for item in result.alignment)
     assert "bk-p020" not in result.chapters["Chapter-Five-Foundations"]
+
+
+def test_split_boundary_in_last_chapter_does_not_error(tmp_path: Path) -> None:
+    # 章节标题出现在最后一个叶子章的页里 → 无后继,不补给、不报错
+    source = tmp_path / "bk.md"
+    source.write_text(
+        "# Only Chapter\n\n"
+        "<!-- source_ref: bk-p001 -->\n\nBody before a stray heading.\n\n"
+        "# Chapter 9 Trailing\n\nContent after heading still in the only chapter.\n",
+        encoding="utf-8",
+    )
+    approved = """chapters:
+  - title: Only Chapter
+    topics:
+      - Whatever
+    source_refs:
+      - bk-p001
+"""
+
+    result = split_sources_by_structure([source], approved)
+
+    assert not any(item["reason"] == "boundary_carry" for item in result.alignment)
+    assert result.coverage["assigned_ratio"] <= 1.0
+
+
+def test_split_keyword_fallback_fragment_is_not_carried(tmp_path: Path) -> None:
+    # p777 未被任何章 source_ref 声明 → 走 keyword/appendix,即便 body 含章标题也不补给
+    source = tmp_path / "bk.md"
+    source.write_text(
+        "# Book\n\n"
+        "<!-- source_ref: bk-p001 -->\n\nFoundations content.\n\n"
+        "<!-- source_ref: bk-p777 -->\n\n"
+        "Loose page tail.\n\n# Chapter 6 Point Estimation\n\nHeading with no declaring chapter.\n",
+        encoding="utf-8",
+    )
+    approved = """chapters:
+  - title: Foundations
+    topics:
+      - Foundations
+    source_refs:
+      - bk-p001
+  - title: Point Estimation
+    topics:
+      - Point estimation
+    source_refs:
+      - bk-p002
+"""
+
+    result = split_sources_by_structure([source], approved)
+
+    # p777 不是任何章的显式 source_ref → 不应产生 boundary_carry
+    assert not any(
+        item["source_ref"] == "bk-p777" and item["reason"] == "boundary_carry"
+        for item in result.alignment
+    )
