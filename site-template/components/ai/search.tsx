@@ -965,7 +965,7 @@ function ChatComposer() {
         onDragLeave={visionEnabled ? onDragLeave : undefined}
         onDrop={visionEnabled ? onDrop : undefined}
         className={cn(
-          'relative flex items-center gap-2 rounded-2xl border bg-fd-secondary p-1.5 shadow-sm transition-shadow has-focus-visible:shadow-md',
+          'relative flex items-end gap-2 rounded-2xl border bg-fd-secondary p-1.5 shadow-sm transition-shadow has-focus-visible:shadow-md',
           dragging && 'ring-2 ring-fd-primary ring-offset-1',
         )}
       >
@@ -1112,6 +1112,7 @@ function Input(props: ComponentProps<'textarea'>) {
     <div className="grid flex-1">
       <textarea
         id="nd-ai-input"
+        rows={1}
         {...props}
         className={cn(
           'resize-none bg-transparent text-sm placeholder:text-fd-muted-foreground focus-visible:outline-none',
