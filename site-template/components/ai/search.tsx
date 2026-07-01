@@ -965,7 +965,7 @@ function ChatComposer() {
         onDragLeave={visionEnabled ? onDragLeave : undefined}
         onDrop={visionEnabled ? onDrop : undefined}
         className={cn(
-          'relative flex items-end gap-2 rounded-2xl border bg-fd-secondary p-1.5 shadow-sm transition-shadow has-focus-visible:shadow-md',
+          'relative flex items-center gap-2 rounded-2xl border bg-fd-secondary p-1.5 shadow-sm transition-shadow has-focus-visible:shadow-md',
           dragging && 'ring-2 ring-fd-primary ring-offset-1',
         )}
       >
