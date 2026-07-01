@@ -14,7 +14,7 @@ vi.mock('./source', () => ({ getLLMText: vi.fn(), getSourcePage: vi.fn() }));
 vi.mock('./embedding', () => ({ embedQuery: vi.fn() }));
 
 import { embedQuery } from './embedding';
-import { searchChunks, toFtsQuery } from './rag';
+import { pageBySlug, searchChunks, toFtsQuery } from './rag';
 
 function seed(): void {
   const db = new Database(':memory:');
@@ -26,6 +26,8 @@ function seed(): void {
       content_rowid='rowid', tokenize='trigram');
   `);
   db.prepare('INSERT INTO pages VALUES (?,?,?)').run('p1', 'ch01', '反向传播');
+  // DB stores raw (unencoded) Chinese slugs; the pipeline indexer never encodes.
+  db.prepare('INSERT INTO pages VALUES (?,?,?)').run('p2', '概念/感应', '电磁感应');
   const insert = db.prepare(
     'INSERT INTO chunks(chunk_id,page_id,chapter_id,chunk_index,heading_path,text,source_refs_json,embedding) VALUES (?,?,?,?,?,?,?,?)',
   );
@@ -61,4 +63,14 @@ test('degrades to keyword when embedding fails', async () => {
   vi.mocked(embedQuery).mockRejectedValue(new Error('down'));
   const out = await searchChunks('反向传播', 5);
   expect(out.some((c) => c.chunkId === 'c1')).toBe(true);
+});
+
+test('pageBySlug resolves a raw Chinese slug', () => {
+  expect(pageBySlug('概念/感应')?.title).toBe('电磁感应');
+});
+
+test('pageBySlug resolves a percent-encoded slug against raw DB rows', () => {
+  // The model cites the current article slug, which fumadocs percent-encodes.
+  const encoded = '概念/感应'.split('/').map(encodeURIComponent).join('/');
+  expect(pageBySlug(encoded)?.title).toBe('电磁感应');
 });

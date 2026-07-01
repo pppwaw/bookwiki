@@ -22,6 +22,7 @@ import type { Element, ElementContent, Root, RootContent } from 'hast';
 import { SourceRef } from './SourceRef';
 import { citationGroupRegex, tokensFromMatch } from '@/lib/citations';
 import { renderKatexToString } from '@/lib/katex';
+import { safeDecodeURIComponent } from '@/lib/slug';
 
 export interface Processor {
   process: (content: string, options?: { inline?: boolean }) => Promise<ReactNode>;
@@ -115,7 +116,9 @@ export function rehypeSourceRefs() {
 // while the href carries the full slug.
 function pageLabel(slug: string): string {
   const segment = slug.split('/').filter(Boolean).at(-1) ?? slug;
-  return segment.replace(/-/g, ' ');
+  // The slug segment may be percent-encoded (fumadocs encodes non-ASCII); decode
+  // so a Chinese page cites as `感应` rather than `%E6%84…`.
+  return safeDecodeURIComponent(segment).replace(/-/g, ' ');
 }
 
 function shouldSkipWrap(node: Extract<RootContent, { type: 'element' }>): boolean {

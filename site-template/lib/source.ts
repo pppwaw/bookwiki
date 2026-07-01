@@ -2,6 +2,7 @@ import { docs } from 'collections/server';
 import { loader } from 'fumadocs-core/source';
 import { lucideIconsPlugin } from 'fumadocs-core/source/lucide-icons';
 import { docsContentRoute, docsImageRoute, docsRoute } from './shared';
+import { safeDecodeURIComponent } from './slug';
 
 // See https://fumadocs.dev/docs/headless/source-api for more info
 export const source = loader({
@@ -43,14 +44,6 @@ function slugSegmentMatches(segment: string, raw: string, decoded: string): bool
     encodeUtf8AsGbk(decodedSegment) === raw ||
     encodeUtf8AsGbk(decodedSegment) === decoded
   );
-}
-
-function safeDecodeURIComponent(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
 }
 
 function encodeUtf8AsGbk(value: string): string {

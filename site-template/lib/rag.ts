@@ -1,6 +1,7 @@
 import { embedQuery } from './embedding';
 import { rrf } from './fusion';
 import { queryAll } from './sqlite';
+import { decodeSlug } from './slug';
 import { getLLMText, getSourcePage } from './source';
 import { blobToFloat32, topNByDot } from './vector';
 
@@ -51,11 +52,22 @@ export function pageBySlug(slug: string) {
   const normalized = slug.trim();
   if (!normalized) return null;
 
-  const rows = queryAll<PageTitleRow>(
-    'SELECT slug, title FROM pages WHERE slug = ? LIMIT 1',
-    [normalized],
+  // The cited slug may arrive percent-encoded (the current article's slug comes
+  // from fumadocs' `page.url`, which encodes non-ASCII segments) while the DB
+  // stores raw slugs. Try the slug verbatim, then its decoded form, so Chinese
+  // page citations resolve instead of being silently dropped as dead refs.
+  const candidates = [normalized, decodeSlug(normalized)].filter(
+    (value, index, all) => all.indexOf(value) === index,
   );
-  return rows[0] ?? null;
+
+  for (const candidate of candidates) {
+    const rows = queryAll<PageTitleRow>(
+      'SELECT slug, title FROM pages WHERE slug = ? LIMIT 1',
+      [candidate],
+    );
+    if (rows[0]) return rows[0];
+  }
+  return null;
 }
 
 export async function searchChunks(query: string, limit = 8, chapterId?: string) {

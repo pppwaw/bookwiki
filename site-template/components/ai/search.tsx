@@ -38,6 +38,7 @@ import { Presence } from '@radix-ui/react-presence';
 import { Markdown } from '../markdown';
 import { buttonVariants } from 'fumadocs-ui/components/ui/button';
 import { cn } from '../../lib/cn';
+import { decodeSlug } from '../../lib/slug';
 import {
   conversationSignature,
   type StoredConversation,
@@ -1219,7 +1220,10 @@ function compactJson(value: unknown) {
 function slugLabel(pagePath: string) {
   const clean = pagePath.split(/[?#]/, 1)[0]?.replace(/\/+$/, '') ?? '';
   if (!clean || clean === '/docs') return 'index';
-  return clean.replace(/^\/docs\//, '') || 'index';
+  const slug = clean.replace(/^\/docs\//, '') || 'index';
+  // `usePathname()` hands back percent-encoded segments; decode so Chinese
+  // slugs render as text instead of `%E6%84…`.
+  return decodeSlug(slug);
 }
 
 function formatRelativeTime(timestamp: number) {

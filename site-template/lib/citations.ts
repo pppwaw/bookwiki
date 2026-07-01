@@ -25,8 +25,11 @@ export function citationGroupRegex(): RegExp {
   return /\[\^([^\]]+)\](?!:)|\[([A-Za-z0-9_.:-]+-p\d+[A-Za-z0-9_.:-]*)\](?!\()/g;
 }
 
-const sourceTokenPattern = /^[A-Za-z0-9_.:-]+$/;
-const pageSlugPattern = /^[A-Za-z0-9_.%/-]+$/;
+// Allow Unicode letters/numbers so Chinese slugs and source_refs (e.g.
+// `chapters/感知器-Perceptron`) are recognized as citations instead of being
+// left as literal text. `%` stays allowed for the percent-encoded form.
+const sourceTokenPattern = /^[\p{L}\p{N}_.:-]+$/u;
+const pageSlugPattern = /^[\p{L}\p{N}_.%/-]+$/u;
 const pagePrefix = 'page:';
 
 /**
@@ -56,8 +59,13 @@ function parseCaretTokens(inner: string): CitationToken[] | null {
 
     if (isPagePrefixed || payload.includes('/')) {
       // Normalize to the page slug: drop any `#…` fragment (e.g. a `#chunk-003`
-      // tail the model may copy) and a trailing slash.
-      const slug = payload.split('#')[0].replace(/\/+$/, '');
+      // tail the model may copy), a trailing slash, and a leading `docs/` route
+      // prefix. Slugs never include the `/docs` base, but the model tends to copy
+      // it from the page URL, so `docs/chapters/X` must resolve to `chapters/X`.
+      const slug = payload
+        .split('#')[0]
+        .replace(/^\/?(?:docs\/)+/, '')
+        .replace(/\/+$/, '');
       if (!slug || !pageSlugPattern.test(slug)) return null;
       tokens.push({ kind: 'page', slug });
     } else {
