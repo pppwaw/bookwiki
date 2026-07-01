@@ -324,8 +324,14 @@ def split_sources_by_structure(
     }
     alignment: list[dict[str, object]] = []
 
-    for fragment in fragments:
-        chapter_id, confidence, reason = _assign_fragment(fragment, specs)
+    # Reading-order leaf successor: a boundary page whose body opens the next chapter
+    # is carried into that successor so the new chapter recovers its first-page opening.
+    leaf_order = [spec.chapter_id for spec in specs]
+    successor = {
+        cid: leaf_order[i + 1] for i, cid in enumerate(leaf_order) if i + 1 < len(leaf_order)
+    }
+
+    def _record(fragment: SourceFragment, chapter_id: str, confidence: float, reason: str) -> None:
         chapter_fragments.setdefault(chapter_id, []).append(fragment)
         alignment.append(
             {
@@ -339,13 +345,36 @@ def split_sources_by_structure(
             }
         )
 
+    for fragment in fragments:
+        chapter_id, confidence, reason = _assign_fragment(fragment, specs)
+        _record(fragment, chapter_id, confidence, reason)
+        # Boundary page: only when assigned by an explicit source_ref match (high confidence).
+        if reason == "source_ref" and _is_boundary_fragment(fragment):
+            next_id = successor.get(chapter_id)
+            if next_id is None:
+                _LOG.info(
+                    "boundary fragment %s in last chapter %r has no successor to carry into",
+                    fragment.source_ref,
+                    chapter_id,
+                )
+            elif fragment not in chapter_fragments.get(next_id, []):
+                _record(fragment, next_id, 1.0, "boundary_carry")
+
     chapters = {
         chapter_id: _render_chapter_source(chapter_id, chapter_titles[chapter_id], assigned)
         for chapter_id, assigned in chapter_fragments.items()
         if assigned or chapter_id != "appendix"
     }
-    assigned_count = sum(1 for item in alignment if item["chapter_id"] != "appendix")
-    total_count = len(alignment)
+    # A boundary fragment maps to two chapters (two alignment rows); count coverage by
+    # unique fragment so assigned_ratio stays a real fraction (never > 1.0).
+    fragment_keys = {(item["source_path"], item["source_ref"]) for item in alignment}
+    assigned_keys = {
+        (item["source_path"], item["source_ref"])
+        for item in alignment
+        if item["chapter_id"] != APPENDIX_CHAPTER_ID
+    }
+    total_count = len(fragment_keys)
+    assigned_count = len(assigned_keys)
     coverage = {
         "total_fragments": total_count,
         "assigned_fragments": assigned_count,

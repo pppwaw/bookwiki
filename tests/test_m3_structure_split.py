@@ -837,4 +837,81 @@ def test_is_boundary_fragment_ignores_clean_start_and_non_chapter() -> None:
     assert not _is_boundary_fragment(_frag("# 第6章 点估计\n\n本章开头。"))
     # 非章节标题 / 子节 / 纯正文
     assert not _is_boundary_fragment(_frag("## 6.3 Subsection\n\nnot a chapter heading"))
+
+
+BOUNDARY_APPROVED = """chapters:
+  - title: Chapter Five Foundations
+    topics:
+      - Foundations
+    source_refs:
+      - bk-p019
+      - bk-p020
+  - title: Chapter Six Point Estimation
+    topics:
+      - Point estimation
+    source_refs:
+      - bk-p021
+"""
+
+
+def test_split_shares_boundary_page_with_next_chapter(tmp_path: Path) -> None:
+    source = tmp_path / "bk.md"
+    source.write_text(
+        "# Chapter 5 Foundations\n\n"
+        "<!-- source_ref: bk-p019 -->\n\nEarlier chapter five content.\n\n"
+        "<!-- source_ref: bk-p020 -->\n\n"
+        "Final paragraph closing chapter five.\n\n"
+        "# Chapter 6 Point Estimation\n\nOpening of chapter six on the same page.\n\n"
+        "<!-- source_ref: bk-p021 -->\n\nChapter six on its own fresh page.\n",
+        encoding="utf-8",
+    )
+
+    result = split_sources_by_structure([source], BOUNDARY_APPROVED)
+
+    five = result.chapters["Chapter-Five-Foundations"]
+    six = result.chapters["Chapter-Six-Point-Estimation"]
+    # 边界页 p020 的正文同时进两章
+    assert "Opening of chapter six on the same page." in five  # 原本就在 ch5(整页)
+    assert "Opening of chapter six on the same page." in six   # 被补给 ch6
+    assert "<!-- source_ref: bk-p020 -->" in six
+    # 审计:一条 boundary_carry 记录
+    assert any(
+        item["source_ref"] == "bk-p020"
+        and item["chapter_id"] == "Chapter-Six-Point-Estimation"
+        and item["reason"] == "boundary_carry"
+        for item in result.alignment
+    )
+    # coverage 不因重复分配而 > 1.0
+    assert result.coverage["assigned_ratio"] <= 1.0
+
+
+def test_split_clean_chapter_start_is_not_shared(tmp_path: Path) -> None:
+    source = tmp_path / "bk.md"
+    source.write_text(
+        "# Chapter 5 Foundations\n\n"
+        "<!-- source_ref: bk-p019 -->\n\nChapter five fills page nineteen.\n\n"
+        "<!-- source_ref: bk-p020 -->\n\n"
+        "# Chapter 6 Point Estimation\n\nChapter six starts at the top of a fresh page.\n\n"
+        "<!-- source_ref: bk-p021 -->\n\nChapter six continues.\n",
+        encoding="utf-8",
+    )
+    # 干净起始:p020 归 ch6 自己,不应产生 boundary_carry
+    approved = """chapters:
+  - title: Chapter Five Foundations
+    topics:
+      - Foundations
+    source_refs:
+      - bk-p019
+  - title: Chapter Six Point Estimation
+    topics:
+      - Point estimation
+    source_refs:
+      - bk-p020
+      - bk-p021
+"""
+
+    result = split_sources_by_structure([source], approved)
+
+    assert not any(item["reason"] == "boundary_carry" for item in result.alignment)
+    assert "bk-p020" not in result.chapters["Chapter-Five-Foundations"]
     assert not _is_boundary_fragment(_frag("Just prose mentioning chapter six, no heading."))
