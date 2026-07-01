@@ -23,7 +23,7 @@
 - ⚠️「caption 的图数口径」修正(不是证伪):早前误用 `assets/*.png`(含被跳过的公式图)当分母。改用**真正过 caption 的图数**(circuits 242 个 `vision_caption_llm_v2` 缓存)后,每图 ¥0.00026 vs calculus token 反推 ¥0.00028 ——**caption 确实 per-image 线性**(差 7%)。
 
 被回测**确认稳定**(calculus vs circuits 误差 < 5%)的锚点:
-- ✅ **PDF 页数 / 节数 ≈ 22**(21.62 vs 22.07,差 2%)。**页数才是节数信号**。
+- ✅ **PDF 页数 / 节数 ≈ 21.6**(calculus 21.62 / circuits 21.60,差 0.1%)。**页数才是节数信号**。
 - ✅ **每节 generate 成本 ≈ ¥0.88**(0.898 vs 0.876,差 2.5%)。
 - ✅ **理想一次过总成本 ≈ ¥70**(70.9 vs 67.9,差 4%);成本几乎全在 `generate` + `concept_pages`。
 
@@ -98,8 +98,8 @@ circuits 交叉校验:`30*0.928983 + 120*0.254658 + 0.063 + 1.0+0.044+0.055 ≈ 
 
 ```
 pdf_pages, pptx_slides, pdf_images = scan(input/*)
-sections         = round(pdf_pages  / PAGES_PER_SECTION_PDF      # ≈ 22   (calculus 21.6 / circuits 22.1)
-                       + pptx_slides / SLIDES_PER_SECTION_PPTX)  # ≈ 3.5  (仅 ai 单样本,低置信)
+sections         = round(pdf_pages  / PAGES_PER_SECTION_PDF      # ≈ 21.6 (calculus 21.6 / circuits 21.6)
+                       + pptx_slides / SLIDES_PER_SECTION_PPTX)  # ≈ 3.2  (仅 ai 单样本,低置信)
 concepts         = round(sections   * CONCEPTS_PER_SECTION)      # ≈ 3.5  (calculus 3.0 ~ circuits 4.0 的中值)
 captioned_images = round(pdf_images * CAPTION_KEEP_RATIO)        # ≈ 0.11 (circuits 242/2126,单样本;占总额 <0.5%)
 ```
@@ -134,7 +134,7 @@ captioned_images = round(pdf_images * CAPTION_KEEP_RATIO)        # ≈ 0.11 (cir
 
 所有标定常数集中在 `dry_run.py` / `pdf_estimate.py` 顶部,带注释标明来源与置信度:
 
-- **强锚(calculus + circuits 双样本,误差 < 8%)**:`PAGES_PER_SECTION_PDF ≈ 22`、`per_section_generate ≈ 0.88`、`per_image_caption ≈ ¥0.00026`、理想一次过总额 ≈ ¥70。
+- **强锚(calculus + circuits 双样本,误差 < 8%)**:`PAGES_PER_SECTION_PDF ≈ 21.6`、`per_section_generate ≈ 0.88`、`per_image_caption ≈ ¥0.00026`、理想一次过总额 ≈ ¥70。
 - **弱锚(跨书波动或单样本,标注低置信)**:`CONCEPTS_PER_SECTION`(3.0~4.0,取中值 3.5)、`per_concept`(0.25~0.34)、`SLIDES_PER_SECTION_PPTX`(仅 ai 一个 pptx 样本)、`CAPTION_KEEP_RATIO`(circuits 单样本 ≈ 0.11)。
 
 后续每多跑一本书,把其 `run-manifest.json` + input 计数补进回测,回归修正弱锚。回测脚本逻辑应保留(可固化为 `scripts/` 下的一次性分析或测试),便于复跑。

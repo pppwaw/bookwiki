@@ -17,7 +17,14 @@ import shutil
 from typing import Any
 
 from bookwiki.scheduler.config import BookConfig
-from bookwiki.scheduler.dry_run import summarize
+from bookwiki.scheduler.dry_run import (
+    CAPTION_KEEP_RATIO,
+    CONCEPTS_PER_SECTION,
+    Scale,
+    derive_scale,
+    estimate_cost,
+)
+from bookwiki.scheduler.pdf_estimate import scan as scan_input
 from bookwiki.utils.files import read_json
 
 NODE_ORDER: list[str] = [
@@ -315,12 +322,79 @@ def draw_mermaid() -> str:
     return "\n".join(lines)
 
 
-def dry_run_report(cfg: BookConfig, chapter_count: int = 2) -> str:
-    estimate = summarize(NODE_ORDER, chapter_count=chapter_count)
+def _structure_section_count(cfg: BookConfig) -> int | None:
+    """Real section count from an approved/proposed structure, or None if no gate output.
+
+    Counts chapters flattened one level into sections; a malformed draft is skipped so a
+    bad YAML never breaks ``--dry-run``.
+    """
+    import yaml
+
+    structure_dir = cfg.work_dir / "structure"
+    for name in ("approved-structure.yaml", "proposed-structure.yaml"):
+        path = structure_dir / name
+        if not path.exists():
+            continue
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001 - a malformed draft must not break --dry-run
+            continue
+        chapters = data.get("chapters") if isinstance(data, dict) else None
+        if isinstance(chapters, list) and chapters:
+            count = 0
+            for chapter in chapters:
+                sections = chapter.get("sections") if isinstance(chapter, dict) else None
+                count += len(sections) if isinstance(sections, list) and sections else 1
+            return max(count, 1)
+    return None
+
+
+def _concept_graph_count(cfg: BookConfig) -> int | None:
+    """Real concept count from ``work/concept-graph.json``, or None if not built yet."""
+    path = cfg.work_dir / "concept-graph.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - a malformed graph must not break --dry-run
+        return None
+    nodes = data.get("nodes") if isinstance(data, dict) else None
+    return len(nodes) if isinstance(nodes, list) and nodes else None
+
+
+def resolve_scale(cfg: BookConfig) -> tuple[Scale, str]:
+    """Two-stage scale for the cost estimate, plus a human-readable basis string.
+
+    Prefer real ``structure`` output (exact section count, and concept count if the
+    graph exists); before the gate has run, fall back to sizing the raw ``input/``
+    (PDF pages + PPTX slides). See ``scheduler.dry_run`` for the calibration.
+    """
+    scan = scan_input(cfg.input_dir)
+    sections = _structure_section_count(cfg)
+    if sections is not None:
+        concepts = _concept_graph_count(cfg) or round(sections * CONCEPTS_PER_SECTION)
+        captioned = round(scan.pdf_images * CAPTION_KEEP_RATIO)
+        return Scale(sections=sections, concepts=concepts, captioned_images=captioned), (
+            f"structure ({sections} sections)"
+        )
+    basis = (
+        f"input scan ({scan.pdf_pages} PDF pages, {scan.pptx_slides} PPTX slides,"
+        f" {scan.pdf_images} embedded images)"
+    )
+    if scan.unreadable:
+        basis += f"; {len(scan.unreadable)} unreadable file(s) skipped"
+    return derive_scale(scan), basis
+
+
+def dry_run_report(cfg: BookConfig) -> str:
+    scale, basis = resolve_scale(cfg)
+    estimate = estimate_cost(scale.sections, scale.concepts, scale.captioned_images)
     return (
         f"{draw_mermaid()}\n\n"
         f"Estimated tokens: {estimate.tokens}\n"
         f"Estimated cost CNY: {estimate.cost_cny:.6f}\n"
+        f"Basis: {basis} -> {scale.sections} sections, {scale.concepts} concepts,"
+        f" {scale.captioned_images} captioned images\n"
         "Critical path: convert -> caption -> structure -> split -> "
         "generate -> check -> index\n"
     )

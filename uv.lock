@@ -327,6 +327,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pydantic" },
+    { name = "pypdf" },
     { name = "pyyaml" },
     { name = "scipy" },
 ]
@@ -348,6 +349,7 @@ runtime = [
     { name = "litellm" },
     { name = "matplotlib" },
     { name = "numpy" },
+    { name = "pillow" },
     { name = "tiktoken" },
 ]
 
@@ -361,7 +363,9 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'runtime'", specifier = ">=3.9" },
     { name = "mineru", extras = ["pipeline", "core"], marker = "extra == 'mineru'" },
     { name = "numpy", marker = "extra == 'runtime'", specifier = ">=2.0" },
+    { name = "pillow", marker = "extra == 'runtime'", specifier = ">=10.0" },
     { name = "pydantic", specifier = ">=2.8" },
+    { name = "pypdf", specifier = ">=6.12.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pyyaml", specifier = ">=6.0" },
