@@ -89,18 +89,23 @@ export function useChatHistory<M extends UIMessage = UIMessage>(
   }, []);
 
   const saveMessages = useCallback((id: string, pagePath: string, messages: M[]) => {
+    // Images are session-only: drop file parts before persisting so localStorage
+    // never bloats with base64 image data. The live in-memory `messages` keep
+    // their file parts, so multi-turn follow-ups in the same session still see
+    // the image.
+    const persisted = stripFileParts(messages);
     setStore((prev) => {
       const now = Date.now();
       const existing = prev.conversations.find((conversation) => conversation.id === id);
       const rest = prev.conversations.filter((conversation) => conversation.id !== id);
 
       const conversation: StoredConversation<M> = existing
-        ? { ...existing, messages, updatedAt: now }
+        ? { ...existing, messages: persisted, updatedAt: now }
         : {
             id,
-            title: deriveTitle(messages),
+            title: deriveTitle(persisted),
             pagePath,
-            messages,
+            messages: persisted,
             createdAt: now,
             updatedAt: now,
           };
@@ -128,6 +133,22 @@ export function useChatHistory<M extends UIMessage = UIMessage>(
     renameChat,
     saveMessages,
   };
+}
+
+/**
+ * Return a copy of the messages with all `file` parts removed. Used before
+ * persisting to localStorage so pasted/uploaded images (stored inline as data
+ * URLs) never bloat storage. Messages without file parts are returned as-is to
+ * avoid needless allocation.
+ */
+export function stripFileParts<M extends UIMessage>(messages: M[]): M[] {
+  return messages.map((message) => {
+    if (!message.parts.some((part) => part.type === 'file')) return message;
+    return {
+      ...message,
+      parts: message.parts.filter((part) => part.type !== 'file'),
+    } as M;
+  });
 }
 
 export function conversationSignature(messages: UIMessage[]): string {

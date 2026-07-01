@@ -14,12 +14,19 @@ const inter = Inter({
   display: 'swap',
 });
 
+function visionEnabledFromEnv(): boolean {
+  const raw = process.env.BOOKWIKI_CHAT_VISION?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
 export default function Layout({ children }: LayoutProps<'/'>) {
+  const visionEnabled = visionEnabledFromEnv();
+
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
         <RootProvider search={{ SearchDialog }}>
-          <AISearch>
+          <AISearch visionEnabled={visionEnabled}>
             <AISearchPanel />
             <AISearchTrigger
               position="float"

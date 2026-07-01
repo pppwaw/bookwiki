@@ -1,8 +1,10 @@
 'use client';
 
 import {
+  type ClipboardEvent,
   type ComponentProps,
   createContext,
+  type DragEvent,
   type ReactNode,
   type SyntheticEvent,
   use,
@@ -13,10 +15,11 @@ import {
   useState,
 } from 'react';
 import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport, type ChatStatus, type UIMessage } from 'ai';
+import { DefaultChatTransport, type ChatStatus, type FileUIPart, type UIMessage } from 'ai';
 import {
   ArrowLeft,
   History,
+  ImagePlus,
   Loader2,
   MessageCircleIcon,
   Pencil,
@@ -61,6 +64,50 @@ type PanelView = 'chat' | 'history';
 const EmptyMessages: BookWikiChatMessage[] = [];
 
 // ---------------------------------------------------------------------------
+// Image attachments (vision input)
+// ---------------------------------------------------------------------------
+
+const AcceptedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const AcceptedImageAttr = 'image/png,image/jpeg,image/webp,image/gif';
+const MaxImageBytes = 10 * 1024 * 1024;
+const MaxImageBytesLabel = '10MB';
+const MaxImages = 4;
+
+type Attachment = { id: string; file: File; url: string };
+
+function newAttachmentId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `a_${Date.now().toString(36)}`;
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error('failed to read image'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function imageFilesFromDataTransfer(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  return Array.from(data.items)
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+}
+
+function isImagePart(part: BookWikiChatPart): part is FileUIPart {
+  return (
+    part.type === 'file' &&
+    typeof (part as FileUIPart).url === 'string' &&
+    ((part as FileUIPart).mediaType ?? '').startsWith('image/')
+  );
+}
+
+// ---------------------------------------------------------------------------
 // History context: conversation list + active selection (persisted)
 // ---------------------------------------------------------------------------
 
@@ -71,6 +118,8 @@ type HistoryContextValue = {
   setView: (view: PanelView) => void;
   pagePath: string;
   hydrated: boolean;
+  /** Whether image (vision) input is enabled for the configured model. */
+  visionEnabled: boolean;
   conversations: Conversation[];
   activeId: string;
   activeConversation: Conversation | null;
@@ -87,7 +136,13 @@ function useHistory() {
   return use(HistoryContext)!;
 }
 
-export function AISearch({ children }: { children: ReactNode }) {
+export function AISearch({
+  children,
+  visionEnabled = false,
+}: {
+  children: ReactNode;
+  visionEnabled?: boolean;
+}) {
   const pagePath = usePathname();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<PanelView>('chat');
@@ -111,6 +166,7 @@ export function AISearch({ children }: { children: ReactNode }) {
       setView,
       pagePath,
       hydrated,
+      visionEnabled,
       conversations,
       activeId,
       activeConversation,
@@ -131,6 +187,7 @@ export function AISearch({ children }: { children: ReactNode }) {
       view,
       pagePath,
       hydrated,
+      visionEnabled,
       conversations,
       activeId,
       activeConversation,
@@ -153,7 +210,7 @@ type SessionContextValue = {
   messages: BookWikiChatMessage[];
   status: ChatStatus;
   error: string | null;
-  sendMessage: (question: string) => Promise<void>;
+  sendMessage: (question: string, files?: FileUIPart[]) => Promise<void>;
   retry: () => Promise<void>;
   stop: () => void;
 };
@@ -205,13 +262,14 @@ function ChatSession() {
     saveMessages(activeId, sessionPagePath, messages);
   }, [status, messages, activeId, sessionPagePath, saveMessages]);
 
-  async function sendMessage(question: string) {
+  async function sendMessage(question: string, files?: FileUIPart[]) {
     const trimmed = question.trim();
-    if (!trimmed || isBusy(status)) return;
+    const hasFiles = !!files && files.length > 0;
+    if ((!trimmed && !hasFiles) || isBusy(status)) return;
 
     setLastQuestion(trimmed);
     clearError();
-    await sendChatMessage({ text: trimmed });
+    await sendChatMessage({ text: trimmed, files });
   }
 
   async function retry() {
@@ -572,10 +630,33 @@ function Message({ message }: { message: BookWikiChatMessage }) {
   const sources = message.metadata?.sources ?? [];
 
   if (message.role === 'user') {
+    const images = message.parts.filter(isImagePart);
+    const text = textContent(message);
+
     return (
       <div className="flex justify-end" onClick={stopClick}>
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-fd-primary px-3.5 py-2.5 text-sm text-fd-primary-foreground shadow-sm">
-          <p className="whitespace-pre-wrap break-words">{textContent(message)}</p>
+        <div className="flex max-w-[85%] flex-col gap-2 rounded-2xl rounded-br-md bg-fd-primary px-3.5 py-2.5 text-sm text-fd-primary-foreground shadow-sm">
+          {images.length ? (
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {images.map((part, index) => (
+                <a
+                  key={`${message.id}-img-${index}`}
+                  href={part.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={part.url}
+                    alt={part.filename ?? 'attached image'}
+                    className="max-h-44 rounded-lg object-contain"
+                  />
+                </a>
+              ))}
+            </div>
+          ) : null}
+          {text ? <p className="whitespace-pre-wrap break-words">{text}</p> : null}
         </div>
       </div>
     );
@@ -695,18 +776,125 @@ function ToolPart({ part }: { part: ToolMessagePart }) {
 
 function ChatComposer() {
   const { messages, retry, sendMessage, status, stop } = useSession();
+  const { visionEnabled } = useHistory();
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [notice, setNotice] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+
   const isLoading = isBusy(status);
   const canRetry = !isLoading && messages.at(-1)?.role === 'assistant';
+  const canSend = (input.trim().length > 0 || attachments.length > 0) && !isLoading;
 
-  const submit = (event?: SyntheticEvent) => {
+  // Revoke preview object URLs on unmount so blob URLs don't leak.
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  useEffect(
+    () => () => {
+      for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.url);
+    },
+    [],
+  );
+
+  function addFiles(incoming: FileList | File[] | null | undefined) {
+    if (!visionEnabled || !incoming) return;
+    const accepted: Attachment[] = [];
+    let rejection = '';
+
+    for (const file of Array.from(incoming)) {
+      if (!AcceptedImageTypes.has(file.type)) {
+        rejection = '仅支持 PNG / JPEG / WebP / GIF 图片';
+        continue;
+      }
+      if (file.size > MaxImageBytes) {
+        rejection = `单张图片需小于 ${MaxImageBytesLabel}`;
+        continue;
+      }
+      accepted.push({ id: newAttachmentId(), file, url: URL.createObjectURL(file) });
+    }
+
+    setAttachments((prev) => {
+      const room = Math.max(0, MaxImages - prev.length);
+      if (accepted.length > room) {
+        rejection = `最多添加 ${MaxImages} 张图片`;
+        for (const extra of accepted.slice(room)) URL.revokeObjectURL(extra.url);
+      }
+      return [...prev, ...accepted.slice(0, room)];
+    });
+
+    setNotice(rejection);
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => {
+      const target = prev.find((attachment) => attachment.id === id);
+      if (target) URL.revokeObjectURL(target.url);
+      return prev.filter((attachment) => attachment.id !== id);
+    });
+  }
+
+  const submit = async (event?: SyntheticEvent) => {
     event?.preventDefault();
-    const message = input.trim();
-    if (!message || isLoading) return;
+    if (!canSend) return;
 
-    void sendMessage(message);
+    const text = input.trim();
+    const current = attachments;
+    const files: FileUIPart[] | undefined = current.length
+      ? await Promise.all(
+          current.map(async (attachment) => ({
+            type: 'file' as const,
+            mediaType: attachment.file.type,
+            filename: attachment.file.name,
+            url: await fileToDataUrl(attachment.file),
+          })),
+        )
+      : undefined;
+
+    void sendMessage(text, files);
+
+    for (const attachment of current) URL.revokeObjectURL(attachment.url);
+    setAttachments([]);
     setInput('');
+    setNotice('');
   };
+
+  function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!visionEnabled) return;
+    const files = imageFilesFromDataTransfer(event.clipboardData);
+    if (files.length) {
+      event.preventDefault();
+      addFiles(files);
+    }
+  }
+
+  function onDragEnter(event: SyntheticEvent) {
+    if (!visionEnabled) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  }
+
+  function onDragOver(event: SyntheticEvent) {
+    if (!visionEnabled) return;
+    event.preventDefault();
+  }
+
+  function onDragLeave(event: SyntheticEvent) {
+    if (!visionEnabled) return;
+    event.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+
+  function onDrop(event: DragEvent<HTMLFormElement>) {
+    if (!visionEnabled) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    addFiles(imageFilesFromDataTransfer(event.dataTransfer));
+  }
 
   return (
     <div className="flex flex-col gap-1.5 p-2 lg:p-3">
@@ -739,10 +927,80 @@ function ChatComposer() {
         </div>
       ) : null}
 
+      {attachments.length ? (
+        <div className="flex flex-col gap-1 px-1">
+          <div className="flex flex-wrap gap-2">
+            {attachments.map((attachment) => (
+              <div key={attachment.id} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={attachment.url}
+                  alt={attachment.file.name}
+                  className="size-14 rounded-lg border object-cover"
+                />
+                <button
+                  type="button"
+                  aria-label="Remove image"
+                  onClick={() => removeAttachment(attachment.id)}
+                  className="absolute -end-1.5 -top-1.5 grid size-5 place-items-center rounded-full border bg-fd-background text-fd-muted-foreground shadow-sm hover:text-fd-foreground"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="text-[0.7rem] text-fd-muted-foreground">
+            图片仅本次会话有效,刷新或重开对话后会丢失
+          </p>
+        </div>
+      ) : null}
+
+      {notice ? <p className="px-1 text-[0.7rem] text-fd-error">{notice}</p> : null}
+
       <form
         onSubmit={submit}
-        className="flex items-end gap-2 rounded-2xl border bg-fd-secondary p-1.5 shadow-sm transition-shadow has-focus-visible:shadow-md"
+        onDragEnter={visionEnabled ? onDragEnter : undefined}
+        onDragOver={visionEnabled ? onDragOver : undefined}
+        onDragLeave={visionEnabled ? onDragLeave : undefined}
+        onDrop={visionEnabled ? onDrop : undefined}
+        className={cn(
+          'relative flex items-end gap-2 rounded-2xl border bg-fd-secondary p-1.5 shadow-sm transition-shadow has-focus-visible:shadow-md',
+          dragging && 'ring-2 ring-fd-primary ring-offset-1',
+        )}
       >
+        {visionEnabled ? (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={AcceptedImageAttr}
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                addFiles(event.target.files);
+                event.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Add image"
+              title="添加图片"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading || attachments.length >= MaxImages}
+              className={cn(
+                buttonVariants({
+                  color: 'ghost',
+                  size: 'icon',
+                  className:
+                    'shrink-0 rounded-full text-fd-muted-foreground hover:text-fd-foreground',
+                }),
+              )}
+            >
+              <ImagePlus className="size-4" />
+            </button>
+          </>
+        ) : null}
+
         <Input
           value={input}
           placeholder={isLoading ? 'BookWiki is answering…' : 'Ask this book'}
@@ -750,8 +1008,9 @@ function ChatComposer() {
           className="px-2.5 py-1.5"
           disabled={isLoading}
           onChange={(event) => setInput(event.target.value)}
+          onPaste={visionEnabled ? onPaste : undefined}
           onKeyDown={(event) => {
-            if (!event.shiftKey && event.key === 'Enter') submit(event);
+            if (!event.shiftKey && event.key === 'Enter') void submit(event);
           }}
         />
         <button
@@ -764,7 +1023,7 @@ function ChatComposer() {
               className: 'rounded-full transition-colors',
             }),
           )}
-          disabled={input.trim().length === 0 || isLoading}
+          disabled={!canSend}
         >
           {isLoading ? (
             <Loader2 className="size-4 animate-spin text-fd-muted-foreground" />
@@ -772,6 +1031,12 @@ function ChatComposer() {
             <Send className="size-4" />
           )}
         </button>
+
+        {dragging ? (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center rounded-2xl bg-fd-primary/10 text-xs font-medium text-fd-primary">
+            松开以添加图片
+          </div>
+        ) : null}
       </form>
     </div>
   );
