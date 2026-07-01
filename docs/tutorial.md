@@ -208,10 +208,10 @@ vault 跑出来后,启动站点预览(默认不自动启动):
 python scripts/site.py books/calc
 ```
 
-它会把 `site-template/` 脚手架同步进 `books/calc/site/`,同步站点环境变量,然后 `pnpm install && pnpm build && pnpm start`。默认端口 3000(`BOOKWIKI_SITE_PORT` 可改),`--` 之后的参数透传给 `next start`:
+它会把 `site-template/` 脚手架同步进 `books/calc/site/`,同步站点环境变量,然后 `pnpm install && pnpm build && pnpm start`。默认端口 3000,改端口用 `--` 之后透传给 `next start` 的参数(如 `-p`):
 
 ```bash
-python scripts/site.py books/calc -p 4000 -H 0.0.0.0
+python scripts/site.py books/calc -- -p 4000 -H 0.0.0.0
 ```
 
 站点功能:**全文搜索**、**引用整页的 RAG 聊天**、**主观题/考试 LLM 判分**、**Anki 卡片导出**。聊天与判分需要各自的密钥(填进 `.env`):
