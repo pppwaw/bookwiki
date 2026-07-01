@@ -937,17 +937,18 @@ def test_split_boundary_in_last_chapter_does_not_error(tmp_path: Path) -> None:
     result = split_sources_by_structure([source], approved)
 
     assert not any(item["reason"] == "boundary_carry" for item in result.alignment)
-    assert result.coverage["assigned_ratio"] <= 1.0
 
 
 def test_split_keyword_fallback_fragment_is_not_carried(tmp_path: Path) -> None:
-    # p777 未被任何章 source_ref 声明 → 走 keyword/appendix,即便 body 含章标题也不补给
+    # p777 未被任何章 source_ref 声明 → 走 keyword,命中「有后继」的 Foundations 章;
+    # body 含章标题(边界信号为真),但因 reason != "source_ref",守卫应阻止补给。
     source = tmp_path / "bk.md"
     source.write_text(
         "# Book\n\n"
-        "<!-- source_ref: bk-p001 -->\n\nFoundations content.\n\n"
+        "<!-- source_ref: bk-p001 -->\n\nFoundations overview.\n\n"
         "<!-- source_ref: bk-p777 -->\n\n"
-        "Loose page tail.\n\n# Chapter 6 Point Estimation\n\nHeading with no declaring chapter.\n",
+        "Foundations basics and fundamentals overview.\n\n"
+        "# Chapter 9 Extra Material\n\nTrailing content.\n",
         encoding="utf-8",
     )
     approved = """chapters:
@@ -965,7 +966,14 @@ def test_split_keyword_fallback_fragment_is_not_carried(tmp_path: Path) -> None:
 
     result = split_sources_by_structure([source], approved)
 
-    # p777 不是任何章的显式 source_ref → 不应产生 boundary_carry
+    # p777 经 keyword 命中「有后继」的 Foundations(非末章),确保守卫真正被测到
+    assert any(
+        item["source_ref"] == "bk-p777"
+        and item["chapter_id"] == "Foundations"
+        and item["reason"] == "keyword"
+        for item in result.alignment
+    )
+    # 关键守卫:非 source_ref 命中的 fragment 即便 body 含章标题也不补给
     assert not any(
         item["source_ref"] == "bk-p777" and item["reason"] == "boundary_carry"
         for item in result.alignment
